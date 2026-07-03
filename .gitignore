@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Local/editor
+*.log
+.idea/
+.vscode/
+
+# Generated exports
+exports/
+output/

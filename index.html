@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Asset Studio Local</title>
+  <link rel="stylesheet" href="styles/app.css" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span>Asset</span> Studio <span class="badge">v0.2 editor base</span></div>
+    <select id="presetSize" class="input" style="max-width:170px">
+      <option value="1024x1024">1024×1024 Square</option>
+      <option value="1920x1080">1920×1080 Landscape</option>
+      <option value="1080x1920">1080×1920 Portrait</option>
+      <option value="custom">Custom</option>
+    </select>
+    <input id="canvasW" class="input" type="number" value="1024" style="max-width:92px" />
+    <input id="canvasH" class="input" type="number" value="1024" style="max-width:92px" />
+    <button id="applyCanvas">Canvas</button>
+    <button id="zoomOut">−</button><div id="zoomLabel" class="badge zoom-label">100%</div><button id="zoomIn">+</button>
+    <button id="fitCanvas">Fit</button>
+    <button id="undoBtn">Undo</button>
+    <button id="redoBtn">Redo</button>
+    <div class="spacer"></div>
+    <button id="saveProject">Save JSON</button>
+    <button id="loadProjectBtn">Load</button><input id="loadProject" type="file" accept="application/json" class="hidden" />
+    <button id="exportPng" class="primary">Export PNG</button>
+  </header>
+
+  <nav class="toolrail" aria-label="Tools">
+    <button class="tool-button active" data-tool="select"><b>↖</b><span>Select</span></button>
+    <button class="tool-button" data-tool="pan"><b>✋</b><span>Pan</span></button>
+    <button class="tool-button" data-tool="crop"><b>▣</b><span>Crop</span></button>
+    <button class="tool-button" data-tool="brush"><b>🖌</b><span>Brush</span></button>
+    <button class="tool-button" data-tool="pencil"><b>✎</b><span>Pencil</span></button>
+    <button class="tool-button" data-tool="eraser"><b>⌫</b><span>Eraser</span></button>
+    <button class="tool-button" data-tool="mask"><b>◐</b><span>Mask</span></button>
+    <button class="tool-button" data-tool="text"><b>T</b><span>Text</span></button>
+    <button class="tool-button" data-tool="shape"><b>□</b><span>Shape</span></button>
+    <button class="tool-button" data-tool="upload"><b>⬆</b><span>Upload</span></button>
+    <button class="tool-button" data-tool="ai"><b>AI</b><span>AI</span></button>
+  </nav>
+
+  <aside class="sidebar">
+    <div class="panel">
+      <h3>Tool Options</h3>
+      <div id="toolModeLabel" class="small">Select mode</div>
+      <p class="hint">왼쪽 툴바에서 편집 도구를 고르고, 여기서 옵션을 조정합니다.</p>
+    </div>
+
+    <section class="option-panel active" data-tool-panel="select">
+      <div class="panel"><h3>Select / Move</h3><p class="hint">캔버스 레이어를 클릭해 선택하고 이동/리사이즈/회전합니다. 오른쪽 Transform 패널에서 수치 편집도 가능합니다.</p></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="pan">
+      <div class="panel"><h3>Pan / Zoom</h3><p class="hint">Pan 모드에서는 캔버스 영역을 드래그해 작업공간을 이동합니다. 상단 −/+로 확대/축소합니다.</p></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="crop">
+      <div class="panel disabled-note"><h3>Crop</h3><p class="hint">Phase 1에서는 도구 위치와 모드만 잡습니다. 실제 비율 크롭/선택 크롭은 다음 세부 작업에서 붙입니다.</p></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="brush">
+      <div class="panel"><h3>Brush</h3><label>Brush color</label><input id="brushColor" class="input" type="color" value="#111111" /><label>Brush size <span id="brushSizeValue" class="range-value">16</span></label><input id="brushSize" class="input" type="range" min="1" max="120" value="16" /></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="pencil">
+      <div class="panel"><h3>Pencil</h3><p class="hint">브러시보다 얇은 선으로 직접 그립니다.</p><label>Pencil color</label><input id="pencilColorMirror" class="input" type="color" value="#111111" /><label>Pencil size uses Brush size</label></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="eraser">
+      <div class="panel"><h3>Eraser</h3><label>Eraser size <span id="eraserSizeValue" class="range-value">16</span></label><input id="eraserSize" class="input" type="range" min="1" max="160" value="16" /><p class="hint">현재는 마스크 스트로크 방식의 지우개입니다. Phase 2에서 복원 브러시와 마스크 보기로 고도화합니다.</p></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="mask">
+      <div class="panel disabled-note"><h3>Mask</h3><p class="hint">선택 영역 AI 재생성용 마스크 도구 자리입니다. Phase 3에서 사각/브러시 마스크를 실제 inpaint 입력으로 연결합니다.</p></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="text">
+      <div class="panel"><h3>Text</h3><input id="newText" class="input" value="Your Text" /><div class="row"><button id="addText" class="primary">Add Text</button><button id="addTitle">Title</button></div></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="shape">
+      <div class="panel"><h3>Shapes</h3><div class="pillgrid"><button id="addRect" class="pill">Rectangle</button><button id="addCircle" class="pill">Circle</button><button id="addLine" class="pill">Line</button><button id="addRoundRect" class="pill">Round Rect</button></div></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="upload">
+      <div class="panel"><h3>Upload</h3><input id="uploadInput" class="input" type="file" accept="image/*" multiple /><p class="hint">PNG/JPG/WebP 업로드 또는 파일을 캔버스 위로 드롭.</p></div>
+    </section>
+
+    <section class="option-panel" data-tool-panel="ai">
+      <div class="panel"><h3>AI Generate</h3><textarea id="aiPrompt" class="input" rows="5" placeholder="예: cute robot sticker, isolated, transparent-friendly"></textarea><div class="row"><select id="aiPreset" class="input"><option value="general">General</option><option value="product">Product shot</option><option value="character">Character</option><option value="icon">Icon</option><option value="logo">Logo concept</option><option value="game">Game asset</option><option value="ui">UI element</option><option value="background">Background</option><option value="pixel">Pixel art</option><option value="sticker">Sticker</option><option value="thumbnail">Thumbnail element</option></select><select id="aiAspect" class="input"><option value="square">1:1</option><option value="landscape">16:9</option><option value="portrait">9:16</option></select></div><button id="generateBtn" class="primary" style="width:100%">Generate in page</button></div>
+    </section>
+
+    <div class="panel"><h3>Gallery</h3><div id="gallery" class="gallery"></div></div>
+    <div class="panel"><h3>Status</h3><div id="status" class="hint status">Ready.</div></div>
+  </aside>
+
+  <div id="leftResize" class="resize-handle left-resize" title="Drag to resize left panel"></div>
+
+  <main id="workspace" class="workspace">
+    <div id="canvasShell" class="canvas-shell checker"><canvas id="c" width="1024" height="1024"></canvas></div>
+  </main>
+
+  <div id="rightResize" class="resize-handle right-resize" title="Drag to resize right panel"></div>
+
+  <aside class="props">
+    <div class="panel"><h3>Properties</h3><div id="selectedName" class="small">No selection</div><label>X / Y</label><div class="row"><input id="propX" class="input" type="number"><input id="propY" class="input" type="number"></div><label>W / H</label><div class="row"><input id="propW" class="input" type="number"><input id="propH" class="input" type="number"></div><label>Rotation / Opacity</label><div class="row"><input id="propRot" class="input" type="number"><input id="propOpacity" class="input" type="number" min="0" max="1" step="0.05"></div><div class="row"><button id="applyProps">Apply</button><button id="duplicateObj">Duplicate</button></div><div class="row"><button id="bringFront">Front</button><button id="sendBack">Back</button></div><button id="deleteObj" class="danger" style="width:100%">Delete</button></div>
+    <div class="panel"><h3>Style / Text</h3><label>Fill / Stroke</label><div class="row"><input id="fillColor" class="input" type="color" value="#ffffff"><input id="strokeColor" class="input" type="color" value="#000000"></div><label>Text content</label><input id="textContent" class="input" placeholder="Selected text" /><label>Font size / Stroke width</label><div class="row"><input id="fontSize" class="input" type="number" value="72"><input id="strokeWidth" class="input" type="number" value="0"></div><div class="row"><button id="applyStyle">Apply Style</button><button id="toggleBold">Bold</button></div></div>
+    <div class="panel"><h3>Background</h3><div class="row"><button id="removeWhite">Remove white</button><button id="removeBlack">Remove black</button></div><label>Tolerance <span id="tolValue" class="range-value">32</span></label><input id="tolerance" class="input" type="range" min="0" max="160" value="32" /><button id="resetImage" style="width:100%">Reset image</button><p class="hint">원클릭 자동 배경삭제는 Phase 2. 현재는 색상 기반 제거 유지.</p></div>
+    <div class="panel"><h3>Canvas / Export</h3><label>Canvas background</label><input id="canvasBg" class="input" type="color" value="#ffffff" /><div class="row"><button id="transparentBg">Transparent BG</button><button id="whiteBg">White BG</button></div><div class="row"><button id="toggleChecker">Checker</button><button id="exportSelected">Selected PNG</button></div><button id="exportPng2" class="primary" style="width:100%">Full PNG</button></div>
+    <div class="panel"><h3>AI Edit</h3><p class="hint">Phase 4/5 예정: 선택 영역 재생성과 AI 대화형 편집 패널이 여기에 들어갑니다.</p></div>
+    <div class="panel"><h3>Layers</h3><div class="row"><button id="addLayer" class="primary">+ Layer</button><button id="addImageLayer">+ Image</button></div><div id="layers" class="layers"></div></div>
+    <div class="panel"><h3>Shortcuts</h3><p class="hint"><span class="kbd">Del</span> 삭제 · <span class="kbd">⌘/Ctrl+D</span> 복제 · <span class="kbd">⌘/Ctrl+Z</span> Undo · <span class="kbd">Space</span> Pan 임시</p></div>
+  </aside>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
+<script src="src/main.js"></script>
+</body>
+</html>
