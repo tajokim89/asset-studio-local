@@ -115,49 +115,119 @@ def fallback_corner_remove(raw: bytes, tolerance: int = 36) -> bytes:
 
 
 def edge_aware_sheet_remove(raw: bytes, tolerance: int = 24, edge_threshold: int = 40) -> bytes:
-    """Remove smooth border-connected backdrops while preserving multi-object pixel asset sheets."""
+    """Preserve-mask sheet cleanup: remove border backdrop, protect obvious item pixels.
+
+    Designed for multi-object asset sheets where rembg keeps only a few main subjects.
+    It first protects pixels that clearly differ from the sampled border background,
+    expands that protection slightly to keep outlines, then flood-removes only the
+    border-connected backdrop outside the protected mask.
+    """
     from collections import deque
     from PIL import Image, ImageFilter
+    import math
+
+    def lum(rgb):
+        return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+
+    def sat(rgb):
+        mx = max(rgb); mn = min(rgb)
+        return 0 if mx == 0 else (mx - mn) / mx * 255
 
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
     px = img.load()
     w, h = img.size
 
-    # Sample the whole border, not just corners, because generated sheets often use a soft gradient.
-    step = max(1, min(w, h) // 128)
+    # Border statistics define the generated backdrop.
+    step = max(1, min(w, h) // 160)
     samples = []
     for x in range(0, w, step):
         samples.append(px[x, 0][:3]); samples.append(px[x, h - 1][:3])
     for y in range(0, h, step):
         samples.append(px[0, y][:3]); samples.append(px[w - 1, y][:3])
-    mins = tuple(min(c[i] for c in samples) - tolerance for i in range(3))
-    maxs = tuple(max(c[i] for c in samples) + tolerance for i in range(3))
+    bg = tuple(sum(c[i] for c in samples) / len(samples) for i in range(3))
+    bg_l = sum(lum(c) for c in samples) / len(samples)
+    bg_s = sum(sat(c) for c in samples) / len(samples)
 
-    edge = img.convert("L").filter(ImageFilter.FIND_EDGES).load()
+    # Tuned so tolerance 24 is conservative enough to preserve visible items,
+    # while still clearing the dark generated backdrop around the whole sheet.
+    bg_tol = tolerance + 20
+    preserve_dist = max(30, tolerance + 14)
+    light_diff = max(18, tolerance)
+    sat_diff = max(12, tolerance - 6)
 
-    def candidate(x, y):
+    mins = tuple(min(c[i] for c in samples) - bg_tol for i in range(3))
+    maxs = tuple(max(c[i] for c in samples) + bg_tol for i in range(3))
+
+    protect = Image.new("L", (w, h), 0)
+    pdata = []
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a == 0:
+                pdata.append(0)
+                continue
+            rgb = (r, g, b)
+            dist = math.sqrt(sum((rgb[i] - bg[i]) ** 2 for i in range(3)))
+            # Keep clear item material: color/brightness/saturation that differs from the border backdrop.
+            keep = (
+                dist >= preserve_dist
+                or lum(rgb) >= bg_l + light_diff
+                or sat(rgb) >= bg_s + sat_diff
+            )
+            pdata.append(255 if keep else 0)
+    protect.putdata(pdata)
+    protect = protect.filter(ImageFilter.MaxFilter(5))  # 2px outline protection.
+    ppx = protect.load()
+
+    def bg_like(x, y):
         r, g, b, a = px[x, y]
-        if a == 0 or edge[x, y] > edge_threshold:
+        if a == 0:
+            return True
+        if ppx[x, y] > 0:
             return False
-        return mins[0] <= r <= maxs[0] and mins[1] <= g <= maxs[1] and mins[2] <= b <= maxs[2]
+        rgb = (r, g, b)
+        dist = math.sqrt(sum((rgb[i] - bg[i]) ** 2 for i in range(3)))
+        in_border_box = mins[0] <= r <= maxs[0] and mins[1] <= g <= maxs[1] and mins[2] <= b <= maxs[2]
+        return dist <= bg_tol or in_border_box
 
     seen = set()
     q = deque()
     for x in range(w):
-        if candidate(x, 0): q.append((x, 0))
-        if candidate(x, h - 1): q.append((x, h - 1))
+        q.append((x, 0)); q.append((x, h - 1))
     for y in range(h):
-        if candidate(0, y): q.append((0, y))
-        if candidate(w - 1, y): q.append((w - 1, y))
+        q.append((0, y)); q.append((w - 1, y))
 
     while q:
         x, y = q.popleft()
-        if x < 0 or y < 0 or x >= w or y >= h or (x, y) in seen or not candidate(x, y):
+        if x < 0 or y < 0 or x >= w or y >= h or (x, y) in seen or not bg_like(x, y):
             continue
         seen.add((x, y))
         r, g, b, a = px[x, y]
         px[x, y] = (r, g, b, 0)
         q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+
+    # Remove tiny disconnected specks that are not part of the protected item mask.
+    visited = set()
+    cleanup_min = 18
+    for yy in range(h):
+        for xx in range(w):
+            if (xx, yy) in visited or px[xx, yy][3] == 0:
+                continue
+            comp = []
+            has_protect = False
+            q = deque([(xx, yy)])
+            while q:
+                x, y = q.popleft()
+                if x < 0 or y < 0 or x >= w or y >= h or (x, y) in visited or px[x, y][3] == 0:
+                    continue
+                visited.add((x, y)); comp.append((x, y))
+                if ppx[x, y] > 0:
+                    has_protect = True
+                q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+            if len(comp) < cleanup_min and not has_protect:
+                for x, y in comp:
+                    r, g, b, a = px[x, y]
+                    px[x, y] = (r, g, b, 0)
 
     out = io.BytesIO()
     img.save(out, format="PNG")
@@ -167,7 +237,7 @@ def remove_background_bytes(raw: bytes, tolerance: int = 36, mode: str = "ai") -
     # AI segmentation is good for one subject, but it often drops most sprites in an asset sheet.
     # Sheet mode uses edge-aware border flood so all separated objects are preserved.
     if mode in {"sheet", "flood", "border"}:
-        return edge_aware_sheet_remove(raw, tolerance=tolerance or 24), "edge-aware-sheet"
+        return edge_aware_sheet_remove(raw, tolerance=tolerance or 24), "preserve-mask-sheet"
     try:
         from rembg import remove
         return remove(raw), "rembg"
