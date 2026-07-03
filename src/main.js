@@ -13,6 +13,7 @@ let viewScale = 1;
 let isPanning = false;
 let panStart = null;
 let activeDrawingLayerId = null;
+let selectedLayerId = null;
 const $ = (id) => document.getElementById(id);
 const appEl = document.querySelector('.app');
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -91,7 +92,11 @@ function loadHistory(idx) {
 
 function uid(prefix='layer') { return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2,7)}`; }
 function nameOf(obj) { return obj?.name || obj?.text || obj?.type || 'Layer'; }
+function layerKey(obj) { return obj ? (obj.layerId || obj.id) : null; }
 function active() { return canvas.getActiveObject(); }
+function objectByLayerId(id) { return canvas.getObjects().find(o => layerKey(o) === id); }
+function selectedLayerObject() { return active() || objectByLayerId(selectedLayerId); }
+function rememberSelectedLayer(obj) { selectedLayerId = layerKey(obj); }
 
 function ensureMeta(obj, name) {
   obj.id ||= uid(obj.type || 'layer');
@@ -102,6 +107,7 @@ function ensureMeta(obj, name) {
 
 function addToCanvas(obj, name) {
   ensureMeta(obj, name);
+  rememberSelectedLayer(obj);
   canvas.add(obj);
   canvas.setActiveObject(obj);
   canvas.renderAll();
@@ -124,6 +130,7 @@ function createDrawingLayer(name) {
   layer.locked = false;
   canvas.add(layer);
   activeDrawingLayerId = layerId;
+  rememberSelectedLayer(layer);
   canvas.discardActiveObject();
   canvas.renderAll();
   saveHistory();
@@ -270,10 +277,10 @@ function addGallery(url, label='asset') {
 }
 
 function syncProps() {
-  const obj = active();
-  $('selectedName').textContent = obj ? `${nameOf(obj)} (${obj.type})` : 'No selection';
+  const obj = selectedLayerObject();
+  $('selectedName').textContent = obj ? `${nameOf(obj)} (${obj.isDrawingLayer ? 'drawing layer' : obj.type})` : 'No selection';
   for (const id of ['propX','propY','propW','propH','propRot','propOpacity','textContent']) $(id).value = '';
-  if (!obj) return;
+  if (!obj || obj.isDrawingLayer) return;
   $('propX').value = Math.round(obj.left || 0);
   $('propY').value = Math.round(obj.top || 0);
   $('propW').value = Math.round(obj.getScaledWidth());
@@ -342,7 +349,8 @@ function renderLayers() {
   const a = active();
   objs.forEach((obj, idx) => {
     const item = document.createElement('div');
-    item.className = 'layer-item' + ((obj === a || (obj.isDrawingLayer && (obj.layerId === activeDrawingLayerId || obj.id === activeDrawingLayerId))) ? ' active' : '');
+    const isSelected = obj === a || (!a && layerKey(obj) === selectedLayerId);
+    item.className = 'layer-item' + (isSelected ? ' active' : '');
     const icon = obj.isDrawingLayer ? '✎' : (obj.visible === false ? '🙈' : '👁');
     item.innerHTML = `<span>${icon}</span><span class="layer-name" title="Double-click to rename">${nameOf(obj)}</span><button data-act="rename">✎</button><button data-act="up">↑</button><button data-act="down">↓</button><button data-act="vis">V</button><button data-act="lock">L</button>`;
     item.draggable = true;
@@ -384,12 +392,13 @@ function renderLayers() {
       }
       if (obj.isDrawingLayer) {
         activeDrawingLayerId = obj.layerId || obj.id;
+        rememberSelectedLayer(obj);
         canvas.discardActiveObject();
         canvas.renderAll(); syncProps(); renderLayers();
         setStatus(`${obj.name} selected for drawing.`);
         return;
       }
-      canvas.setActiveObject(obj); canvas.renderAll(); syncProps(); renderLayers();
+      canvas.setActiveObject(obj); rememberSelectedLayer(obj); canvas.renderAll(); syncProps(); renderLayers();
     };
     item.ondblclick = (e) => {
       if (e.target.classList.contains('layer-name') || e.target === item) beginRenameLayer(item, obj);
@@ -472,8 +481,12 @@ async function handleFiles(files) {
 }
 
 async function removeColor(target) {
-  const obj = active();
-  if (!obj || obj.type !== 'image') { alert('배경을 지울 이미지 레이어를 선택하세요.'); return; }
+  const obj = selectedLayerObject();
+  if (!obj || obj.type !== 'image') {
+    const label = obj ? `${nameOf(obj)} (${obj.isDrawingLayer ? 'drawing layer' : obj.type})` : '없음';
+    alert(`배경 제거는 이미지 레이어에서만 가능합니다. 현재 선택: ${label}`);
+    return;
+  }
   if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
   const imgEl = obj.getElement();
   const temp = document.createElement('canvas');
@@ -517,8 +530,12 @@ function imageObjectToDataUrl(obj) {
 }
 
 async function removeBgSelected() {
-  const obj = active();
-  if (!obj || obj.type !== 'image') { alert('Remove BG할 이미지 레이어를 선택하세요.'); return; }
+  const obj = selectedLayerObject();
+  if (!obj || obj.type !== 'image') {
+    const label = obj ? `${nameOf(obj)} (${obj.isDrawingLayer ? 'drawing layer' : obj.type})` : '없음';
+    alert(`Remove BG는 이미지 레이어에서만 가능합니다. 현재 선택: ${label}`);
+    return;
+  }
   const btn = $('removeBg');
   btn.disabled = true;
   setStatus('Remove BG running... 첫 실행은 모델 다운로드 때문에 오래 걸릴 수 있습니다.');
@@ -547,6 +564,7 @@ async function removeBgSelected() {
       canvas.backgroundColor = null;
       $('canvasShell').classList.add('checker');
       canvas.setActiveObject(cutout);
+      rememberSelectedLayer(cutout);
       canvas.renderAll();
       saveHistory(); syncProps(); renderLayers();
       addGallery(url, 'cutout');
@@ -703,8 +721,8 @@ $('generateBtn').onclick = async () => {
   finally { $('generateBtn').disabled = false; }
 };
 
-canvas.on('selection:created', () => { syncProps(); renderLayers(); });
-canvas.on('selection:updated', () => { syncProps(); renderLayers(); });
+canvas.on('selection:created', () => { rememberSelectedLayer(active()); syncProps(); renderLayers(); });
+canvas.on('selection:updated', () => { rememberSelectedLayer(active()); syncProps(); renderLayers(); });
 canvas.on('selection:cleared', () => { syncProps(); renderLayers(); });
 canvas.on('path:created', (e) => {
   const path = e.path;
