@@ -633,6 +633,9 @@ $('transparentBg').onclick = () => { canvas.backgroundColor = null; canvas.rende
 $('whiteBg').onclick = () => { canvas.backgroundColor = '#ffffff'; $('canvasBg').value = '#ffffff'; canvas.renderAll(); saveHistory(); };
 $('toggleChecker').onclick = () => document.getElementById('canvasShell').classList.toggle('checker');
 
+$('photoPickBtn').onclick = () => $('photoInput').click();
+$('filePickBtn').onclick = () => $('uploadInput').click();
+$('photoInput').onchange = e => handleFiles([...e.target.files]);
 $('uploadInput').onchange = e => handleFiles([...e.target.files]);
 $('workspace').ondragover = e => { e.preventDefault(); };
 $('workspace').ondrop = e => { e.preventDefault(); handleFiles([...e.dataTransfer.files]); };

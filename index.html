@@ -87,7 +87,7 @@
     </section>
 
     <section class="option-panel" data-tool-panel="upload">
-      <div class="panel"><h3>Upload</h3><input id="uploadInput" class="input" type="file" accept="image/*" multiple /><p class="hint">PNG/JPG/WebP 업로드 또는 파일을 캔버스 위로 드롭.</p></div>
+      <div class="panel"><h3>Upload</h3><div class="row"><button id="photoPickBtn" class="primary">사진 보관함</button><button id="filePickBtn">파일 선택</button></div><input id="photoInput" class="hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif" multiple /><input id="uploadInput" class="hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif" multiple /><p class="hint">iPad/iPhone은 먼저 사진 보관함 버튼을 사용하세요. 안 뜨면 Safari로 열거나 사진 앱에서 공유→파일에 저장 후 파일 선택을 사용합니다.</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="ai">
@@ -117,6 +117,6 @@
   </aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
-<script src="src/main.js?v=phase2-selection-fix"></script>
+<script src="src/main.js?v=phase2-ipad-photo-picker"></script>
 </body>
 </html>
