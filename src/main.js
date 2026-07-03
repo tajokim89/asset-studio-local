@@ -506,6 +506,60 @@ async function removeColor(target) {
   });
 }
 
+function imageObjectToDataUrl(obj) {
+  const imgEl = obj.getElement();
+  const temp = document.createElement('canvas');
+  temp.width = imgEl.naturalWidth || imgEl.videoWidth || imgEl.width;
+  temp.height = imgEl.naturalHeight || imgEl.videoHeight || imgEl.height;
+  const ctx = temp.getContext('2d');
+  ctx.drawImage(imgEl, 0, 0, temp.width, temp.height);
+  return temp.toDataURL('image/png');
+}
+
+async function removeBgSelected() {
+  const obj = active();
+  if (!obj || obj.type !== 'image') { alert('Remove BG할 이미지 레이어를 선택하세요.'); return; }
+  const btn = $('removeBg');
+  btn.disabled = true;
+  setStatus('Remove BG running... 첫 실행은 모델 다운로드 때문에 오래 걸릴 수 있습니다.');
+  try {
+    if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
+    const image = imageObjectToDataUrl(obj);
+    const res = await fetch('/api/remove-bg', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ image, tolerance: +$('tolerance').value || 36 })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'remove-bg failed');
+    const url = data.url + '?t=' + Date.now();
+    fabric.Image.fromURL(url, (cutout) => {
+      cutout.set({
+        left: obj.left, top: obj.top, scaleX: obj.scaleX, scaleY: obj.scaleY,
+        angle: obj.angle, opacity: obj.opacity, originX: obj.originX, originY: obj.originY,
+        flipX: obj.flipX, flipY: obj.flipY,
+      });
+      cutout._originalSrc = url;
+      ensureMeta(cutout, `Cutout - ${nameOf(obj)}`);
+      const idx = canvas.getObjects().indexOf(obj);
+      obj.visible = false;
+      canvas.insertAt(cutout, idx + 1, false);
+      canvas.backgroundColor = null;
+      $('canvasShell').classList.add('checker');
+      canvas.setActiveObject(cutout);
+      canvas.renderAll();
+      saveHistory(); syncProps(); renderLayers();
+      addGallery(url, 'cutout');
+      setStatus(`Remove BG complete (${data.method}). 원본은 숨김 처리했고 Cutout 레이어를 새로 만들었습니다.`);
+    }, { crossOrigin: 'anonymous' });
+  } catch (err) {
+    setStatus('Remove BG failed: ' + err.message);
+    alert('Remove BG 실패: ' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function resetImage() {
   const obj = active();
   if (!obj || obj.type !== 'image' || !obj._originalSrc) return;
@@ -613,6 +667,7 @@ $('bringFront').onclick = () => { const obj=active(); if(obj){ canvas.bringToFro
 $('sendBack').onclick = () => { const obj=active(); if(obj){ canvas.sendToBack(obj); canvas.renderAll(); saveHistory(); renderLayers(); } };
 
 $('tolerance').oninput = () => $('tolValue').textContent = $('tolerance').value;
+$('removeBg').onclick = removeBgSelected;
 $('removeWhite').onclick = () => removeColor([255,255,255]);
 $('removeBlack').onclick = () => removeColor([0,0,0]);
 $('resetImage').onclick = resetImage;

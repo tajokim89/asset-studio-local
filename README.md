@@ -22,9 +22,18 @@ Current milestone: **Phase 1 editor base**.
 - Zoom/Fit controls
 - PNG export and JSON project save/load
 - Basic color-key background removal
+- One-click Remove BG creates a transparent cutout layer while preserving/hiding the original
 - AI image generation API stub through local Hermes image provider
 
 ## Run locally
+
+Install dependencies:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+Start the local server:
 
 ```bash
 python3 server.py

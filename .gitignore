@@ -16,3 +16,7 @@ venv/
 # Generated exports
 exports/
 output/
+assets/uploads/
+assets/generated/
+assets/processed/
+projects/

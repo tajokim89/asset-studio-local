@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -73,6 +74,45 @@ def data_url_to_bytes(data_url: str) -> tuple[bytes, str]:
     return base64.b64decode(b64), ext
 
 
+def fallback_corner_remove(raw: bytes, tolerance: int = 36) -> bytes:
+    """Conservative fallback: flood-fill transparent pixels connected to corners."""
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    px = img.load()
+    w, h = img.size
+    corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+    targets = [px[x, y][:3] for x, y in corners]
+    seen = set()
+    stack = corners[:]
+
+    def close(rgb):
+        return any(sum((rgb[i] - t[i]) ** 2 for i in range(3)) ** 0.5 <= tolerance for t in targets)
+
+    while stack:
+        x, y = stack.pop()
+        if x < 0 or y < 0 or x >= w or y >= h or (x, y) in seen:
+            continue
+        seen.add((x, y))
+        r, g, b, a = px[x, y]
+        if a == 0 or not close((r, g, b)):
+            continue
+        px[x, y] = (r, g, b, 0)
+        stack.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def remove_background_bytes(raw: bytes, tolerance: int = 36) -> tuple[bytes, str]:
+    try:
+        from rembg import remove
+        return remove(raw), "rembg"
+    except Exception as e:
+        return fallback_corner_remove(raw, tolerance=tolerance), f"fallback:{type(e).__name__}"
+
+
 class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -103,6 +143,19 @@ class Handler(SimpleHTTPRequestHandler):
                 dst = UPLOADS / name
                 dst.write_bytes(raw)
                 return self.send_json(200, {"success": True, "url": f"/assets/uploads/{name}", "path": str(dst)})
+            if path == "/api/remove-bg":
+                raw, _ext = data_url_to_bytes(data.get("image", ""))
+                tolerance = int(data.get("tolerance", 36))
+                out, method = remove_background_bytes(raw, tolerance=tolerance)
+                name = f"cutout_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+                dst = PROCESSED / name
+                dst.write_bytes(out)
+                return self.send_json(200, {
+                    "success": True,
+                    "url": f"/assets/processed/{name}",
+                    "path": str(dst),
+                    "method": method,
+                })
             if path == "/api/generate":
                 prompt = build_prompt(data.get("prompt", ""), data.get("preset", "general"))
                 aspect = data.get("aspect_ratio") or "square"
