@@ -529,23 +529,23 @@ function imageObjectToDataUrl(obj) {
   return temp.toDataURL('image/png');
 }
 
-async function removeBgSelected() {
+async function removeBgSelected(mode='ai') {
   const obj = selectedLayerObject();
   if (!obj || obj.type !== 'image') {
     const label = obj ? `${nameOf(obj)} (${obj.isDrawingLayer ? 'drawing layer' : obj.type})` : '없음';
     alert(`Remove BG는 이미지 레이어에서만 가능합니다. 현재 선택: ${label}`);
     return;
   }
-  const btn = $('removeBg');
+  const btn = mode === 'sheet' ? $('removeSheetBg') : $('removeBg');
   btn.disabled = true;
-  setStatus('Remove BG running... 첫 실행은 모델 다운로드 때문에 오래 걸릴 수 있습니다.');
+  setStatus(mode === 'sheet' ? 'Asset Sheet BG running... 여러 아이템을 보존하는 테두리 배경 제거 중입니다.' : 'AI Cutout running... 첫 실행은 모델 다운로드 때문에 오래 걸릴 수 있습니다.');
   try {
     if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
     const image = imageObjectToDataUrl(obj);
     const res = await fetch('/api/remove-bg', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ image, tolerance: +$('tolerance').value || 36 })
+      body: JSON.stringify({ image, tolerance: +$('tolerance').value || (mode === 'sheet' ? 24 : 36), mode })
     });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'remove-bg failed');
@@ -568,7 +568,7 @@ async function removeBgSelected() {
       canvas.renderAll();
       saveHistory(); syncProps(); renderLayers();
       addGallery(url, 'cutout');
-      setStatus(`Remove BG complete (${data.method}). 원본은 숨김 처리했고 Cutout 레이어를 새로 만들었습니다.`);
+      setStatus(`${mode === 'sheet' ? 'Asset Sheet BG' : 'AI Cutout'} complete (${data.method}). 원본은 숨김 처리했고 Cutout 레이어를 새로 만들었습니다.`);
     }, { crossOrigin: 'anonymous' });
   } catch (err) {
     setStatus('Remove BG failed: ' + err.message);
@@ -691,7 +691,8 @@ $('bringFront').onclick = () => { const obj=active(); if(obj){ canvas.bringToFro
 $('sendBack').onclick = () => { const obj=active(); if(obj){ canvas.sendToBack(obj); canvas.renderAll(); saveHistory(); renderLayers(); } };
 
 $('tolerance').oninput = () => $('tolValue').textContent = $('tolerance').value;
-$('removeBg').onclick = removeBgSelected;
+$('removeBg').onclick = () => removeBgSelected('ai');
+$('removeSheetBg').onclick = () => removeBgSelected('sheet');
 $('removeWhite').onclick = () => removeColor([255,255,255]);
 $('removeBlack').onclick = () => removeColor([0,0,0]);
 $('resetImage').onclick = resetImage;

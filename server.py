@@ -75,19 +75,28 @@ def data_url_to_bytes(data_url: str) -> tuple[bytes, str]:
 
 
 def fallback_corner_remove(raw: bytes, tolerance: int = 36) -> bytes:
-    """Conservative fallback: flood-fill transparent pixels connected to corners."""
+    """Conservative fallback: flood-fill transparent pixels connected to image borders."""
     from PIL import Image
 
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
     px = img.load()
     w, h = img.size
+    step = max(1, min(w, h) // 128)
+    border = []
+    for x in range(0, w, step):
+        border.append((x, 0)); border.append((x, h - 1))
+    for y in range(0, h, step):
+        border.append((0, y)); border.append((w - 1, y))
     corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
-    targets = [px[x, y][:3] for x, y in corners]
+    seeds = list(dict.fromkeys(border + corners))
+    targets = [px[x, y][:3] for x, y in seeds]
+    mins = tuple(min(c[i] for c in targets) for i in range(3))
+    maxs = tuple(max(c[i] for c in targets) for i in range(3))
     seen = set()
-    stack = corners[:]
+    stack = seeds[:]
 
     def close(rgb):
-        return any(sum((rgb[i] - t[i]) ** 2 for i in range(3)) ** 0.5 <= tolerance for t in targets)
+        return all(mins[i] - tolerance <= rgb[i] <= maxs[i] + tolerance for i in range(3))
 
     while stack:
         x, y = stack.pop()
@@ -105,7 +114,60 @@ def fallback_corner_remove(raw: bytes, tolerance: int = 36) -> bytes:
     return out.getvalue()
 
 
-def remove_background_bytes(raw: bytes, tolerance: int = 36) -> tuple[bytes, str]:
+def edge_aware_sheet_remove(raw: bytes, tolerance: int = 24, edge_threshold: int = 40) -> bytes:
+    """Remove smooth border-connected backdrops while preserving multi-object pixel asset sheets."""
+    from collections import deque
+    from PIL import Image, ImageFilter
+
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    px = img.load()
+    w, h = img.size
+
+    # Sample the whole border, not just corners, because generated sheets often use a soft gradient.
+    step = max(1, min(w, h) // 128)
+    samples = []
+    for x in range(0, w, step):
+        samples.append(px[x, 0][:3]); samples.append(px[x, h - 1][:3])
+    for y in range(0, h, step):
+        samples.append(px[0, y][:3]); samples.append(px[w - 1, y][:3])
+    mins = tuple(min(c[i] for c in samples) - tolerance for i in range(3))
+    maxs = tuple(max(c[i] for c in samples) + tolerance for i in range(3))
+
+    edge = img.convert("L").filter(ImageFilter.FIND_EDGES).load()
+
+    def candidate(x, y):
+        r, g, b, a = px[x, y]
+        if a == 0 or edge[x, y] > edge_threshold:
+            return False
+        return mins[0] <= r <= maxs[0] and mins[1] <= g <= maxs[1] and mins[2] <= b <= maxs[2]
+
+    seen = set()
+    q = deque()
+    for x in range(w):
+        if candidate(x, 0): q.append((x, 0))
+        if candidate(x, h - 1): q.append((x, h - 1))
+    for y in range(h):
+        if candidate(0, y): q.append((0, y))
+        if candidate(w - 1, y): q.append((w - 1, y))
+
+    while q:
+        x, y = q.popleft()
+        if x < 0 or y < 0 or x >= w or y >= h or (x, y) in seen or not candidate(x, y):
+            continue
+        seen.add((x, y))
+        r, g, b, a = px[x, y]
+        px[x, y] = (r, g, b, 0)
+        q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+def remove_background_bytes(raw: bytes, tolerance: int = 36, mode: str = "ai") -> tuple[bytes, str]:
+    # AI segmentation is good for one subject, but it often drops most sprites in an asset sheet.
+    # Sheet mode uses edge-aware border flood so all separated objects are preserved.
+    if mode in {"sheet", "flood", "border"}:
+        return edge_aware_sheet_remove(raw, tolerance=tolerance or 24), "edge-aware-sheet"
     try:
         from rembg import remove
         return remove(raw), "rembg"
@@ -146,7 +208,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/remove-bg":
                 raw, _ext = data_url_to_bytes(data.get("image", ""))
                 tolerance = int(data.get("tolerance", 36))
-                out, method = remove_background_bytes(raw, tolerance=tolerance)
+                mode = str(data.get("mode", "ai"))
+                out, method = remove_background_bytes(raw, tolerance=tolerance, mode=mode)
                 name = f"cutout_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
                 dst = PROCESSED / name
                 dst.write_bytes(out)
