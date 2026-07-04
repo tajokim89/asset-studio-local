@@ -12,6 +12,9 @@ let currentTool = 'select';
 let viewScale = 1;
 let isPanning = false;
 let panStart = null;
+const FREE_PAN_PAD = 1800;
+const FREE_PAN_EDGE = 80;
+let canvasPanOffset = { x: 0, y: 0 };
 let activeDrawingLayerId = null;
 let selectedLayerId = null;
 let isMaskDragging = false;
@@ -432,16 +435,22 @@ function updateCanvasStageSize() {
   const baseH = shell.offsetHeight || (canvas.height + 36);
   const scaledW = baseW * viewScale;
   const scaledH = baseH * viewScale;
-  const freePad = 360;
+  const freePad = FREE_PAN_PAD;
   const stageW = Math.ceil(Math.max(workspace.clientWidth, scaledW + freePad * 2));
   const stageH = Math.ceil(Math.max(workspace.clientHeight, scaledH + freePad * 2));
-  const left = Math.max(freePad, Math.round((stageW - scaledW) / 2));
-  const top = Math.max(freePad, Math.round((stageH - scaledH) / 2));
+  const baseLeft = Math.round((stageW - scaledW) / 2);
+  const baseTop = Math.round((stageH - scaledH) / 2);
+  const maxOffsetX = Math.max(0, baseLeft - FREE_PAN_EDGE);
+  const maxOffsetY = Math.max(0, baseTop - FREE_PAN_EDGE);
+  canvasPanOffset.x = clamp(canvasPanOffset.x, -maxOffsetX, maxOffsetX);
+  canvasPanOffset.y = clamp(canvasPanOffset.y, -maxOffsetY, maxOffsetY);
+  const left = Math.round(baseLeft + canvasPanOffset.x);
+  const top = Math.round(baseTop + canvasPanOffset.y);
   stage.style.width = `${stageW}px`;
   stage.style.height = `${stageH}px`;
   shell.style.left = `${left}px`;
   shell.style.top = `${top}px`;
-  return { left, top, scaledW, scaledH, stageW, stageH };
+  return { left, top, scaledW, scaledH, stageW, stageH, baseLeft, baseTop };
 }
 
 function setViewScale(scale, anchorEvent = null) {
@@ -842,11 +851,26 @@ function activateTool(tool) {
   document.querySelectorAll('.option-panel').forEach(p => p.classList.toggle('active', p.dataset.toolPanel === tool));
   $('toolModeLabel').textContent = `${tool[0].toUpperCase()}${tool.slice(1)} mode`;
   $('workspace').classList.toggle('pan-mode', tool === 'pan');
+  canvas.getObjects().forEach(o => {
+    if (o.__lockedByPan && tool !== 'pan') { o.selectable = true; delete o.__lockedByPan; }
+  });
   if (['brush','pencil','eraser'].includes(tool)) { setMaskMode(false); setDrawingTool(tool); }
   else { setDrawingTool('select'); setMaskMode(tool === 'mask'); }
+  if (tool === 'pan') {
+    canvas.selection = false;
+    canvas.discardActiveObject();
+    canvas.getObjects().forEach(o => {
+      if (o.selectable !== false) o.__lockedByPan = true;
+      o.selectable = false;
+    });
+    canvas.defaultCursor = 'grab';
+    canvas.renderAll();
+  } else if (tool !== 'mask') {
+    canvas.defaultCursor = 'default';
+  }
   const notes = {
     select:'Select mode. 레이어 선택/이동/리사이즈 가능.',
-    pan:'Pan mode. 캔버스 주변을 드래그해 작업공간을 이동합니다.',
+    pan:'Pan mode. 확대하지 않은 상태에서도 캔버스 판 자체를 자유롭게 드래그해 이동합니다.',
     crop:'Crop mode scaffold. Phase 1에서는 UI 자리만 잡았습니다.',
     brush:'Brush mode. 캔버스에 직접 그립니다.',
     pencil:'Pencil mode. 얇은 선으로 직접 그립니다.',
@@ -895,16 +919,29 @@ $('uploadInput').onchange = e => handleFiles([...e.target.files]);
 $('workspace').ondragover = e => { e.preventDefault(); };
 $('workspace').ondrop = e => { e.preventDefault(); handleFiles([...e.dataTransfer.files]); };
 $('workspace').addEventListener('mousedown', e => {
-  if (currentTool !== 'pan' && !e.spaceKeyActive) return;
+  if (currentTool !== 'pan' || e.button !== 0) return;
+  e.preventDefault();
   isPanning = true;
-  panStart = { x: e.clientX, y: e.clientY, left: $('workspace').scrollLeft, top: $('workspace').scrollTop };
+  canvas.defaultCursor = 'grabbing';
+  panStart = {
+    x: e.clientX,
+    y: e.clientY,
+    offsetX: canvasPanOffset.x,
+    offsetY: canvasPanOffset.y,
+  };
 });
 window.addEventListener('mousemove', e => {
   if (!isPanning || !panStart) return;
-  $('workspace').scrollLeft = panStart.left - (e.clientX - panStart.x);
-  $('workspace').scrollTop = panStart.top - (e.clientY - panStart.y);
+  e.preventDefault();
+  canvasPanOffset.x = panStart.offsetX + (e.clientX - panStart.x);
+  canvasPanOffset.y = panStart.offsetY + (e.clientY - panStart.y);
+  updateCanvasStageSize();
 });
-window.addEventListener('mouseup', () => { isPanning = false; panStart = null; });
+window.addEventListener('mouseup', () => {
+  if (isPanning && currentTool === 'pan') canvas.defaultCursor = 'grab';
+  isPanning = false;
+  panStart = null;
+});
 
 $('addText').onclick = () => addToCanvas(new fabric.Textbox($('newText').value || 'Text', { left: 160, top: 160, width: 420, fontSize: 72, fontFamily: 'Inter, Arial', fill: '#111111' }), 'Text');
 $('addTitle').onclick = () => addToCanvas(new fabric.Textbox('BIG TITLE', { left: 140, top: 140, width: 620, fontSize: 112, fontFamily: 'Inter, Arial', fontWeight: 800, fill: '#111111', stroke: '#ffffff', strokeWidth: 0 }), 'Title');
