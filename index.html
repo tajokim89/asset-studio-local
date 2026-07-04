@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Asset Studio Local</title>
-  <link rel="stylesheet" href="styles/app.css?v=phase3e-free-pan-board" />
+  <title>Pixel Asset Studio</title>
+  <link rel="stylesheet" href="styles/app.css?v=phase5-chat" />
 </head>
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand"><span>Asset</span> Studio <span class="badge">v0.3 mask base</span></div>
+    <div class="brand"><span>Pixel</span> Asset Studio <span class="badge">Game Asset Canvas</span></div>
     <select id="presetSize" class="input" style="max-width:170px">
       <option value="1024x1024">1024×1024 Square</option>
       <option value="1920x1080">1920×1080 Landscape</option>
@@ -18,45 +18,45 @@
     </select>
     <input id="canvasW" class="input" type="number" value="1024" style="max-width:92px" />
     <input id="canvasH" class="input" type="number" value="1024" style="max-width:92px" />
-    <button id="applyCanvas">Canvas</button>
+    <button id="applyCanvas">캔버스 적용</button>
     <button id="zoomOut">−</button><div id="zoomLabel" class="badge zoom-label">100%</div><button id="zoomIn">+</button>
     <button id="fitCanvas">Fit</button>
     <button id="undoBtn">Undo</button>
     <button id="redoBtn">Redo</button>
     <div class="spacer"></div>
-    <button id="saveProject">Save JSON</button>
-    <button id="loadProjectBtn">Load</button><input id="loadProject" type="file" accept="application/json" class="hidden" />
+    <button id="saveProject">프로젝트 저장</button>
+    <button id="loadProjectBtn">불러오기</button><input id="loadProject" type="file" accept="application/json" class="hidden" />
     <button id="topPhotoPickBtn" class="primary">사진 넣기</button><input id="topPhotoInput" class="hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif" multiple />
-    <button id="exportPng" class="primary">Export PNG</button>
+    <button id="exportPng" class="primary">PNG 내보내기</button>
   </header>
 
   <nav class="toolrail" aria-label="Tools">
-    <button class="tool-button active" data-tool="select"><b>↖</b><span>Select</span></button>
-    <button class="tool-button" data-tool="pan"><b>✋</b><span>Pan</span></button>
-    <button class="tool-button" data-tool="crop"><b>▣</b><span>Crop</span></button>
-    <button class="tool-button" data-tool="brush"><b>🖌</b><span>Brush</span></button>
-    <button class="tool-button" data-tool="pencil"><b>✎</b><span>Pencil</span></button>
-    <button class="tool-button" data-tool="eraser"><b>⌫</b><span>Eraser</span></button>
-    <button class="tool-button" data-tool="mask"><b>◐</b><span>Mask</span></button>
-    <button class="tool-button" data-tool="text"><b>T</b><span>Text</span></button>
-    <button class="tool-button" data-tool="shape"><b>□</b><span>Shape</span></button>
-    <button class="tool-button" data-tool="upload"><b>⬆</b><span>Upload</span></button>
-    <button class="tool-button" data-tool="ai"><b>AI</b><span>AI</span></button>
+    <button class="tool-button active" data-tool="select"><b>↖</b><span>선택</span></button>
+    <button class="tool-button" data-tool="pan"><b>✋</b><span>이동</span></button>
+    <button class="tool-button" data-tool="crop"><b>▣</b><span>크롭</span></button>
+    <button class="tool-button" data-tool="brush"><b>🖌</b><span>브러시</span></button>
+    <button class="tool-button" data-tool="pencil"><b>✎</b><span>펜슬</span></button>
+    <button class="tool-button" data-tool="eraser"><b>⌫</b><span>지우개</span></button>
+    <button class="tool-button" data-tool="mask"><b>◐</b><span>마스크</span></button>
+    <button class="tool-button" data-tool="text"><b>T</b><span>텍스트</span></button>
+    <button class="tool-button" data-tool="shape"><b>□</b><span>도형</span></button>
+    <button class="tool-button" data-tool="upload"><b>⬆</b><span>업로드</span></button>
+    <button class="tool-button" data-tool="ai"><b>AI</b><span>생성</span></button>
   </nav>
 
   <aside class="sidebar">
     <div class="panel">
-      <h3>Tool Options</h3>
+      <h3>도구 옵션</h3>
       <div id="toolModeLabel" class="small">Select mode</div>
       <p class="hint">왼쪽 툴바에서 편집 도구를 고르고, 여기서 옵션을 조정합니다.</p>
     </div>
 
     <section class="option-panel active" data-tool-panel="select">
-      <div class="panel"><h3>Select / Move</h3><button id="selectPhotoPickBtn" class="primary" style="width:100%;margin-bottom:8px">사진 넣기</button><p class="hint">캔버스 레이어를 클릭해 선택하고 이동/리사이즈/회전합니다. 오른쪽 Transform 패널에서 수치 편집도 가능합니다.</p></div>
+      <div class="panel"><h3>선택 / 이동</h3><button id="selectPhotoPickBtn" class="primary" style="width:100%;margin-bottom:8px">사진 넣기</button><p class="hint">캔버스 레이어를 클릭해 선택하고 이동/리사이즈/회전합니다. 오른쪽 Transform 패널에서 수치 편집도 가능합니다.</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="pan">
-      <div class="panel"><h3>Pan / Zoom</h3><p class="hint">Pan 모드에서는 캔버스 영역을 드래그해 작업공간을 이동합니다. 상단 −/+로 확대/축소합니다.</p></div>
+      <div class="panel"><h3>작업영역 이동 / 확대</h3><p class="hint">Pan 모드에서는 캔버스 영역을 드래그해 작업공간을 이동합니다. 상단 −/+로 확대/축소합니다.</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="crop">
@@ -64,60 +64,62 @@
     </section>
 
     <section class="option-panel" data-tool-panel="brush">
-      <div class="panel"><h3>Brush</h3><label>Brush color</label><input id="brushColor" class="input" type="color" value="#111111" /><label>Brush size <span id="brushSizeValue" class="range-value">16</span></label><input id="brushSize" class="input" type="range" min="1" max="120" value="16" /></div>
+      <div class="panel"><h3>브러시</h3><label>Brush color</label><input id="brushColor" class="input" type="color" value="#111111" /><label>Brush size <span id="brushSizeValue" class="range-value">16</span></label><input id="brushSize" class="input" type="range" min="1" max="120" value="16" /></div>
     </section>
 
     <section class="option-panel" data-tool-panel="pencil">
-      <div class="panel"><h3>Pencil</h3><p class="hint">브러시보다 얇은 선으로 직접 그립니다.</p><label>Pencil color</label><input id="pencilColorMirror" class="input" type="color" value="#111111" /><label>Pencil size uses Brush size</label></div>
+      <div class="panel"><h3>펜슬</h3><p class="hint">브러시보다 얇은 선으로 직접 그립니다.</p><label>Pencil color</label><input id="pencilColorMirror" class="input" type="color" value="#111111" /><label>Pencil size uses Brush size</label></div>
     </section>
 
     <section class="option-panel" data-tool-panel="eraser">
-      <div class="panel"><h3>Eraser</h3><label>Eraser size <span id="eraserSizeValue" class="range-value">16</span></label><input id="eraserSize" class="input" type="range" min="1" max="160" value="16" /><p class="hint">현재는 마스크 스트로크 방식의 지우개입니다. Phase 2에서 복원 브러시와 마스크 보기로 고도화합니다.</p></div>
+      <div class="panel"><h3>지우개</h3><label>Eraser size <span id="eraserSizeValue" class="range-value">16</span></label><input id="eraserSize" class="input" type="range" min="1" max="160" value="16" /><p class="hint">현재는 마스크 스트로크 방식의 지우개입니다. Phase 2에서 복원 브러시와 마스크 보기로 고도화합니다.</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="mask">
-      <div class="panel"><h3>Mask / Selection</h3><p class="hint">AI로 바꿀 영역을 지정합니다. 기본은 브러시 마스크이며, 필요하면 사각 선택으로 전환할 수 있습니다.</p><label>Mask tool</label><select id="maskMode" class="input"><option value="brush">Brush mask</option><option value="erase">Mask eraser</option><option value="rect">Rectangle select</option></select><label>Mask brush size <span id="maskSizeValue" class="range-value">48</span></label><input id="maskSize" class="input" type="range" min="4" max="220" value="48" /><div class="row"><button id="clearMask" class="danger">Clear Mask</button><button id="invertMask">Invert</button></div><button id="exportMask" class="primary" style="width:100%;margin-top:8px">Export Mask PNG</button><p id="maskInfo" class="hint">Mask regions: 0</p></div>
+      <div class="panel"><h3>마스크 / 선택영역</h3><p class="hint">교체할 물체는 빨간 마스크, 손/앞가림은 파란 마스크, 손잡이 기준점은 앵커로 찍습니다.</p><label>Mask tool</label><select id="maskMode" class="input"><option value="brush">교체 영역 브러시</option><option value="erase">교체 영역 지우개</option><option value="rect">교체 영역 사각</option><option value="occlusion">손/앞가림 브러시</option><option value="anchor">손잡이 앵커 찍기</option></select><label>Brush size <span id="maskSizeValue" class="range-value">48</span></label><input id="maskSize" class="input" type="range" min="4" max="220" value="48" /><div class="row"><button id="clearMask" class="danger">Clear Mask</button><button id="invertMask">Invert</button></div><button id="exportMask" class="primary" style="width:100%;margin-top:8px">Export Edit Mask PNG</button><p id="maskInfo" class="hint">Mask regions: 0</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="text">
-      <div class="panel"><h3>Text</h3><input id="newText" class="input" value="Your Text" /><div class="row"><button id="addText" class="primary">Add Text</button><button id="addTitle">Title</button></div></div>
+      <div class="panel"><h3>텍스트</h3><input id="newText" class="input" value="Your Text" /><div class="row"><button id="addText" class="primary">텍스트 추가</button><button id="addTitle">제목 스타일</button></div></div>
     </section>
 
     <section class="option-panel" data-tool-panel="shape">
-      <div class="panel"><h3>Shapes</h3><div class="pillgrid"><button id="addRect" class="pill">Rectangle</button><button id="addCircle" class="pill">Circle</button><button id="addLine" class="pill">Line</button><button id="addRoundRect" class="pill">Round Rect</button></div></div>
+      <div class="panel"><h3>도형</h3><div class="pillgrid"><button id="addRect" class="pill">사각형</button><button id="addCircle" class="pill">원형</button><button id="addLine" class="pill">선</button><button id="addRoundRect" class="pill">둥근 사각형</button></div></div>
     </section>
 
     <section class="option-panel" data-tool-panel="upload">
-      <div class="panel"><h3>Upload</h3><div class="row"><button id="photoPickBtn" class="primary">사진 보관함</button><button id="filePickBtn">파일 선택</button></div><input id="photoInput" class="hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif" multiple /><input id="uploadInput" class="hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif" multiple /><p class="hint">iPad/iPhone은 먼저 사진 보관함 버튼을 사용하세요. 안 뜨면 Safari로 열거나 사진 앱에서 공유→파일에 저장 후 파일 선택을 사용합니다.</p></div>
+      <div class="panel"><h3>이미지 가져오기</h3><div class="row"><button id="photoPickBtn" class="primary">사진 보관함</button><button id="filePickBtn">파일 선택</button></div><input id="photoInput" class="hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif" multiple /><input id="uploadInput" class="hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif" multiple /><p class="hint">iPad/iPhone은 먼저 사진 보관함 버튼을 사용하세요. 안 뜨면 Safari로 열거나 사진 앱에서 공유→파일에 저장 후 파일 선택을 사용합니다.</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="ai">
-      <div class="panel"><h3>AI Generate</h3><textarea id="aiPrompt" class="input" rows="5" placeholder="예: cute robot sticker, isolated, transparent-friendly"></textarea><div class="row"><select id="aiPreset" class="input"><option value="general">General</option><option value="product">Product shot</option><option value="character">Character</option><option value="icon">Icon</option><option value="logo">Logo concept</option><option value="game">Game asset</option><option value="ui">UI element</option><option value="background">Background</option><option value="pixel">Pixel art</option><option value="sticker">Sticker</option><option value="thumbnail">Thumbnail element</option></select><select id="aiAspect" class="input"><option value="square">1:1</option><option value="landscape">16:9</option><option value="portrait">9:16</option></select></div><button id="generateBtn" class="primary" style="width:100%">Generate in page</button></div>
+      <div class="panel"><h3>AI 에셋 생성</h3><textarea id="aiPrompt" class="input" rows="5" placeholder="예: cute robot sticker, isolated, transparent-friendly"></textarea><div class="row"><select id="aiPreset" class="input"><option value="general">General</option><option value="product">Product shot</option><option value="character">Character</option><option value="icon">Icon</option><option value="logo">Logo concept</option><option value="game">Game asset</option><option value="ui">UI element</option><option value="background">Background</option><option value="pixel">Pixel art</option><option value="sticker">Sticker</option><option value="thumbnail">Thumbnail element</option></select><select id="aiAspect" class="input"><option value="square">1:1</option><option value="landscape">16:9</option><option value="portrait">9:16</option></select></div><button id="generateBtn" class="primary" style="width:100%">에셋 생성</button></div>
     </section>
 
-    <div class="panel"><h3>Gallery</h3><div id="gallery" class="gallery"></div></div>
-    <div class="panel"><h3>Status</h3><div id="status" class="hint status">Ready.</div></div>
+    <div class="panel"><h3>에셋 갤러리</h3><div id="gallery" class="gallery"></div></div>
+    <div class="panel"><h3>상태</h3><div id="status" class="hint status">Ready.</div></div>
   </aside>
 
   <div id="leftResize" class="resize-handle left-resize" title="Drag to resize left panel"></div>
 
   <main id="workspace" class="workspace">
+    <div id="emptyCanvasHint" class="empty-canvas-hint"><strong>이미지를 끌어오거나 사진 넣기</strong><span>투명 PNG 게임 에셋을 만들 캔버스입니다.</span></div>
     <div id="canvasStage" class="canvas-stage"><div id="canvasShell" class="canvas-shell checker"><canvas id="c" width="1024" height="1024"></canvas></div></div>
   </main>
 
   <div id="rightResize" class="resize-handle right-resize" title="Drag to resize right panel"></div>
 
   <aside class="props">
-    <div class="panel"><h3>Properties</h3><div id="selectedName" class="small">No selection</div><label>X / Y</label><div class="row"><input id="propX" class="input" type="number"><input id="propY" class="input" type="number"></div><label>W / H</label><div class="row"><input id="propW" class="input" type="number"><input id="propH" class="input" type="number"></div><label>Rotation / Opacity</label><div class="row"><input id="propRot" class="input" type="number"><input id="propOpacity" class="input" type="number" min="0" max="1" step="0.05"></div><div class="row"><button id="applyProps">Apply</button><button id="duplicateObj">Duplicate</button></div><div class="row"><button id="bringFront">Front</button><button id="sendBack">Back</button></div><button id="deleteObj" class="danger" style="width:100%">Delete</button></div>
-    <div class="panel"><h3>Style / Text</h3><label>Fill / Stroke</label><div class="row"><input id="fillColor" class="input" type="color" value="#ffffff"><input id="strokeColor" class="input" type="color" value="#000000"></div><label>Text content</label><input id="textContent" class="input" placeholder="Selected text" /><label>Font size / Stroke width</label><div class="row"><input id="fontSize" class="input" type="number" value="72"><input id="strokeWidth" class="input" type="number" value="0"></div><div class="row"><button id="applyStyle">Apply Style</button><button id="toggleBold">Bold</button></div></div>
-    <div class="panel"><h3>Background</h3><button id="removeBg" class="primary" style="width:100%">AI Cutout</button><button id="removeSheetBg" style="width:100%;margin-top:8px">Asset Sheet BG</button><p class="hint">AI Cutout은 단일 피사체용입니다. 여러 아이템이 있는 시트/픽셀 에셋은 Asset Sheet BG를 쓰면 아이템 전체를 보존합니다.</p><div class="row"><button id="removeWhite">Remove white</button><button id="removeBlack">Remove black</button></div><label>Tolerance <span id="tolValue" class="range-value">24</span></label><input id="tolerance" class="input" type="range" min="0" max="160" value="24" /><button id="resetImage" style="width:100%">Reset image</button><p class="hint">색상 기반 제거는 보조 기능입니다.</p></div>
-    <div class="panel"><h3>Canvas / Export</h3><label>Canvas background</label><input id="canvasBg" class="input" type="color" value="#ffffff" /><div class="row"><button id="transparentBg">Transparent BG</button><button id="whiteBg">White BG</button></div><div class="row"><button id="toggleChecker">Checker</button><button id="exportSelected">Selected PNG</button></div><button id="exportPng2" class="primary" style="width:100%">Full PNG</button></div>
-    <div class="panel"><h3>AI Edit</h3><p class="hint">Mask로 선택한 영역만 AI로 다시 그립니다. 먼저 이미지 레이어와 마스크 영역을 준비하세요.</p><div id="aiMaskSummary" class="small">No mask selected</div><label>선택영역 편집 프롬프트</label><textarea id="inpaintPrompt" class="input" rows="4" placeholder="예: 손에 든 물건을 낡은 열쇠로 바꿔줘"></textarea><label>피할 것 / Negative</label><input id="inpaintNegative" class="input" placeholder="예: blurry, extra fingers, text, watermark"><label>결과 적용</label><select id="inpaintApplyMode" class="input"><option value="new-layer">새 레이어로 추가</option><option value="replace">선택 이미지 교체</option></select><div class="row"><button id="runInpaint" class="primary">선택영역 AI 재생성</button><button id="previewMask">Mask PNG</button></div><div id="inpaintResult" class="small">Ready after mask selection.</div></div>
-    <div class="panel"><h3>Layers</h3><div class="row"><button id="addLayer" class="primary">+ Layer</button><button id="addImageLayer">+ Image</button></div><div id="layers" class="layers"></div></div>
-    <div class="panel"><h3>Shortcuts</h3><p class="hint"><span class="kbd">Del</span> 삭제 · <span class="kbd">⌘/Ctrl+D</span> 복제 · <span class="kbd">⌘/Ctrl+Z</span> Undo · <span class="kbd">Space</span> Pan 임시</p></div>
+    <div class="panel"><h3>Transform</h3><div id="selectedName" class="small">선택 없음</div><label>X / Y</label><div class="row"><input id="propX" class="input" type="number"><input id="propY" class="input" type="number"></div><label>W / H</label><div class="row"><input id="propW" class="input" type="number"><input id="propH" class="input" type="number"></div><label>Rotation / Opacity</label><div class="row"><input id="propRot" class="input" type="number"><input id="propOpacity" class="input" type="number" min="0" max="1" step="0.05"></div><div class="row"><button id="applyProps">값 적용</button><button id="duplicateObj">복제</button></div><div class="row"><button id="bringFront">맨 앞으로</button><button id="sendBack">맨 뒤로</button></div><button id="deleteObj" class="danger compact-danger">삭제</button></div>
+    <div class="panel"><h3>Appearance / Text</h3><label>Fill / Stroke</label><div class="row"><input id="fillColor" class="input" type="color" value="#ffffff"><input id="strokeColor" class="input" type="color" value="#000000"></div><label>Text content</label><input id="textContent" class="input" placeholder="Selected text" /><label>Font size / Stroke width</label><div class="row"><input id="fontSize" class="input" type="number" value="72"><input id="strokeWidth" class="input" type="number" value="0"></div><div class="row"><button id="applyStyle">스타일 적용</button><button id="toggleBold">Bold</button></div></div>
+    <div class="panel"><h3>배경 제거</h3><button id="removeBg" class="primary" style="width:100%">AI 배경 제거</button><button id="removeSheetBg" style="width:100%;margin-top:8px">에셋 시트 배경 제거</button><p class="hint">AI Cutout은 단일 피사체용입니다. 여러 아이템이 있는 시트/픽셀 에셋은 Asset Sheet BG를 쓰면 아이템 전체를 보존합니다.</p><div class="row"><button id="removeWhite">흰색 제거</button><button id="removeBlack">검은색 제거</button></div><label>Tolerance <span id="tolValue" class="range-value">24</span></label><input id="tolerance" class="input" type="range" min="0" max="160" value="24" /><button id="resetImage" style="width:100%">원본 복원</button><p class="hint">색상 기반 제거는 보조 기능입니다.</p></div>
+    <div class="panel"><h3>캔버스 / 내보내기</h3><label>Canvas background</label><input id="canvasBg" class="input" type="color" value="#ffffff" /><div class="row"><button id="transparentBg">투명 배경</button><button id="whiteBg">흰 배경</button></div><div class="row"><button id="toggleChecker">체커보드</button><button id="exportSelected">선택 PNG</button></div><button id="exportPng2" class="primary" style="width:100%">전체 PNG</button></div>
+    <div class="panel"><h3>AI Chat 편집기</h3><div id="aiChatState" class="small">현재 캔버스 상태를 읽어 명령을 제안합니다.</div><div id="aiChatLog" class="ai-chat-log"><div class="chat-msg assistant">예: “배경 투명하게”, “선택 이미지 배경 제거”, “마스크 영역 손가락 접점 자연스럽게”</div></div><textarea id="aiChatInput" class="input" rows="3" placeholder="편집 명령을 입력하세요"></textarea><div class="row"><button id="sendAiChat" class="primary">명령 해석</button><button id="clearAiChat">로그 지우기</button></div><div id="aiChatAction" class="ai-chat-action hidden"><div id="aiChatActionText" class="small"></div><div class="row"><button id="confirmAiChatAction" class="primary">실행</button><button id="cancelAiChatAction">취소</button></div></div></div>
+    <div class="panel"><h3>오브젝트 치환 B안</h3><p class="hint">검→곤봉은 “마스크 bbox에 스티커 붙이기”가 아니라, 손잡이 앵커에 맞춰 배치하고 손/앞가림 마스크를 원본에서 다시 올립니다.</p><div id="aiMaskSummary" class="small">No mask selected</div><label>새 오브젝트</label><textarea id="replaceObjectPrompt" class="input" rows="3" placeholder="예: crude wooden club, held weapon, pixel art, same angle"></textarea><label>피할 것 / Negative</label><input id="replaceObjectNegative" class="input" placeholder="예: goblin, hand, body, background, text, watermark"><label>Replacement grip point on generated PNG (%)</label><div class="row"><input id="replaceAnchorX" class="input" type="number" value="78" min="0" max="100" title="object grip X %"><input id="replaceAnchorY" class="input" type="number" value="82" min="0" max="100" title="object grip Y %"><input id="replaceFitScale" class="input" type="number" value="1.00" min="0.2" max="3" step="0.05" title="fit scale"></div><div class="row"><label class="checkline"><input id="useGripAnchor" type="checkbox" checked> 앵커에 손잡이 맞춤</label><label class="checkline"><input id="clearOriginalUnderMask" type="checkbox" checked> 기존 물체 비움</label></div><div class="row"><label class="checkline"><input id="createOcclusionLayer" type="checkbox" checked> 손/앞가림 레이어 생성</label></div><div class="row"><button id="generateReplacement" class="primary">오브젝트만 생성/앵커 배치</button><button id="previewMask">Mask PNG</button></div><div id="replaceResult" class="small">마스크+앵커 선택 후 새 오브젝트를 생성합니다.</div><hr class="panel-sep"><details><summary>고급: 마스크 안쪽 직접 재생성</summary><p class="hint">스타일이 흔들릴 수 있어 기본값은 아닙니다. 접점 보정/작은 패치에만 사용하세요.</p><label>선택영역 편집 프롬프트</label><textarea id="inpaintPrompt" class="input" rows="3" placeholder="예: 손가락 접점만 자연스럽게 정리"></textarea><label>피할 것 / Negative</label><input id="inpaintNegative" class="input" placeholder="예: full redraw, new body, background, text"><button id="runInpaint" style="width:100%;margin-top:8px">선택영역 직접 재생성</button><div id="inpaintPreviewPanel" class="inpaint-preview hidden"><div class="small">AI 결과 미리보기</div><img id="inpaintPreviewImg" alt="AI edit preview"><div class="row"><button id="applyInpaintNewLayer" class="primary">새 레이어 적용</button><button id="applyInpaintReplace">선택 이미지 교체</button></div><div class="row"><button id="retryInpaint">다시 생성</button><button id="cancelInpaint" class="danger compact-danger">취소</button></div></div><div id="inpaintResult" class="small">Ready after mask selection.</div></details></div>
+    <div class="panel"><h3>레이어</h3><div class="row"><button id="addLayer" class="primary">+ 드로잉 레이어</button><button id="addImageLayer">+ 이미지 자리</button></div><div id="layers" class="layers"></div></div>
+    <div class="panel"><h3>단축키</h3><p class="hint"><span class="kbd">Del</span> 삭제 · <span class="kbd">⌘/Ctrl+D</span> 복제 · <span class="kbd">⌘/Ctrl+Z</span> Undo · <span class="kbd">Space</span> Pan 임시</p></div>
   </aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
-<script src="src/main.js?v=phase4-ai-edit-panel"></script>
+<script src="src/main.js?v=phase5-chat"></script>
 </body>
 </html>
