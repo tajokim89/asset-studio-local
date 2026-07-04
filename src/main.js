@@ -1487,7 +1487,7 @@ async function sendAiChat() {
   }
 }
 
-function executeChatAction(action = pendingChatAction) {
+async function executeChatAction(action = pendingChatAction) {
   if (!action) return;
   const params = action.params || {};
   const done = (msg) => {
@@ -1497,6 +1497,16 @@ function executeChatAction(action = pendingChatAction) {
     refreshAiChatState();
   };
   switch (action.type) {
+    case 'plan': {
+      const actions = params.actions || [];
+      appendChatMessage('assistant', `계획 실행 시작: ${actions.length}단계`);
+      for (const step of actions) await executeChatAction({ ...step, requires_confirm: false });
+      done('계획 실행 요청을 완료했습니다. 비동기 작업은 상태 메시지에서 진행을 확인하세요.');
+      break;
+    }
+    case 'state_summary':
+      done(`상태 요약: ${$('aiChatState')?.textContent || '상태 정보 없음'}`);
+      break;
     case 'transparent_canvas':
       $('transparentBg')?.click();
       done('실행됨: 캔버스 배경을 투명으로 변경했습니다.');
@@ -1506,8 +1516,8 @@ function executeChatAction(action = pendingChatAction) {
       done('실행됨: 체커보드를 토글했습니다.');
       break;
     case 'remove_bg':
-      removeBgSelected(params.mode || 'ai');
-      done(`실행됨: ${params.mode === 'sheet' ? '에셋 시트' : 'AI'} 배경 제거 요청을 시작했습니다.`);
+      await removeBgSelected(params.mode || 'ai');
+      done(`실행됨: ${params.mode === 'sheet' ? '에셋 시트' : 'AI'} 배경 제거 요청을 완료했습니다.`);
       break;
     case 'activate_mask':
       activateTool('mask');

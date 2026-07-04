@@ -456,6 +456,21 @@ def classify_chat_command(message: str, context: dict | None = None) -> dict:
 
     if not text:
         return {"success": False, "error": "Message is required"}
+    wants_export = any(k in low for k in ["내보내", "export", "png", "저장"])
+    wants_bg_remove = any(k in low for k in ["배경 제거", "누끼", "remove bg", "remove background", "cutout"])
+    if any(k in low for k in ["상태", "요약", "뭐 있어", "canvas state", "summary"]):
+        selected = context.get("selectedLayer") or {"name": "선택 없음", "type": "none"}
+        mask = context.get("mask") or {}
+        return response(
+            "state_summary",
+            "현재 상태 요약",
+            f"캔버스 {context.get('canvas', {}).get('width', '?')}×{context.get('canvas', {}).get('height', '?')}, 레이어 {context.get('layerCount', 0)}개, 선택 {selected.get('name')} / {selected.get('type')}, 마스크 {mask.get('count', 0)}개입니다.",
+            {},
+            False,
+        )
+    if wants_bg_remove and wants_export and has_image:
+        mode = "sheet" if any(k in low for k in ["시트", "여러", "아이템", "스프라이트", "sheet", "sprite"]) else "ai"
+        return response("plan", "배경 제거 후 PNG 내보내기", "2단계 실행 계획입니다. 확인하면 배경 제거를 시작하고, 완료 후 PNG 내보내기를 실행합니다.", {"actions": [{"type": "remove_bg", "params": {"mode": mode}}, {"type": "export_png", "params": {}}]})
     if any(k in low for k in ["투명", "transparent"]) and any(k in low for k in ["캔버스", "배경", "background"]):
         return response("transparent_canvas", "캔버스 배경 투명화", "캔버스 배경을 투명으로 바꿀 수 있습니다.")
     if any(k in low for k in ["체커", "checker"]):
