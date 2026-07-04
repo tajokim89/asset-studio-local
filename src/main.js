@@ -423,12 +423,34 @@ function setCanvasSize(w, h) {
   saveHistory();
 }
 
-function setViewScale(scale) {
-  viewScale = Math.max(0.1, Math.min(2, scale));
+function setViewScale(scale, anchorEvent = null) {
+  const workspace = $('workspace');
   const shell = document.querySelector('.canvas-shell');
+  const previous = viewScale;
+  const next = Math.max(0.1, Math.min(4, scale));
+  if (Math.abs(next - previous) < 0.001) return;
+
+  let anchorX = workspace.clientWidth / 2;
+  let anchorY = workspace.clientHeight / 2;
+  let contentX = null;
+  let contentY = null;
+  if (anchorEvent) {
+    const wsRect = workspace.getBoundingClientRect();
+    anchorX = anchorEvent.clientX - wsRect.left;
+    anchorY = anchorEvent.clientY - wsRect.top;
+    contentX = (workspace.scrollLeft + anchorX) / previous;
+    contentY = (workspace.scrollTop + anchorY) / previous;
+  }
+
+  viewScale = next;
   shell.style.transform = `scale(${viewScale})`;
-  shell.style.transformOrigin = 'center center';
+  shell.style.transformOrigin = 'top left';
   if ($('zoomLabel')) $('zoomLabel').textContent = `${Math.round(viewScale * 100)}%`;
+
+  if (contentX !== null && contentY !== null) {
+    workspace.scrollLeft = contentX * viewScale - anchorX;
+    workspace.scrollTop = contentY * viewScale - anchorY;
+  }
 }
 
 function fitView() {
@@ -830,6 +852,13 @@ $('applyCanvas').onclick = () => setCanvasSize(+$('canvasW').value, +$('canvasH'
 $('fitCanvas').onclick = fitView;
 $('zoomIn').onclick = () => setViewScale(viewScale + 0.1);
 $('zoomOut').onclick = () => setViewScale(viewScale - 0.1);
+$('workspace').addEventListener('wheel', (e) => {
+  const shell = $('canvasShell');
+  if (!shell.contains(e.target) && e.target !== $('workspace')) return;
+  e.preventDefault();
+  const step = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  setViewScale(viewScale * step, e);
+}, { passive: false });
 $('canvasBg').oninput = () => { canvas.backgroundColor = $('canvasBg').value; canvas.renderAll(); saveHistory(); };
 $('transparentBg').onclick = () => { canvas.backgroundColor = null; canvas.renderAll(); saveHistory(); document.getElementById('canvasShell').classList.add('checker'); };
 $('whiteBg').onclick = () => { canvas.backgroundColor = '#ffffff'; $('canvasBg').value = '#ffffff'; canvas.renderAll(); saveHistory(); };
