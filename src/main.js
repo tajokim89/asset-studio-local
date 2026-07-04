@@ -424,13 +424,24 @@ function setCanvasSize(w, h) {
 }
 
 function updateCanvasStageSize() {
+  const workspace = $('workspace');
   const stage = $('canvasStage');
   const shell = $('canvasShell');
-  if (!stage || !shell) return;
+  if (!workspace || !stage || !shell) return { left: 0, top: 0, scaledW: 0, scaledH: 0 };
   const baseW = shell.offsetWidth || (canvas.width + 36);
   const baseH = shell.offsetHeight || (canvas.height + 36);
-  stage.style.width = `${Math.ceil(baseW * viewScale)}px`;
-  stage.style.height = `${Math.ceil(baseH * viewScale)}px`;
+  const scaledW = baseW * viewScale;
+  const scaledH = baseH * viewScale;
+  const freePad = 360;
+  const stageW = Math.ceil(Math.max(workspace.clientWidth, scaledW + freePad * 2));
+  const stageH = Math.ceil(Math.max(workspace.clientHeight, scaledH + freePad * 2));
+  const left = Math.max(freePad, Math.round((stageW - scaledW) / 2));
+  const top = Math.max(freePad, Math.round((stageH - scaledH) / 2));
+  stage.style.width = `${stageW}px`;
+  stage.style.height = `${stageH}px`;
+  shell.style.left = `${left}px`;
+  shell.style.top = `${top}px`;
+  return { left, top, scaledW, scaledH, stageW, stageH };
 }
 
 function setViewScale(scale, anchorEvent = null) {
@@ -438,7 +449,8 @@ function setViewScale(scale, anchorEvent = null) {
   const shell = document.querySelector('.canvas-shell');
   const previous = viewScale;
   const next = Math.max(0.1, Math.min(4, scale));
-  if (Math.abs(next - previous) < 0.001) return;
+  const prevLeft = parseFloat(shell.style.left || '0') || 0;
+  const prevTop = parseFloat(shell.style.top || '0') || 0;
 
   let anchorX = workspace.clientWidth / 2;
   let anchorY = workspace.clientHeight / 2;
@@ -448,20 +460,18 @@ function setViewScale(scale, anchorEvent = null) {
     const wsRect = workspace.getBoundingClientRect();
     anchorX = anchorEvent.clientX - wsRect.left;
     anchorY = anchorEvent.clientY - wsRect.top;
-    contentX = (workspace.scrollLeft + anchorX) / previous;
-    contentY = (workspace.scrollTop + anchorY) / previous;
   }
+  contentX = (workspace.scrollLeft + anchorX - prevLeft) / previous;
+  contentY = (workspace.scrollTop + anchorY - prevTop) / previous;
 
   viewScale = next;
   shell.style.transform = `scale(${viewScale})`;
   shell.style.transformOrigin = 'top left';
-  updateCanvasStageSize();
+  const pos = updateCanvasStageSize();
   if ($('zoomLabel')) $('zoomLabel').textContent = `${Math.round(viewScale * 100)}%`;
 
-  if (contentX !== null && contentY !== null) {
-    workspace.scrollLeft = contentX * viewScale - anchorX;
-    workspace.scrollTop = contentY * viewScale - anchorY;
-  }
+  workspace.scrollLeft = pos.left + contentX * viewScale - anchorX;
+  workspace.scrollTop = pos.top + contentY * viewScale - anchorY;
 }
 
 function fitView() {
