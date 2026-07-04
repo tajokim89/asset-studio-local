@@ -19,6 +19,7 @@ let maskStart = null;
 let maskPreview = null;
 let maskRegions = [];
 let maskLockedObjects = false;
+let maskDrawMode = 'brush';
 const $ = (id) => document.getElementById(id);
 const appEl = document.querySelector('.app');
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -615,9 +616,25 @@ function refreshMaskStateFromCanvas() {
 
 function updateMaskInfo() {
   const count = maskOverlays().filter(o => o.maskRole !== 'inverted-hole' && o.maskRole !== 'preview').length;
-  const label = `Mask regions: ${count}`;
+  const label = `Mask marks: ${count}`;
   if ($('maskInfo')) $('maskInfo').textContent = label;
-  if ($('aiMaskSummary')) $('aiMaskSummary').textContent = count ? `${count} mask region(s) ready for Phase 4 inpaint.` : 'No mask selected';
+  if ($('aiMaskSummary')) $('aiMaskSummary').textContent = count ? `${count} mask mark(s) ready for Phase 4 inpaint.` : 'No mask selected';
+}
+
+function decorateMaskOverlay(obj, role = 'selection-mask') {
+  const target = selectedLayerObject();
+  obj.id ||= uid(role === 'mask-eraser' ? 'maskErase' : 'mask');
+  obj.name = role === 'mask-eraser' ? 'Mask Eraser Stroke' : (obj.type === 'path' ? 'Mask Brush Stroke' : 'Mask Rectangle');
+  obj.isMaskOverlay = true;
+  obj.maskRole = role;
+  obj.maskRegionId = obj.maskRegionId || obj.id;
+  obj.targetLayerId = target ? layerKey(target) : selectedLayerId;
+  obj.selectable = false;
+  obj.evented = false;
+  obj.excludeFromLayers = true;
+  obj.excludeFromExport = true;
+  obj.objectCaching = false;
+  return obj;
 }
 
 function makeMaskOverlay(region) {
@@ -636,13 +653,24 @@ function makeMaskOverlay(region) {
     excludeFromExport: true,
     objectCaching: false,
   });
-  rect.id = region.id || uid('mask');
-  rect.name = 'Mask Rectangle';
-  rect.isMaskOverlay = true;
-  rect.maskRole = 'selection-mask';
-  rect.maskRegionId = region.id || rect.id;
-  rect.targetLayerId = region.targetLayerId || selectedLayerId || null;
-  return rect;
+  return decorateMaskOverlay(rect, 'selection-mask');
+}
+
+function addMaskPath(path, role = 'selection-mask') {
+  decorateMaskOverlay(path, role);
+  path.set({
+    fill: null,
+    stroke: role === 'mask-eraser' ? 'rgba(34,197,94,0.78)' : 'rgba(239,68,68,0.62)',
+    strokeLineCap: 'round',
+    strokeLineJoin: 'round',
+    strokeDashArray: role === 'mask-eraser' ? [6, 6] : null,
+  });
+  canvas.bringToFront(path);
+  canvas.renderAll();
+  saveHistory();
+  updateMaskInfo();
+  setStatus(role === 'mask-eraser' ? 'Mask eraser stroke added. Export PNG에서는 이 부분이 보호 영역(black)으로 빠집니다.' : 'Brush mask stroke added. Phase 4 inpaint 입력으로 쓸 수 있습니다.');
+  return path;
 }
 
 function addMaskRect(left, top, width, height) {
@@ -654,6 +682,8 @@ function addMaskRect(left, top, width, height) {
   const target = selectedLayerObject();
   const region = { id: uid('maskRegion'), left: x, top: y, width: w, height: h, targetLayerId: target ? layerKey(target) : selectedLayerId };
   const overlay = makeMaskOverlay(region);
+  overlay.maskRegionId = region.id;
+  overlay.targetLayerId = region.targetLayerId;
   canvas.add(overlay);
   canvas.bringToFront(overlay);
   maskRegions.push(region);
@@ -697,32 +727,50 @@ function invertMask() {
   setStatus('Mask inverted visually. Phase 3A에서는 반전 미리보기까지 지원합니다.');
 }
 
-function exportMaskPng() {
-  const overlays = maskOverlays().filter(o => o.maskRole !== 'inverted-hole');
+async function exportMaskPng() {
+  const overlays = maskOverlays().filter(o => o.maskRole !== 'inverted-hole' && o.maskRole !== 'preview');
   if (!overlays.length) { alert('Export할 마스크가 없습니다.'); return; }
   const tmp = document.createElement('canvas');
   tmp.width = canvas.width; tmp.height = canvas.height;
-  const ctx = tmp.getContext('2d');
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, tmp.width, tmp.height);
-  ctx.fillStyle = '#fff';
-  overlays.forEach(o => {
-    ctx.save();
-    const w = (o.width || 0) * (o.scaleX || 1);
-    const h = (o.height || 0) * (o.scaleY || 1);
-    const cx = (o.left || 0) + w / 2;
-    const cy = (o.top || 0) + h / 2;
-    ctx.translate(cx, cy);
-    ctx.rotate(((o.angle || 0) * Math.PI) / 180);
-    ctx.fillRect(-w / 2, -h / 2, w, h);
-    ctx.restore();
-  });
+  const maskCanvas = new fabric.StaticCanvas(tmp, { backgroundColor: '#000' });
+  for (const o of overlays) {
+    const clone = await new Promise(resolve => o.clone(resolve, ['maskRole','isMaskOverlay']));
+    const isErase = o.maskRole === 'mask-eraser';
+    clone.set({
+      fill: o.type === 'rect' ? (isErase ? '#000' : '#fff') : null,
+      stroke: isErase ? '#000' : '#fff',
+      opacity: 1,
+      selectable: false,
+      evented: false,
+      shadow: null,
+      strokeDashArray: null,
+      globalCompositeOperation: 'source-over',
+    });
+    maskCanvas.add(clone);
+  }
+  maskCanvas.renderAll();
   downloadDataUrl(tmp.toDataURL('image/png'), 'asset-studio-mask.png');
-  setStatus('Mask PNG exported: white=selected area, black=protected area.');
+  maskCanvas.dispose();
+  setStatus('Mask PNG exported: white=selected/edit area, black=protected area.');
+}
+
+function configureMaskBrush() {
+  if (currentTool !== 'mask') return;
+  maskDrawMode = $('maskMode')?.value || maskDrawMode || 'brush';
+  const size = +($('maskSize')?.value || 48);
+  if ($('maskSizeValue')) $('maskSizeValue').textContent = String(size);
+  canvas.isDrawingMode = maskDrawMode !== 'rect';
+  canvas.selection = false;
+  canvas.defaultCursor = maskDrawMode === 'rect' ? 'crosshair' : 'cell';
+  if (canvas.isDrawingMode) {
+    canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+    canvas.freeDrawingBrush.width = size;
+    canvas.freeDrawingBrush.color = maskDrawMode === 'erase' ? 'rgba(34,197,94,0.78)' : 'rgba(239,68,68,0.62)';
+  }
 }
 
 function setMaskMode(enabled) {
   if (enabled) {
-    canvas.isDrawingMode = false;
     canvas.selection = false;
     canvas.discardActiveObject();
     canvas.getObjects().forEach(o => {
@@ -731,14 +779,17 @@ function setMaskMode(enabled) {
       o.selectable = false;
     });
     maskLockedObjects = true;
-    canvas.defaultCursor = 'crosshair';
+    configureMaskBrush();
     updateMaskInfo();
-  } else if (maskLockedObjects) {
-    canvas.getObjects().forEach(o => {
-      if (o.__lockedByMask) { o.selectable = true; delete o.__lockedByMask; }
-    });
-    canvas.defaultCursor = 'default';
-    maskLockedObjects = false;
+  } else {
+    canvas.isDrawingMode = false;
+    if (maskLockedObjects) {
+      canvas.getObjects().forEach(o => {
+        if (o.__lockedByMask) { o.selectable = true; delete o.__lockedByMask; }
+      });
+      canvas.defaultCursor = 'default';
+      maskLockedObjects = false;
+    }
   }
 }
 
@@ -757,7 +808,7 @@ function activateTool(tool) {
     brush:'Brush mode. 캔버스에 직접 그립니다.',
     pencil:'Pencil mode. 얇은 선으로 직접 그립니다.',
     eraser:'Eraser mode. 투명 지우개 스트로크를 만듭니다.',
-    mask:'Mask mode. 드래그로 빨간 사각 선택영역을 만듭니다.',
+    mask:'Mask mode. 브러시로 칠하거나 사각 선택으로 AI 편집 영역을 만듭니다.',
     text:'Text mode. 텍스트 추가/편집.',
     shape:'Shape mode. 기본 도형 추가.',
     upload:'Upload mode. 이미지 가져오기.',
@@ -850,6 +901,8 @@ $('resetImage').onclick = resetImage;
 $('clearMask').onclick = clearMask;
 $('invertMask').onclick = invertMask;
 $('exportMask').onclick = exportMaskPng;
+$('maskMode').onchange = () => { configureMaskBrush(); setStatus(`Mask ${$('maskMode').value} mode.`); };
+$('maskSize').oninput = configureMaskBrush;
 $('exportPng').onclick = exportFull; $('exportPng2').onclick = exportFull; $('exportSelected').onclick = exportSelectedOnly;
 $('undoBtn').onclick = () => loadHistory(historyIndex - 1);
 $('redoBtn').onclick = () => loadHistory(historyIndex + 1);
@@ -886,7 +939,7 @@ canvas.on('selection:created', () => { rememberSelectedLayer(active()); syncProp
 canvas.on('selection:updated', () => { rememberSelectedLayer(active()); syncProps(); renderLayers(); });
 canvas.on('selection:cleared', () => { syncProps(); renderLayers(); });
 canvas.on('mouse:down', (opt) => {
-  if (currentTool !== 'mask') return;
+  if (currentTool !== 'mask' || maskDrawMode !== 'rect') return;
   const p = canvas.getPointer(opt.e);
   isMaskDragging = true;
   maskStart = { x: clamp(p.x, 0, canvas.width), y: clamp(p.y, 0, canvas.height) };
@@ -898,7 +951,7 @@ canvas.on('mouse:down', (opt) => {
   canvas.bringToFront(maskPreview);
 });
 canvas.on('mouse:move', (opt) => {
-  if (currentTool !== 'mask' || !isMaskDragging || !maskPreview || !maskStart) return;
+  if (currentTool !== 'mask' || maskDrawMode !== 'rect' || !isMaskDragging || !maskPreview || !maskStart) return;
   const p = canvas.getPointer(opt.e);
   const x = clamp(p.x, 0, canvas.width);
   const y = clamp(p.y, 0, canvas.height);
@@ -907,7 +960,7 @@ canvas.on('mouse:move', (opt) => {
   canvas.renderAll();
 });
 canvas.on('mouse:up', () => {
-  if (currentTool !== 'mask' || !isMaskDragging) return;
+  if (currentTool !== 'mask' || maskDrawMode !== 'rect' || !isMaskDragging) return;
   isMaskDragging = false;
   if (maskPreview) {
     const r = { left: maskPreview.left || 0, top: maskPreview.top || 0, width: maskPreview.width || 0, height: maskPreview.height || 0 };
@@ -919,6 +972,10 @@ canvas.on('mouse:up', () => {
 });
 canvas.on('path:created', (e) => {
   const path = e.path;
+  if (currentTool === 'mask') {
+    addMaskPath(path, maskDrawMode === 'erase' ? 'mask-eraser' : 'selection-mask');
+    return;
+  }
   ensureMeta(path, currentDrawTool === 'eraser' ? 'Eraser stroke' : (currentDrawTool === 'pencil' ? 'Pencil stroke' : 'Brush stroke'));
   path.isDrawingStroke = true;
   const drawLayer = getActiveDrawingLayer();

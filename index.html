@@ -76,7 +76,7 @@
     </section>
 
     <section class="option-panel" data-tool-panel="mask">
-      <div class="panel"><h3>Mask / Selection</h3><p class="hint">Phase 3A: 캔버스 위를 드래그하면 빨간 반투명 사각 마스크가 만들어집니다. AI inpaint용 영역 지정 기반입니다.</p><div class="row"><button id="clearMask" class="danger">Clear Mask</button><button id="invertMask">Invert</button></div><button id="exportMask" class="primary" style="width:100%;margin-top:8px">Export Mask PNG</button><p id="maskInfo" class="hint">Mask regions: 0</p></div>
+      <div class="panel"><h3>Mask / Selection</h3><p class="hint">AI로 바꿀 영역을 지정합니다. 기본은 브러시 마스크이며, 필요하면 사각 선택으로 전환할 수 있습니다.</p><label>Mask tool</label><select id="maskMode" class="input"><option value="brush">Brush mask</option><option value="erase">Mask eraser</option><option value="rect">Rectangle select</option></select><label>Mask brush size <span id="maskSizeValue" class="range-value">48</span></label><input id="maskSize" class="input" type="range" min="4" max="220" value="48" /><div class="row"><button id="clearMask" class="danger">Clear Mask</button><button id="invertMask">Invert</button></div><button id="exportMask" class="primary" style="width:100%;margin-top:8px">Export Mask PNG</button><p id="maskInfo" class="hint">Mask regions: 0</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="text">
@@ -118,6 +118,6 @@
   </aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
-<script src="src/main.js?v=phase3a-mask-rect"></script>
+<script src="src/main.js?v=phase3b-mask-brush"></script>
 </body>
 </html>
