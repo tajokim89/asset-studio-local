@@ -289,6 +289,17 @@ class Handler(SimpleHTTPRequestHandler):
                     "path": str(dst),
                     "method": method,
                 })
+            if path == "/api/inpaint":
+                prompt = str(data.get("prompt", "")).strip()
+                if not prompt:
+                    return self.send_json(400, {"success": False, "error": "Prompt is required"})
+                if not data.get("image") or not data.get("mask"):
+                    return self.send_json(400, {"success": False, "error": "Image and mask are required"})
+                # UI/API contract is in place. Real selected-area image editing will be wired in the next backend slice.
+                return self.send_json(501, {
+                    "success": False,
+                    "error": "Selected-area AI backend is not connected yet. UI prompt/mask payload is ready for Phase 4 wiring.",
+                })
             if path == "/api/generate":
                 prompt = build_prompt(data.get("prompt", ""), data.get("preset", "general"))
                 aspect = data.get("aspect_ratio") or "square"

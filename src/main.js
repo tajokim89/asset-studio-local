@@ -668,8 +668,12 @@ function refreshMaskStateFromCanvas() {
 function updateMaskInfo() {
   const count = maskOverlays().filter(o => o.maskRole !== 'inverted-hole' && o.maskRole !== 'preview').length;
   const label = `Mask marks: ${count}`;
+  const target = selectedLayerObject();
+  const targetText = target ? `${nameOf(target)} (${target.type || 'layer'})` : 'No target layer';
   if ($('maskInfo')) $('maskInfo').textContent = label;
-  if ($('aiMaskSummary')) $('aiMaskSummary').textContent = count ? `${count} mask mark(s) ready for Phase 4 inpaint.` : 'No mask selected';
+  if ($('aiMaskSummary')) $('aiMaskSummary').textContent = count ? `${count} mask mark(s) ready · target: ${targetText}` : 'No mask selected';
+  if ($('runInpaint')) $('runInpaint').disabled = count === 0;
+  if ($('inpaintResult') && count === 0) $('inpaintResult').textContent = 'Ready after mask selection.';
 }
 
 function decorateMaskOverlay(obj, role = 'selection-mask') {
@@ -778,9 +782,9 @@ function invertMask() {
   setStatus('Mask inverted visually. Phase 3A에서는 반전 미리보기까지 지원합니다.');
 }
 
-async function exportMaskPng() {
+async function buildMaskDataUrl() {
   const overlays = maskOverlays().filter(o => o.maskRole !== 'inverted-hole' && o.maskRole !== 'preview');
-  if (!overlays.length) { alert('Export할 마스크가 없습니다.'); return; }
+  if (!overlays.length) return null;
   const tmp = document.createElement('canvas');
   tmp.width = canvas.width; tmp.height = canvas.height;
   const maskCanvas = new fabric.StaticCanvas(tmp, { backgroundColor: '#000' });
@@ -800,9 +804,64 @@ async function exportMaskPng() {
     maskCanvas.add(clone);
   }
   maskCanvas.renderAll();
-  downloadDataUrl(tmp.toDataURL('image/png'), 'asset-studio-mask.png');
+  const dataUrl = tmp.toDataURL('image/png');
   maskCanvas.dispose();
+  return dataUrl;
+}
+
+async function exportMaskPng() {
+  const dataUrl = await buildMaskDataUrl();
+  if (!dataUrl) { alert('Export할 마스크가 없습니다.'); return; }
+  downloadDataUrl(dataUrl, 'asset-studio-mask.png');
   setStatus('Mask PNG exported: white=selected/edit area, black=protected area.');
+}
+
+async function runSelectedAreaAiEdit() {
+  const prompt = ($('inpaintPrompt')?.value || '').trim();
+  const negative = ($('inpaintNegative')?.value || '').trim();
+  const applyMode = $('inpaintApplyMode')?.value || 'new-layer';
+  const overlays = maskOverlays().filter(o => o.maskRole !== 'inverted-hole' && o.maskRole !== 'preview');
+  if (!overlays.length) { alert('먼저 Mask 툴로 바꿀 영역을 선택하세요.'); return; }
+  if (!prompt) { alert('선택영역을 어떻게 바꿀지 프롬프트를 입력하세요.'); $('inpaintPrompt')?.focus(); return; }
+  const target = selectedLayerObject();
+  if (!target || target.isDrawingLayer || target.excludeFromLayers) {
+    alert('AI 편집할 이미지/레이어를 먼저 선택하세요.');
+    return;
+  }
+  const mask = await buildMaskDataUrl();
+  const image = canvas.toDataURL({ format: 'png', multiplier: 1 });
+  $('runInpaint').disabled = true;
+  if ($('inpaintResult')) $('inpaintResult').textContent = 'AI selected-area edit 요청 중...';
+  setStatus('AI selected-area edit 요청 중...');
+  try {
+    const res = await fetch('/api/inpaint', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image, mask, prompt, negative, apply_mode: applyMode, target_layer_id: layerKey(target) }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'inpaint failed');
+    const url = data.url + '?t=' + Date.now();
+    if (applyMode === 'replace' && target.type === 'image') {
+      fabric.Image.fromURL(url, (img) => {
+        img.set({ left: target.left, top: target.top, scaleX: target.scaleX, scaleY: target.scaleY, angle: target.angle, opacity: target.opacity, originX: target.originX, originY: target.originY });
+        img._originalSrc = url;
+        const idx = canvas.getObjects().indexOf(target);
+        canvas.remove(target); canvas.insertAt(ensureMeta(img, `AI Edit - ${nameOf(target)}`), idx, false); canvas.setActiveObject(img);
+        saveHistory(); syncProps(); renderLayers(); canvas.renderAll();
+      }, { crossOrigin: 'anonymous' });
+    } else {
+      addImageUrl(url, 'AI selected edit');
+    }
+    if ($('inpaintResult')) $('inpaintResult').textContent = 'AI edit complete.';
+    setStatus('AI selected-area edit complete.');
+  } catch (err) {
+    const msg = `AI selected-area edit failed: ${err.message}`;
+    if ($('inpaintResult')) $('inpaintResult').textContent = msg;
+    setStatus(msg);
+  } finally {
+    updateMaskInfo();
+  }
 }
 
 function configureMaskBrush() {
@@ -987,6 +1046,8 @@ $('resetImage').onclick = resetImage;
 $('clearMask').onclick = clearMask;
 $('invertMask').onclick = invertMask;
 $('exportMask').onclick = exportMaskPng;
+if ($('previewMask')) $('previewMask').onclick = exportMaskPng;
+if ($('runInpaint')) $('runInpaint').onclick = runSelectedAreaAiEdit;
 $('maskMode').onchange = () => { configureMaskBrush(); setStatus(`Mask ${$('maskMode').value} mode.`); };
 $('maskSize').oninput = configureMaskBrush;
 $('exportPng').onclick = exportFull; $('exportPng2').onclick = exportFull; $('exportSelected').onclick = exportSelectedOnly;
