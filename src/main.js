@@ -12,8 +12,6 @@ let currentTool = 'select';
 let viewScale = 1;
 let isPanning = false;
 let panStart = null;
-const FREE_PAN_PAD = 1800;
-const FREE_PAN_EDGE = 80;
 let canvasPanOffset = { x: 0, y: 0 };
 let activeDrawingLayerId = null;
 let selectedLayerId = null;
@@ -426,31 +424,33 @@ function setCanvasSize(w, h) {
   saveHistory();
 }
 
+function canvasStageMetrics(scale = viewScale) {
+  const workspace = $('workspace');
+  const shell = $('canvasShell');
+  const baseW = shell.offsetWidth || (canvas.width + 36);
+  const baseH = shell.offsetHeight || (canvas.height + 36);
+  const scaledW = baseW * scale;
+  const scaledH = baseH * scale;
+  const stageW = workspace.clientWidth;
+  const stageH = workspace.clientHeight;
+  const baseLeft = Math.round((stageW - scaledW) / 2);
+  const baseTop = Math.round((stageH - scaledH) / 2);
+  return { scaledW, scaledH, stageW, stageH, baseLeft, baseTop };
+}
+
 function updateCanvasStageSize() {
   const workspace = $('workspace');
   const stage = $('canvasStage');
   const shell = $('canvasShell');
   if (!workspace || !stage || !shell) return { left: 0, top: 0, scaledW: 0, scaledH: 0 };
-  const baseW = shell.offsetWidth || (canvas.width + 36);
-  const baseH = shell.offsetHeight || (canvas.height + 36);
-  const scaledW = baseW * viewScale;
-  const scaledH = baseH * viewScale;
-  const freePad = FREE_PAN_PAD;
-  const stageW = Math.ceil(Math.max(workspace.clientWidth, scaledW + freePad * 2));
-  const stageH = Math.ceil(Math.max(workspace.clientHeight, scaledH + freePad * 2));
-  const baseLeft = Math.round((stageW - scaledW) / 2);
-  const baseTop = Math.round((stageH - scaledH) / 2);
-  const maxOffsetX = Math.max(0, baseLeft - FREE_PAN_EDGE);
-  const maxOffsetY = Math.max(0, baseTop - FREE_PAN_EDGE);
-  canvasPanOffset.x = clamp(canvasPanOffset.x, -maxOffsetX, maxOffsetX);
-  canvasPanOffset.y = clamp(canvasPanOffset.y, -maxOffsetY, maxOffsetY);
-  const left = Math.round(baseLeft + canvasPanOffset.x);
-  const top = Math.round(baseTop + canvasPanOffset.y);
-  stage.style.width = `${stageW}px`;
-  stage.style.height = `${stageH}px`;
+  const metrics = canvasStageMetrics();
+  const left = Math.round(metrics.baseLeft + canvasPanOffset.x);
+  const top = Math.round(metrics.baseTop + canvasPanOffset.y);
+  stage.style.width = `${metrics.stageW}px`;
+  stage.style.height = `${metrics.stageH}px`;
   shell.style.left = `${left}px`;
   shell.style.top = `${top}px`;
-  return { left, top, scaledW, scaledH, stageW, stageH, baseLeft, baseTop };
+  return { left, top, ...metrics };
 }
 
 function setViewScale(scale, anchorEvent = null) {
@@ -463,24 +463,23 @@ function setViewScale(scale, anchorEvent = null) {
 
   let anchorX = workspace.clientWidth / 2;
   let anchorY = workspace.clientHeight / 2;
-  let contentX = null;
-  let contentY = null;
   if (anchorEvent) {
     const wsRect = workspace.getBoundingClientRect();
     anchorX = anchorEvent.clientX - wsRect.left;
     anchorY = anchorEvent.clientY - wsRect.top;
   }
-  contentX = (workspace.scrollLeft + anchorX - prevLeft) / previous;
-  contentY = (workspace.scrollTop + anchorY - prevTop) / previous;
+  const contentX = (anchorX - prevLeft) / previous;
+  const contentY = (anchorY - prevTop) / previous;
 
   viewScale = next;
   shell.style.transform = `scale(${viewScale})`;
   shell.style.transformOrigin = 'top left';
+  const nextMetrics = canvasStageMetrics(next);
+  canvasPanOffset.x = anchorX - nextMetrics.baseLeft - contentX * next;
+  canvasPanOffset.y = anchorY - nextMetrics.baseTop - contentY * next;
   const pos = updateCanvasStageSize();
   if ($('zoomLabel')) $('zoomLabel').textContent = `${Math.round(viewScale * 100)}%`;
-
-  workspace.scrollLeft = pos.left + contentX * viewScale - anchorX;
-  workspace.scrollTop = pos.top + contentY * viewScale - anchorY;
+  return pos;
 }
 
 function fitView() {
