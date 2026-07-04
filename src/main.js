@@ -423,6 +423,16 @@ function setCanvasSize(w, h) {
   saveHistory();
 }
 
+function updateCanvasStageSize() {
+  const stage = $('canvasStage');
+  const shell = $('canvasShell');
+  if (!stage || !shell) return;
+  const baseW = shell.offsetWidth || (canvas.width + 36);
+  const baseH = shell.offsetHeight || (canvas.height + 36);
+  stage.style.width = `${Math.ceil(baseW * viewScale)}px`;
+  stage.style.height = `${Math.ceil(baseH * viewScale)}px`;
+}
+
 function setViewScale(scale, anchorEvent = null) {
   const workspace = $('workspace');
   const shell = document.querySelector('.canvas-shell');
@@ -445,6 +455,7 @@ function setViewScale(scale, anchorEvent = null) {
   viewScale = next;
   shell.style.transform = `scale(${viewScale})`;
   shell.style.transformOrigin = 'top left';
+  updateCanvasStageSize();
   if ($('zoomLabel')) $('zoomLabel').textContent = `${Math.round(viewScale * 100)}%`;
 
   if (contentX !== null && contentY !== null) {

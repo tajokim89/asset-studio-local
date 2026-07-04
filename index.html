@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Asset Studio Local</title>
-  <link rel="stylesheet" href="styles/app.css" />
+  <link rel="stylesheet" href="styles/app.css?v=phase3d-scrollable-wheel-zoom" />
 </head>
 <body>
 <div class="app">
@@ -102,7 +102,7 @@
   <div id="leftResize" class="resize-handle left-resize" title="Drag to resize left panel"></div>
 
   <main id="workspace" class="workspace">
-    <div id="canvasShell" class="canvas-shell checker"><canvas id="c" width="1024" height="1024"></canvas></div>
+    <div id="canvasStage" class="canvas-stage"><div id="canvasShell" class="canvas-shell checker"><canvas id="c" width="1024" height="1024"></canvas></div></div>
   </main>
 
   <div id="rightResize" class="resize-handle right-resize" title="Drag to resize right panel"></div>
@@ -118,6 +118,6 @@
   </aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
-<script src="src/main.js?v=phase3c-wheel-zoom"></script>
+<script src="src/main.js?v=phase3d-scrollable-wheel-zoom"></script>
 </body>
 </html>
