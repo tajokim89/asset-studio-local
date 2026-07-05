@@ -33,5 +33,7 @@ def test_phase6c_layer_controls_exist():
 
 
 def test_phase6_actions_are_history_labeled():
-    for label in ['Canvas crop', 'Selected image crop', 'Alpha erase by mask', 'Restore by mask', 'Group selection', 'Ungroup selection']:
+    for label in ['Canvas crop', 'Selected image crop', 'Restore by mask', 'Group selection', 'Ungroup selection']:
         assert f"saveHistory('{label}')" in JS
+    assert "'Alpha erase by mask'" in JS
+    assert "saveHistory(historyLabel)" in JS

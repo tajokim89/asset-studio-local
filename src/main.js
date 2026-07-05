@@ -1062,22 +1062,38 @@ function replaceImageWithFullCanvasLayer(obj, url, label, historyLabel) {
   }, { crossOrigin: 'anonymous' }));
 }
 
-async function eraseSelectedByMask() {
-  const obj = selectedLayerObject();
-  if (!obj || obj.type !== 'image') { alert('이미지 레이어를 선택하세요.'); return; }
-  const mask = await buildMaskDataUrl('edit');
-  if (!mask) { alert('먼저 Mask로 지울 영역을 칠하세요.'); return; }
+async function eraseImageWithMaskDataUrl(obj, maskDataUrl, historyLabel = 'Alpha erase by mask') {
+  if (!obj || obj.type !== 'image') return false;
   if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
-  const [sourceImg, maskImg] = await Promise.all([loadImageForCanvas(await selectedImageAsFullCanvasDataUrl(obj)), loadImageForCanvas(mask)]);
+  const [sourceImg, maskImg] = await Promise.all([loadImageForCanvas(await selectedImageAsFullCanvasDataUrl(obj)), loadImageForCanvas(maskDataUrl)]);
   const tmp = document.createElement('canvas'); tmp.width = canvas.width; tmp.height = canvas.height;
   const ctx = tmp.getContext('2d');
   ctx.drawImage(sourceImg, 0, 0, tmp.width, tmp.height);
   ctx.globalCompositeOperation = 'destination-out';
   ctx.drawImage(maskImg, 0, 0, tmp.width, tmp.height);
   ctx.globalCompositeOperation = 'source-over';
-  await replaceImageWithFullCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} alpha erased`, 'Alpha erase by mask');
-  saveHistory('Alpha erase by mask');
-  setStatus('마스크 영역을 투명하게 지웠습니다.');
+  await replaceImageWithFullCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} alpha erased`, historyLabel);
+  setStatus('선택 이미지 레이어의 픽셀만 투명하게 지웠습니다.');
+  return true;
+}
+
+function pathToMaskDataUrl(path) {
+  const maskCanvas = new fabric.StaticCanvas(null, { width: canvas.width, height: canvas.height, backgroundColor: null });
+  const maskPath = fabric.util.object.clone(path);
+  maskPath.set({ stroke: '#ffffff', fill: null, opacity: 1, globalCompositeOperation: 'source-over', selectable: false, evented: false });
+  maskCanvas.add(maskPath);
+  maskCanvas.renderAll();
+  const dataUrl = maskCanvas.toDataURL({ format: 'png', multiplier: 1 });
+  maskCanvas.dispose();
+  return dataUrl;
+}
+
+async function eraseSelectedByMask() {
+  const obj = selectedLayerObject();
+  if (!obj || obj.type !== 'image') { alert('이미지 레이어를 선택하세요.'); return; }
+  const mask = await buildMaskDataUrl('edit');
+  if (!mask) { alert('먼저 Mask로 지울 영역을 칠하세요.'); return; }
+  await eraseImageWithMaskDataUrl(obj, mask, 'Alpha erase by mask');
 }
 
 async function restoreSelectedByMask() {
@@ -2062,9 +2078,20 @@ canvas.on('path:created', (e) => {
   path.visible = drawLayer.visible !== false;
   path.excludeFromLayers = true;
   if (currentDrawTool === 'eraser') {
-    path.globalCompositeOperation = 'destination-out';
-    path.stroke = 'rgba(0,0,0,1)';
-    path.name = 'Eraser stroke';
+    const target = selectedLayerObject();
+    canvas.remove(path);
+    if (!target || target.type !== 'image') {
+      setStatus('지우개는 선택 이미지 레이어에만 적용됩니다. 먼저 이미지 레이어를 선택하세요.');
+      canvas.isDrawingMode = false;
+      activateTool('select');
+      return;
+    }
+    const maskDataUrl = pathToMaskDataUrl(path);
+    eraseImageWithMaskDataUrl(target, maskDataUrl, 'Freehand erase').catch(err => {
+      console.error(err);
+      alert(`지우개 적용 실패: ${err.message}`);
+    });
+    return;
   }
   path.selectable = false;
   path.evented = false;
