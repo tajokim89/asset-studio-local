@@ -945,12 +945,12 @@ async function generateReplacementObject() {
   const prompt = ($('replaceObjectPrompt')?.value || '').trim();
   const negative = ($('replaceObjectNegative')?.value || '').trim();
   const bbox = maskBbox(10);
-  if (!bbox) { alert('먼저 Mask 툴로 교체할 물체 영역을 칠하세요.'); return; }
+  const hasReplacementMask = !!bbox;
   if (!prompt) { alert('새 오브젝트 설명을 입력하세요.'); $('replaceObjectPrompt')?.focus(); return; }
   const btn = $('generateReplacement');
   btn.disabled = true;
-  if ($('replaceResult')) $('replaceResult').textContent = '새 오브젝트만 생성 중...';
-  setStatus('B안: 원본 보호 + 새 오브젝트 PNG 생성 중...');
+  if ($('replaceResult')) $('replaceResult').textContent = hasReplacementMask ? '새 오브젝트만 생성 중...' : '마스크 없이 새 오브젝트 레이어 생성 중...';
+  setStatus(hasReplacementMask ? 'B안: 원본 보호 + 새 오브젝트 PNG 생성 중...' : '새 오브젝트 PNG 생성 중... #00FF00 배경을 강제합니다.');
   try {
     const target = selectedLayerObject();
     const contextName = target ? nameOf(target) : 'current canvas';
@@ -969,7 +969,7 @@ async function generateReplacementObject() {
       const cut = await fetch('/api/remove-bg', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ image, tolerance: +($('tolerance')?.value || 24), mode: 'sheet' })
+        body: JSON.stringify({ image, tolerance: +($('tolerance')?.value || 18), mode: 'chroma_green' })
       });
       const cutData = await cut.json();
       if (cut.ok && cutData.success) {
@@ -986,14 +986,20 @@ async function generateReplacementObject() {
       const mask = await buildMaskDataUrl('edit');
       if (mask) cleared = await createSourceMinusMaskLayer(target, mask);
     }
-    await addReplacementImageUrl(objectUrl, bbox, `Replacement - ${prompt.slice(0, 28)}`);
+    if (hasReplacementMask) {
+      await addReplacementImageUrl(objectUrl, bbox, `Replacement - ${prompt.slice(0, 28)}`);
+    } else {
+      addImageUrl(objectUrl, `Object - ${prompt.slice(0, 28)}`);
+    }
     let occluded = false;
     if ($('createOcclusionLayer')?.checked && target?.type === 'image' && occlusionMaskOverlays().length) {
       const occMask = await buildMaskDataUrl('occlusion');
       if (occMask) occluded = await createOcclusionLayerFromTarget(target, occMask);
     }
-    const anchorText = replacementGripAnchor && $('useGripAnchor')?.checked !== false ? '앵커 배치 + ' : 'bbox 배치 + ';
-    if ($('replaceResult')) $('replaceResult').textContent = `완료: ${cleared ? '기존 물체 영역 비움 + ' : ''}${anchorText}새 오브젝트 레이어 생성${occluded ? ' + 손/앞가림 레이어 생성' : ''} (${method}). 원본 레이어는 숨김 보존됨.`;
+    const anchorText = hasReplacementMask && replacementGripAnchor && $('useGripAnchor')?.checked !== false ? '앵커 배치 + ' : hasReplacementMask ? 'bbox 배치 + ' : '';
+    if ($('replaceResult')) $('replaceResult').textContent = hasReplacementMask
+      ? `완료: ${cleared ? '기존 물체 영역 비움 + ' : ''}${anchorText}새 오브젝트 레이어 생성${occluded ? ' + 손/앞가림 레이어 생성' : ''} (${method}). 원본 레이어는 숨김 보존됨.`
+      : `완료: #00FF00 배경 생성 후 크로마키 제거된 새 오브젝트 레이어를 추가했습니다 (${method}).`;
   } catch (err) {
     const msg = `오브젝트 치환 실패: ${err.message}`;
     if ($('replaceResult')) $('replaceResult').textContent = msg;
@@ -2154,8 +2160,8 @@ function updateMaskInfo() {
   if ($('regionSelectionInfo')) $('regionSelectionInfo').textContent = `선택영역: ${editCount}`;
   if ($('aiMaskSummary')) $('aiMaskSummary').textContent = editCount ? `${label} · 대상: ${targetText}` : '선택된 교체 마스크 없음';
   if ($('runInpaint')) $('runInpaint').disabled = editCount === 0;
-  if ($('generateReplacement')) $('generateReplacement').disabled = editCount === 0;
-  if ($('replaceResult') && editCount === 0) $('replaceResult').textContent = '교체 마스크+앵커 선택 후 새 오브젝트를 생성합니다.';
+  if ($('generateReplacement')) $('generateReplacement').disabled = false;
+  if ($('replaceResult') && editCount === 0) $('replaceResult').textContent = '마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다.';
   if ($('inpaintResult') && editCount === 0) $('inpaintResult').textContent = '마스크 선택 후 실행할 수 있습니다.';
 }
 
@@ -2871,6 +2877,14 @@ async function executeChatAction(action = pendingChatAction) {
       activateTool('ai');
       if ($('aiPrompt')) $('aiPrompt').value = params.prompt || '';
       done('준비됨: AI 생성 프롬프트를 입력했습니다. 에셋 생성 버튼으로 실행하세요.');
+      break;
+    case 'prepare_replace_object':
+      if ($('replaceObjectPrompt')) {
+        $('replaceObjectPrompt').value = params.prompt || '';
+        $('replaceObjectPrompt').focus();
+      }
+      document.getElementById('aiEditPanel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      done('준비됨: 오브젝트 치환 B안에 프롬프트를 넣었습니다. 마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다.');
       break;
     case 'export_png':
       exportFull();

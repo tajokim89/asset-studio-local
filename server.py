@@ -119,6 +119,92 @@ def fallback_corner_remove(raw: bytes, tolerance: int = 36) -> bytes:
     return out.getvalue()
 
 
+def force_chroma_green_background(raw: bytes, tolerance: int = 44) -> bytes:
+    """Replace border-connected generated backdrop with exact #00FF00.
+
+    Image models often ignore prompt-only green background requests and return white.
+    This makes the file itself chroma-keyable by flood-filling only the backdrop
+    connected to the image edges, preserving internal subject pixels.
+    """
+    from collections import deque
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    px = img.load()
+    w, h = img.size
+    step = max(1, min(w, h) // 160)
+    seeds = []
+    samples = []
+    for x in range(0, w, step):
+        seeds.append((x, 0)); seeds.append((x, h - 1))
+    for y in range(0, h, step):
+        seeds.append((0, y)); seeds.append((w - 1, y))
+    seeds.extend([(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)])
+    seeds = list(dict.fromkeys(seeds))
+    for x, y in seeds:
+        r, g, b, a = px[x, y]
+        if a > 0:
+            samples.append((r, g, b))
+    if not samples:
+        samples = [(255, 255, 255)]
+    bg = tuple(sum(c[i] for c in samples) / len(samples) for i in range(3))
+
+    def bg_like(x, y):
+        r, g, b, a = px[x, y]
+        if a == 0:
+            return True
+        dist = sum((v - bg[i]) ** 2 for i, v in enumerate((r, g, b))) ** 0.5
+        # White/gray model backdrops often have slight compression/lighting variation.
+        return dist <= tolerance or (r >= 235 and g >= 235 and b >= 235 and bg[0] >= 210 and bg[1] >= 210 and bg[2] >= 210)
+
+    seen = set()
+    q = deque(seeds)
+    while q:
+        x, y = q.popleft()
+        if x < 0 or y < 0 or x >= w or y >= h or (x, y) in seen or not bg_like(x, y):
+            continue
+        seen.add((x, y))
+        px[x, y] = (0, 255, 0, 255)
+        q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18) -> bytes:
+    """Make border-connected #00FF00 chroma backdrop transparent."""
+    from collections import deque
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    px = img.load()
+    w, h = img.size
+    q = deque()
+    for x in range(w):
+        q.append((x, 0)); q.append((x, h - 1))
+    for y in range(h):
+        q.append((0, y)); q.append((w - 1, y))
+
+    def green_like(x, y):
+        r, g, b, a = px[x, y]
+        return a == 0 or (r <= tolerance and g >= 255 - tolerance and b <= tolerance)
+
+    seen = set()
+    while q:
+        x, y = q.popleft()
+        if x < 0 or y < 0 or x >= w or y >= h or (x, y) in seen or not green_like(x, y):
+            continue
+        seen.add((x, y))
+        r, g, b, a = px[x, y]
+        px[x, y] = (r, g, b, 0)
+        q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
 def edge_aware_sheet_remove(raw: bytes, tolerance: int = 24, edge_threshold: int = 40) -> bytes:
     """Preserve-mask sheet cleanup: remove border backdrop, protect obvious item pixels.
 
@@ -241,6 +327,8 @@ def edge_aware_sheet_remove(raw: bytes, tolerance: int = 24, edge_threshold: int
 def remove_background_bytes(raw: bytes, tolerance: int = 36, mode: str = "ai") -> tuple[bytes, str]:
     # AI segmentation is good for one subject, but it often drops most sprites in an asset sheet.
     # Sheet mode uses edge-aware border flood so all separated objects are preserved.
+    if mode in {"chroma_green", "green", "key"}:
+        return remove_chroma_green_bytes(raw, tolerance=tolerance or 18), "chroma-green-key"
     if mode in {"sheet", "flood", "border"}:
         return edge_aware_sheet_remove(raw, tolerance=tolerance or 24), "preserve-mask-sheet"
     try:
@@ -487,6 +575,9 @@ def classify_chat_command(message: str, context: dict | None = None) -> dict:
         if not has_image:
             return response("select_image_needed", "이미지 레이어 선택 필요", "배경 제거는 이미지 레이어 선택 후 실행할 수 있습니다. 먼저 이미지 레이어를 선택하세요.", {"tool": "select"}, False)
         return response("remove_bg", "이미지 배경 제거", f"선택 이미지에 {'에셋 시트' if mode == 'sheet' else 'AI Cutout'} 배경 제거를 실행합니다.", {"mode": mode})
+    if any(k in low for k in ["오브젝트", "물체", "무기", "검", "곤봉", "칼", "도끼", "replace object", "object replacement"]):
+        if any(k in low for k in ["치환", "교체", "바꿔", "replace", "swap", "만들", "생성"]):
+            return response("prepare_replace_object", "오브젝트 생성/치환 준비", "오브젝트 치환 B안에 프롬프트를 넣습니다. 마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다.", {"prompt": text})
     if any(k in low for k in ["재생성", "inpaint", "수정", "바꿔", "고쳐"]):
         prompt = text
         if not has_image:
@@ -584,10 +675,11 @@ class Handler(SimpleHTTPRequestHandler):
                 result = classify_chat_command(message, context)
                 return self.send_json(200 if result.get("success") else 400, result)
             if path == "/api/generate":
+                background_mode = data.get("background_mode", "none")
                 prompt = build_prompt(
                     data.get("prompt", ""),
                     data.get("preset", "general"),
-                    data.get("background_mode", "none"),
+                    background_mode,
                 )
                 aspect = data.get("aspect_ratio") or "square"
                 provider = load_provider()
@@ -597,8 +689,11 @@ class Handler(SimpleHTTPRequestHandler):
                 src = Path(result["image"])
                 name = f"generated_{int(time.time())}_{src.name}"
                 dst = GENERATED / name
-                shutil.copy2(src, dst)
-                return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": result.get("model"), "provider": result.get("provider")})
+                if str(background_mode or "none").strip() == "chroma_green":
+                    dst.write_bytes(force_chroma_green_background(src.read_bytes()))
+                else:
+                    shutil.copy2(src, dst)
+                return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": result.get("model"), "provider": result.get("provider"), "background_mode": background_mode})
             return self.send_json(404, {"success": False, "error": "Unknown API endpoint"})
         except Exception as e:
             return self.send_json(500, {"success": False, "error": str(e)})
