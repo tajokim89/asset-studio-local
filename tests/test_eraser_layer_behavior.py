@@ -19,12 +19,15 @@ def test_eraser_copy_explains_selected_image_alpha_behavior():
     assert "선택 이미지가 없으면 지우개는 동작하지 않습니다" in INDEX
 
 
-def test_erased_image_is_replaced_by_object_bbox_not_full_canvas():
-    assert "function replaceImageWithCroppedCanvasLayer" in JS
-    assert "const bbox = clippedObjectBounds(obj);" in JS
-    assert "left: bbox.left" in JS
-    assert "width: bbox.width" in JS
-    assert "replaceImageWithFullCanvasLayer" not in JS
+def test_erased_image_preserves_native_resolution_not_canvas_bbox():
+    assert "function eraseImageAtNativeResolution" in JS
+    assert "function replaceImagePreservingTransform" in JS
+    eraser_fn = JS.split("async function eraseImageWithMaskDataUrl", 1)[1].split("function pathToMaskDataUrl", 1)[0]
+    assert "eraseImageAtNativeResolution(obj, maskDataUrl)" in eraser_fn
+    assert "replaceImagePreservingTransform" in eraser_fn
+    assert "replaceImageWithCroppedCanvasLayer" not in eraser_fn
+    assert "imageElementSize(obj)" in JS
+    assert "원본 해상도를 유지" in JS
 
 
 def test_eraser_switches_canvas_preview_to_transparency_checker():

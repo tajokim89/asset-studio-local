@@ -1088,6 +1088,72 @@ async function replaceImageWithCroppedCanvasLayer(obj, url, label, historyLabel)
   }, { crossOrigin: 'anonymous' }));
 }
 
+function imageElementSize(obj) {
+  const el = obj.getElement?.();
+  return {
+    width: Math.max(1, Math.round(el?.naturalWidth || el?.videoWidth || obj.width || 1)),
+    height: Math.max(1, Math.round(el?.naturalHeight || el?.videoHeight || obj.height || 1)),
+  };
+}
+
+async function eraseImageAtNativeResolution(obj, maskDataUrl) {
+  const currentImg = await loadImageForCanvas(obj.getSrc());
+  const maskImg = await loadImageForCanvas(maskDataUrl);
+  const native = imageElementSize(obj);
+  const out = document.createElement('canvas');
+  out.width = native.width;
+  out.height = native.height;
+  const octx = out.getContext('2d');
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(currentImg, 0, 0, native.width, native.height);
+
+  const bbox = clippedObjectBounds(obj);
+  const localMask = document.createElement('canvas');
+  localMask.width = native.width;
+  localMask.height = native.height;
+  const mctx = localMask.getContext('2d');
+  mctx.imageSmoothingEnabled = false;
+  mctx.drawImage(maskImg, bbox.left, bbox.top, bbox.width, bbox.height, 0, 0, native.width, native.height);
+
+  octx.globalCompositeOperation = 'destination-out';
+  octx.drawImage(localMask, 0, 0);
+  octx.globalCompositeOperation = 'source-over';
+  return out.toDataURL('image/png');
+}
+
+function replaceImagePreservingTransform(obj, url, label, historyLabel) {
+  return new Promise(resolve => fabric.Image.fromURL(url, (img) => {
+    img.set({
+      id: obj.id,
+      name: label || nameOf(obj),
+      left: obj.left,
+      top: obj.top,
+      originX: obj.originX,
+      originY: obj.originY,
+      scaleX: obj.scaleX,
+      scaleY: obj.scaleY,
+      angle: obj.angle,
+      opacity: obj.opacity ?? 1,
+      flipX: obj.flipX,
+      flipY: obj.flipY,
+      skewX: obj.skewX,
+      skewY: obj.skewY,
+      selectable: obj.selectable,
+      evented: obj.evented,
+    });
+    img._originalSrc = obj._originalSrc || obj.getSrc();
+    ensureMeta(img, label || nameOf(obj));
+    const idx = canvas.getObjects().indexOf(obj);
+    canvas.remove(obj);
+    canvas.insertAt(img, Math.max(0, idx), false);
+    canvas.setActiveObject(img); rememberSelectedLayer(img);
+    canvas.renderAll();
+    saveHistory(historyLabel);
+    syncProps(); renderLayers();
+    resolve(img);
+  }, { crossOrigin: 'anonymous' }));
+}
+
 function showTransparentCanvasPreview() {
   canvas.backgroundColor = null;
   $('canvasShell')?.classList.add('checker');
@@ -1096,16 +1162,10 @@ function showTransparentCanvasPreview() {
 async function eraseImageWithMaskDataUrl(obj, maskDataUrl, historyLabel = 'Alpha erase by mask') {
   if (!obj || obj.type !== 'image') return false;
   if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
-  const [sourceImg, maskImg] = await Promise.all([loadImageForCanvas(await selectedImageAsFullCanvasDataUrl(obj)), loadImageForCanvas(maskDataUrl)]);
-  const tmp = document.createElement('canvas'); tmp.width = canvas.width; tmp.height = canvas.height;
-  const ctx = tmp.getContext('2d');
-  ctx.drawImage(sourceImg, 0, 0, tmp.width, tmp.height);
-  ctx.globalCompositeOperation = 'destination-out';
-  ctx.drawImage(maskImg, 0, 0, tmp.width, tmp.height);
-  ctx.globalCompositeOperation = 'source-over';
+  const erasedUrl = await eraseImageAtNativeResolution(obj, maskDataUrl);
   showTransparentCanvasPreview();
-  await replaceImageWithCroppedCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} alpha erased`, historyLabel);
-  setStatus('선택 이미지 레이어의 픽셀을 alpha=0 투명으로 지웠습니다. 체커보드가 보이면 투명 영역입니다.');
+  await replaceImagePreservingTransform(obj, erasedUrl, `${nameOf(obj)} alpha erased`, historyLabel);
+  setStatus('선택 이미지 레이어의 원본 해상도를 유지한 채 픽셀을 alpha=0 투명으로 지웠습니다.');
   return true;
 }
 
