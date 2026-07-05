@@ -77,28 +77,70 @@ function setStatus(msg) {
   $('status').textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
 }
 
-function saveHistory() {
+function historyJson() {
+  return JSON.stringify(canvas.toDatalessJSON(['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId']));
+}
+
+function labelHistoryEntry(label = '') {
+  const clean = String(label || '').trim();
+  if (clean) return clean;
+  const count = canvas.getObjects().filter(o => !o.excludeFromLayers).length;
+  const obj = active();
+  if (obj) return `${nameOf(obj)} 변경`;
+  if (count <= 1) return '초기 상태';
+  return `캔버스 변경 · 레이어 ${count}`;
+}
+
+function renderHistory() {
+  const list = $('historyList');
+  if (!list) return;
+  list.innerHTML = '';
+  if ($('historyCount')) $('historyCount').textContent = `${historyIndex + 1}/${history.length}`;
+  if ($('undoBtn')) $('undoBtn').disabled = historyIndex <= 0;
+  if ($('redoBtn')) $('redoBtn').disabled = historyIndex >= history.length - 1;
+  history.forEach((entry, idx) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'history-item' + (idx === historyIndex ? ' active' : '');
+    item.dataset.historyIndex = String(idx);
+    const label = entry.label || `History ${idx + 1}`;
+    const time = entry.at ? new Date(entry.at).toLocaleTimeString() : '';
+    item.innerHTML = `<span class="history-index">${idx + 1}</span><span class="history-label">${label}</span><span class="history-time">${time}</span>`;
+    item.onclick = () => jumpToHistory(idx);
+    list.appendChild(item);
+  });
+}
+
+function saveHistory(label = '') {
   if (suppressHistory) return;
-  const json = JSON.stringify(canvas.toDatalessJSON(['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId']));
-  if (history[historyIndex] === json) return;
+  const json = historyJson();
+  if (history[historyIndex]?.json === json) { renderHistory(); return; }
   history = history.slice(0, historyIndex + 1);
-  history.push(json);
+  history.push({ json, label: labelHistoryEntry(label), at: new Date().toISOString() });
   historyIndex = history.length - 1;
-  if (history.length > 50) { history.shift(); historyIndex--; }
+  if (history.length > 80) { history.shift(); historyIndex--; }
   renderLayers();
+  renderHistory();
 }
 
 function loadHistory(idx) {
   if (idx < 0 || idx >= history.length) return;
   suppressHistory = true;
-  canvas.loadFromJSON(history[idx], () => {
+  canvas.loadFromJSON(history[idx].json, () => {
     canvas.renderAll();
     historyIndex = idx;
     suppressHistory = false;
     refreshMaskStateFromCanvas();
     syncProps();
     renderLayers();
+    renderHistory();
+    refreshAiChatState();
+    setStatus(`History: ${history[idx].label || idx + 1}`);
   });
+}
+
+function jumpToHistory(idx) {
+  loadHistory(idx);
 }
 
 function uid(prefix='layer') { return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2,7)}`; }
@@ -1827,6 +1869,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Delete' || e.key === 'Backspace') { $('deleteObj').click(); e.preventDefault(); }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') { $('duplicateObj').click(); e.preventDefault(); }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.shiftKey ? loadHistory(historyIndex + 1) : loadHistory(historyIndex - 1); e.preventDefault(); }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') { loadHistory(historyIndex + 1); e.preventDefault(); }
 });
 window.addEventListener('keyup', (e) => {
   const tag = document.activeElement?.tagName;

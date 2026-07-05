@@ -344,6 +344,26 @@ body.resizing { user-select: none; cursor: col-resize; }
   font-size: 12px;
 }
 .layer-item button { padding: 4px 0; min-width: 0; border-radius: 8px; font-size: 11px; }
+.panel-count { float: right; color: var(--muted); font-size: 11px; font-weight: 650; }
+.history-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; }
+.history-item {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border: 1px solid #303746;
+  border-radius: 10px;
+  background: #101722;
+  color: #dbe4f0;
+}
+.history-item:hover { border-color: #4b5568; background: #151d2a; }
+.history-item.active { border-color: var(--accent); background: rgba(124, 92, 255, .18); }
+.history-index { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.history-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.history-time { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .layer-rename-input {
   width: 100%;
   min-width: 0;
