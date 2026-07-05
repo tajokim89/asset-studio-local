@@ -1046,9 +1046,35 @@ async function selectedImageAsFullCanvasDataUrl(obj) {
   return url;
 }
 
-function replaceImageWithFullCanvasLayer(obj, url, label, historyLabel) {
-  return new Promise(resolve => fabric.Image.fromURL(url, (img) => {
-    img.set({ left: 0, top: 0, originX: 'left', originY: 'top', opacity: obj.opacity ?? 1 });
+function clippedObjectBounds(obj) {
+  const rect = obj.getBoundingRect(true, true);
+  const left = clamp(Math.floor(rect.left), 0, canvas.width);
+  const top = clamp(Math.floor(rect.top), 0, canvas.height);
+  const right = clamp(Math.ceil(rect.left + rect.width), 0, canvas.width);
+  const bottom = clamp(Math.ceil(rect.top + rect.height), 0, canvas.height);
+  return {
+    left,
+    top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+  };
+}
+
+async function cropCanvasDataUrlToBounds(url, bbox) {
+  const sourceImg = await loadImageForCanvas(url);
+  const crop = document.createElement('canvas');
+  crop.width = bbox.width;
+  crop.height = bbox.height;
+  const cctx = crop.getContext('2d');
+  cctx.drawImage(sourceImg, bbox.left, bbox.top, bbox.width, bbox.height, 0, 0, bbox.width, bbox.height);
+  return crop.toDataURL('image/png');
+}
+
+async function replaceImageWithCroppedCanvasLayer(obj, url, label, historyLabel) {
+  const bbox = clippedObjectBounds(obj);
+  const croppedUrl = await cropCanvasDataUrlToBounds(url, bbox);
+  return new Promise(resolve => fabric.Image.fromURL(croppedUrl, (img) => {
+    img.set({ left: bbox.left, top: bbox.top, width: bbox.width, height: bbox.height, originX: 'left', originY: 'top', opacity: obj.opacity ?? 1 });
     img._originalSrc = obj._originalSrc || obj.getSrc();
     ensureMeta(img, label || nameOf(obj));
     const idx = canvas.getObjects().indexOf(obj);
@@ -1072,7 +1098,7 @@ async function eraseImageWithMaskDataUrl(obj, maskDataUrl, historyLabel = 'Alpha
   ctx.globalCompositeOperation = 'destination-out';
   ctx.drawImage(maskImg, 0, 0, tmp.width, tmp.height);
   ctx.globalCompositeOperation = 'source-over';
-  await replaceImageWithFullCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} alpha erased`, historyLabel);
+  await replaceImageWithCroppedCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} alpha erased`, historyLabel);
   setStatus('선택 이미지 레이어의 픽셀만 투명하게 지웠습니다.');
   return true;
 }
@@ -1119,7 +1145,7 @@ async function restoreSelectedByMask() {
   const ctx = tmp.getContext('2d');
   ctx.drawImage(currentImg, 0, 0, tmp.width, tmp.height);
   ctx.drawImage(originalCanvas, 0, 0);
-  await replaceImageWithFullCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} restored`, 'Restore by mask');
+  await replaceImageWithCroppedCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} restored`, 'Restore by mask');
   saveHistory('Restore by mask');
   setStatus('마스크 영역을 원본 픽셀로 복원했습니다.');
 }
