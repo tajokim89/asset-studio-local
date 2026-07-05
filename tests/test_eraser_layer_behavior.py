@@ -25,3 +25,12 @@ def test_erased_image_is_replaced_by_object_bbox_not_full_canvas():
     assert "left: bbox.left" in JS
     assert "width: bbox.width" in JS
     assert "replaceImageWithFullCanvasLayer" not in JS
+
+
+def test_eraser_switches_canvas_preview_to_transparency_checker():
+    assert "function showTransparentCanvasPreview" in JS
+    eraser_fn = JS.split("async function eraseImageWithMaskDataUrl", 1)[1].split("function pathToMaskDataUrl", 1)[0]
+    assert "showTransparentCanvasPreview();" in eraser_fn
+    assert "canvas.backgroundColor = null" in JS
+    assert "classList.add('checker')" in JS
+    assert "alpha=0 투명" in JS

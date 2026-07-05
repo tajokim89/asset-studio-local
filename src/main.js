@@ -1088,6 +1088,11 @@ async function replaceImageWithCroppedCanvasLayer(obj, url, label, historyLabel)
   }, { crossOrigin: 'anonymous' }));
 }
 
+function showTransparentCanvasPreview() {
+  canvas.backgroundColor = null;
+  $('canvasShell')?.classList.add('checker');
+}
+
 async function eraseImageWithMaskDataUrl(obj, maskDataUrl, historyLabel = 'Alpha erase by mask') {
   if (!obj || obj.type !== 'image') return false;
   if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
@@ -1098,8 +1103,9 @@ async function eraseImageWithMaskDataUrl(obj, maskDataUrl, historyLabel = 'Alpha
   ctx.globalCompositeOperation = 'destination-out';
   ctx.drawImage(maskImg, 0, 0, tmp.width, tmp.height);
   ctx.globalCompositeOperation = 'source-over';
+  showTransparentCanvasPreview();
   await replaceImageWithCroppedCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} alpha erased`, historyLabel);
-  setStatus('선택 이미지 레이어의 픽셀만 투명하게 지웠습니다.');
+  setStatus('선택 이미지 레이어의 픽셀을 alpha=0 투명으로 지웠습니다. 체커보드가 보이면 투명 영역입니다.');
   return true;
 }
 
@@ -1908,9 +1914,9 @@ $('workspace').addEventListener('wheel', (e) => {
   const step = e.deltaY < 0 ? 1.12 : 1 / 1.12;
   setViewScale(viewScale * step, e);
 }, { passive: false });
-$('canvasBg').oninput = () => { canvas.backgroundColor = $('canvasBg').value; canvas.renderAll(); saveHistory(); };
-$('transparentBg').onclick = () => { canvas.backgroundColor = null; canvas.renderAll(); saveHistory(); document.getElementById('canvasShell').classList.add('checker'); };
-$('whiteBg').onclick = () => { canvas.backgroundColor = '#ffffff'; $('canvasBg').value = '#ffffff'; canvas.renderAll(); saveHistory(); };
+$('canvasBg').oninput = () => { canvas.backgroundColor = $('canvasBg').value; $('canvasShell')?.classList.remove('checker'); canvas.renderAll(); saveHistory(); };
+$('transparentBg').onclick = () => { showTransparentCanvasPreview(); canvas.renderAll(); saveHistory(); };
+$('whiteBg').onclick = () => { canvas.backgroundColor = '#ffffff'; $('canvasBg').value = '#ffffff'; $('canvasShell')?.classList.remove('checker'); canvas.renderAll(); saveHistory(); };
 $('toggleChecker').onclick = () => document.getElementById('canvasShell').classList.toggle('checker');
 
 $('topPhotoPickBtn').onclick = () => $('topPhotoInput').click();
