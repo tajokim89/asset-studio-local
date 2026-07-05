@@ -30,10 +30,9 @@ def test_erased_image_preserves_native_resolution_not_canvas_bbox():
     assert "원본 해상도를 유지" in JS
 
 
-def test_eraser_switches_canvas_preview_to_transparency_checker():
-    assert "function showTransparentCanvasPreview" in JS
+def test_eraser_does_not_change_canvas_background_or_checker_preview():
     eraser_fn = JS.split("async function eraseImageWithMaskDataUrl", 1)[1].split("function pathToMaskDataUrl", 1)[0]
-    assert "showTransparentCanvasPreview();" in eraser_fn
-    assert "canvas.backgroundColor = null" in JS
-    assert "classList.add('checker')" in JS
-    assert "alpha=0 투명" in JS
+    assert "showTransparentCanvasPreview();" not in eraser_fn
+    assert "canvas.backgroundColor = null" not in eraser_fn
+    assert "classList.add('checker')" not in eraser_fn
+    assert "선택한 이미지 레이어에만 적용" in JS

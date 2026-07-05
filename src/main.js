@@ -1163,9 +1163,8 @@ async function eraseImageWithMaskDataUrl(obj, maskDataUrl, historyLabel = 'Alpha
   if (!obj || obj.type !== 'image') return false;
   if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
   const erasedUrl = await eraseImageAtNativeResolution(obj, maskDataUrl);
-  showTransparentCanvasPreview();
   await replaceImagePreservingTransform(obj, erasedUrl, `${nameOf(obj)} alpha erased`, historyLabel);
-  setStatus('선택 이미지 레이어의 원본 해상도를 유지한 채 픽셀을 alpha=0 투명으로 지웠습니다.');
+  setStatus('선택한 이미지 레이어에만 적용: 원본 해상도를 유지한 채 픽셀을 alpha=0 투명으로 지웠습니다.');
   return true;
 }
 
