@@ -734,6 +734,7 @@ function syncProps() {
   $('propH').value = Math.round(obj.getScaledHeight());
   $('propRot').value = Math.round(obj.angle || 0);
   $('propOpacity').value = obj.opacity ?? 1;
+  if ($('layerOpacity')) $('layerOpacity').value = obj.opacity ?? 1;
   if (obj.type === 'textbox' || obj.type === 'i-text') {
     $('textContent').value = obj.text || '';
     $('fontSize').value = obj.fontSize || 72;
@@ -957,6 +958,198 @@ function exportSelectedOnly() {
   });
   downloadDataUrl(data, 'selected-layer.png');
   setStatus('선택 PNG를 내보냈습니다.');
+}
+
+function cropValues() {
+  const x = clamp(Math.round(+$('cropX')?.value || 0), 0, canvas.width - 1);
+  const y = clamp(Math.round(+$('cropY')?.value || 0), 0, canvas.height - 1);
+  const w = clamp(Math.round(+$('cropW')?.value || canvas.width), 1, canvas.width - x);
+  const h = clamp(Math.round(+$('cropH')?.value || canvas.height), 1, canvas.height - y);
+  return { x, y, w, h };
+}
+
+function applyCanvasCrop() {
+  const { x, y, w, h } = cropValues();
+  canvas.getObjects().forEach(o => {
+    if (typeof o.left === 'number') o.left -= x;
+    if (typeof o.top === 'number') o.top -= y;
+    if (o.isDrawingLayer) o.set({ width: w, height: h });
+    o.setCoords?.();
+  });
+  setCanvasSize(w, h);
+  $('canvasW').value = w; $('canvasH').value = h;
+  $('cropX').value = 0; $('cropY').value = 0; $('cropW').value = w; $('cropH').value = h;
+  canvas.renderAll();
+  saveHistory('Canvas crop');
+  syncProps(); renderLayers(); fitView();
+  setStatus(`캔버스를 ${w}×${h}로 크롭했습니다.`);
+}
+
+function cropSelectedImage() {
+  const obj = selectedLayerObject();
+  if (!obj || obj.type !== 'image') { alert('이미지 레이어를 선택하세요.'); return; }
+  const { x, y, w, h } = cropValues();
+  const states = canvas.getObjects().map(o => ({ obj: o, visible: o.visible }));
+  const bg = canvas.backgroundColor;
+  canvas.getObjects().forEach(o => { o.visible = o === obj; });
+  canvas.backgroundColor = null;
+  canvas.discardActiveObject();
+  canvas.renderAll();
+  const url = canvas.toDataURL({ format: 'png', left: x, top: y, width: w, height: h, multiplier: 1 });
+  states.forEach(s => { s.obj.visible = s.visible; });
+  canvas.backgroundColor = bg;
+  fabric.Image.fromURL(url, (img) => {
+    img.set({ left: x, top: y, originX: 'left', originY: 'top', opacity: obj.opacity ?? 1 });
+    img._originalSrc = obj._originalSrc || obj.getSrc();
+    ensureMeta(img, `${nameOf(obj)} crop`);
+    const idx = canvas.getObjects().indexOf(obj);
+    canvas.remove(obj);
+    canvas.insertAt(img, Math.max(0, idx), false);
+    canvas.setActiveObject(img); rememberSelectedLayer(img);
+    canvas.renderAll();
+    saveHistory('Selected image crop');
+    syncProps(); renderLayers();
+    setStatus('선택 이미지 크롭을 새 투명 이미지 레이어로 적용했습니다.');
+  }, { crossOrigin: 'anonymous' });
+}
+
+function resizeCanvasFitObjects() {
+  const objs = canvas.getObjects().filter(o => !o.excludeFromExport && !o.isMaskOverlay);
+  if (!objs.length) return;
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  objs.forEach(o => {
+    const r = o.getBoundingRect(true, true);
+    left = Math.min(left, r.left); top = Math.min(top, r.top);
+    right = Math.max(right, r.left + r.width); bottom = Math.max(bottom, r.top + r.height);
+  });
+  const pad = 8;
+  left = Math.floor(left - pad); top = Math.floor(top - pad);
+  right = Math.ceil(right + pad); bottom = Math.ceil(bottom + pad);
+  $('cropX').value = Math.max(0, left); $('cropY').value = Math.max(0, top);
+  $('cropW').value = clamp(right - Math.max(0, left), 1, canvas.width);
+  $('cropH').value = clamp(bottom - Math.max(0, top), 1, canvas.height);
+  applyCanvasCrop();
+}
+
+async function selectedImageAsFullCanvasDataUrl(obj) {
+  const states = canvas.getObjects().map(o => ({ obj: o, visible: o.visible }));
+  const bg = canvas.backgroundColor;
+  canvas.getObjects().forEach(o => { o.visible = o === obj; });
+  obj.visible = true;
+  canvas.backgroundColor = null;
+  canvas.discardActiveObject();
+  canvas.renderAll();
+  const url = canvas.toDataURL({ format: 'png', multiplier: 1 });
+  states.forEach(s => { s.obj.visible = s.visible; });
+  canvas.backgroundColor = bg;
+  canvas.renderAll();
+  return url;
+}
+
+function replaceImageWithFullCanvasLayer(obj, url, label, historyLabel) {
+  return new Promise(resolve => fabric.Image.fromURL(url, (img) => {
+    img.set({ left: 0, top: 0, originX: 'left', originY: 'top', opacity: obj.opacity ?? 1 });
+    img._originalSrc = obj._originalSrc || obj.getSrc();
+    ensureMeta(img, label || nameOf(obj));
+    const idx = canvas.getObjects().indexOf(obj);
+    canvas.remove(obj);
+    canvas.insertAt(img, Math.max(0, idx), false);
+    canvas.setActiveObject(img); rememberSelectedLayer(img);
+    canvas.renderAll();
+    saveHistory(historyLabel);
+    syncProps(); renderLayers();
+    resolve(img);
+  }, { crossOrigin: 'anonymous' }));
+}
+
+async function eraseSelectedByMask() {
+  const obj = selectedLayerObject();
+  if (!obj || obj.type !== 'image') { alert('이미지 레이어를 선택하세요.'); return; }
+  const mask = await buildMaskDataUrl('edit');
+  if (!mask) { alert('먼저 Mask로 지울 영역을 칠하세요.'); return; }
+  if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
+  const [sourceImg, maskImg] = await Promise.all([loadImageForCanvas(await selectedImageAsFullCanvasDataUrl(obj)), loadImageForCanvas(mask)]);
+  const tmp = document.createElement('canvas'); tmp.width = canvas.width; tmp.height = canvas.height;
+  const ctx = tmp.getContext('2d');
+  ctx.drawImage(sourceImg, 0, 0, tmp.width, tmp.height);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.drawImage(maskImg, 0, 0, tmp.width, tmp.height);
+  ctx.globalCompositeOperation = 'source-over';
+  await replaceImageWithFullCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} alpha erased`, 'Alpha erase by mask');
+  saveHistory('Alpha erase by mask');
+  setStatus('마스크 영역을 투명하게 지웠습니다.');
+}
+
+async function restoreSelectedByMask() {
+  const obj = selectedLayerObject();
+  if (!obj || obj.type !== 'image') { alert('이미지 레이어를 선택하세요.'); return; }
+  const mask = await buildMaskDataUrl('edit');
+  if (!mask) { alert('먼저 Mask로 복원 영역을 칠하세요.'); return; }
+  const originalSrc = obj._originalSrc;
+  if (!originalSrc) { alert('복원할 원본 이미지가 없습니다.'); return; }
+  const [currentImg, originalImg, maskImg] = await Promise.all([loadImageForCanvas(await selectedImageAsFullCanvasDataUrl(obj)), loadImageForCanvas(originalSrc), loadImageForCanvas(mask)]);
+  const originalCanvas = document.createElement('canvas'); originalCanvas.width = canvas.width; originalCanvas.height = canvas.height;
+  const octx = originalCanvas.getContext('2d');
+  octx.save();
+  octx.translate(obj.left || 0, obj.top || 0);
+  octx.rotate((obj.angle || 0) * Math.PI / 180);
+  octx.scale(obj.scaleX || 1, obj.scaleY || 1);
+  octx.drawImage(originalImg, 0, 0);
+  octx.restore();
+  octx.globalCompositeOperation = 'destination-in';
+  octx.drawImage(maskImg, 0, 0, canvas.width, canvas.height);
+  octx.globalCompositeOperation = 'source-over';
+  const tmp = document.createElement('canvas'); tmp.width = canvas.width; tmp.height = canvas.height;
+  const ctx = tmp.getContext('2d');
+  ctx.drawImage(currentImg, 0, 0, tmp.width, tmp.height);
+  ctx.drawImage(originalCanvas, 0, 0);
+  await replaceImageWithFullCanvasLayer(obj, tmp.toDataURL('image/png'), `${nameOf(obj)} restored`, 'Restore by mask');
+  saveHistory('Restore by mask');
+  setStatus('마스크 영역을 원본 픽셀로 복원했습니다.');
+}
+
+async function restoreSelectedOriginal() {
+  const obj = selectedLayerObject();
+  if (!obj || obj.type !== 'image' || !obj._originalSrc) { alert('원본이 있는 이미지 레이어를 선택하세요.'); return; }
+  fabric.Image.fromURL(obj._originalSrc, (img) => {
+    img.set({ id: obj.id, name: obj.name, left: obj.left, top: obj.top, scaleX: obj.scaleX, scaleY: obj.scaleY, angle: obj.angle, opacity: obj.opacity, originX: obj.originX, originY: obj.originY });
+    img._originalSrc = obj._originalSrc;
+    const idx = canvas.getObjects().indexOf(obj);
+    canvas.remove(obj); canvas.insertAt(ensureMeta(img, obj.name), Math.max(0, idx), false);
+    canvas.setActiveObject(img); rememberSelectedLayer(img);
+    canvas.renderAll(); saveHistory('Restore original image'); syncProps(); renderLayers();
+    setStatus('선택 이미지를 원본으로 복원했습니다.');
+  }, { crossOrigin: 'anonymous' });
+}
+
+function applyLayerOpacity() {
+  const obj = selectedLayerObject();
+  if (!obj) return;
+  obj.set('opacity', clamp(+$('layerOpacity').value || 0, 0, 1));
+  canvas.renderAll(); saveHistory('Layer opacity'); syncProps(); renderLayers();
+}
+
+function groupSelection() {
+  const sel = active();
+  if (!sel || sel.type !== 'activeSelection') { alert('여러 레이어를 선택한 뒤 그룹을 누르세요.'); return; }
+  const group = sel.toGroup();
+  ensureMeta(group, 'Group');
+  canvas.setActiveObject(group); rememberSelectedLayer(group);
+  canvas.renderAll(); saveHistory('Group selection'); syncProps(); renderLayers();
+}
+
+function ungroupSelection() {
+  const obj = active();
+  if (!obj || obj.type !== 'group') { alert('그룹 레이어를 선택하세요.'); return; }
+  obj.toActiveSelection();
+  canvas.renderAll(); saveHistory('Ungroup selection'); syncProps(); renderLayers();
+}
+
+function exportActiveLayer() {
+  const obj = selectedLayerObject();
+  if (!obj) { alert('내보낼 레이어를 선택하세요.'); return; }
+  canvas.setActiveObject(obj);
+  exportSelectedOnly();
 }
 
 function fileToDataUrl(file) {
@@ -1660,6 +1853,9 @@ $('presetSize').onchange = () => {
   $('canvasW').value = w; $('canvasH').value = h;
 };
 $('applyCanvas').onclick = () => setCanvasSize(+$('canvasW').value, +$('canvasH').value);
+if ($('applyCanvasCrop')) $('applyCanvasCrop').onclick = applyCanvasCrop;
+if ($('cropSelectedImage')) $('cropSelectedImage').onclick = cropSelectedImage;
+if ($('resizeFitObjects')) $('resizeFitObjects').onclick = resizeCanvasFitObjects;
 $('fitCanvas').onclick = fitView;
 $('zoomIn').onclick = () => setViewScale(viewScale + 0.1);
 $('zoomOut').onclick = () => setViewScale(viewScale - 0.1);
@@ -1717,6 +1913,10 @@ $('addCircle').onclick = () => addToCanvas(new fabric.Circle({ left: 180, top: 1
 $('addLine').onclick = () => addToCanvas(new fabric.Line([120,120,460,120], { left: 160, top: 220, stroke: '#111111', strokeWidth: 8 }), 'Line');
 $('addLayer').onclick = () => createDrawingLayer();
 $('addImageLayer').onclick = addBlankImageLayer;
+if ($('layerOpacity')) $('layerOpacity').oninput = applyLayerOpacity;
+if ($('groupSelection')) $('groupSelection').onclick = groupSelection;
+if ($('ungroupSelection')) $('ungroupSelection').onclick = ungroupSelection;
+if ($('exportLayer')) $('exportLayer').onclick = exportActiveLayer;
 $('brushSize').oninput = () => { $('brushSizeValue').textContent = $('brushSize').value; if (['brush','pencil'].includes(currentTool)) setDrawingTool(currentTool); };
 $('brushColor').oninput = () => { if (currentTool === 'brush') setDrawingTool('brush'); };
 $('pencilColorMirror').oninput = () => { if (currentTool === 'pencil') setDrawingTool('pencil'); };
@@ -1751,6 +1951,9 @@ $('removeSheetBg').onclick = () => removeBgSelected('sheet');
 $('removeWhite').onclick = () => removeColor([255,255,255]);
 $('removeBlack').onclick = () => removeColor([0,0,0]);
 $('resetImage').onclick = resetImage;
+if ($('eraseSelectedByMask')) $('eraseSelectedByMask').onclick = eraseSelectedByMask;
+if ($('restoreSelectedByMask')) $('restoreSelectedByMask').onclick = restoreSelectedByMask;
+if ($('restoreSelectedOriginal')) $('restoreSelectedOriginal').onclick = restoreSelectedOriginal;
 $('clearMask').onclick = clearMask;
 $('invertMask').onclick = invertMask;
 $('exportMask').onclick = exportMaskPng;

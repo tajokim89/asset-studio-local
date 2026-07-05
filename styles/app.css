@@ -321,6 +321,9 @@ body.resizing { user-select: none; cursor: col-resize; }
 .workspace.pan-mode { cursor: grab; }
 .workspace.pan-mode:active { cursor: grabbing; }
 
+.layer-control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 8px 0 10px; align-items: center; }
+.layer-control-grid label { grid-column: span 2; margin: 0; }
+.layer-control-grid input { grid-column: span 2; }
 .layers { display: flex; flex-direction: column; gap: 7px; }
 .layer-item {
   display: grid;
