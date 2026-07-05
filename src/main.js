@@ -2238,6 +2238,36 @@ async function exportRegionSelectionPng() {
   setStatus('선택영역 PNG를 투명 배경 crop으로 내보냈습니다.');
 }
 
+function selectedRegionEditState() {
+  const target = selectedLayerObject();
+  const overlays = positiveEditMaskOverlays();
+  const bbox = regionBoundsFromMaskOverlays();
+  if (!target || target.type !== 'image' || target.isDrawingLayer || target.excludeFromLayers) {
+    return { ok: false, reason: '먼저 AI 수정할 이미지 레이어를 선택하세요.', target, overlays, bbox };
+  }
+  if (!overlays.length || !bbox) {
+    return { ok: false, reason: '먼저 영역 선택 도구에서 수정할 이미지 부분을 선택하세요.', target, overlays, bbox };
+  }
+  return { ok: true, target, overlays, bbox };
+}
+
+function prepareSelectedRegionAiEdit() {
+  const state = selectedRegionEditState();
+  if (!state.ok) {
+    setStatus(state.reason);
+    alert(state.reason);
+    return false;
+  }
+  const summary = `선택영역 AI 수정 준비: ${nameOf(state.target)} · ${Math.round(state.bbox.width)}×${Math.round(state.bbox.height)}`;
+  if ($('directInpaintDetails')) $('directInpaintDetails').open = true;
+  if ($('aiMaskSummary')) $('aiMaskSummary').textContent = summary;
+  if ($('inpaintResult')) $('inpaintResult').textContent = '프롬프트 입력 후 선택영역 직접 재생성을 누르세요.';
+  $('aiEditPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('inpaintPrompt')?.focus();
+  setStatus('선택영역 AI 수정 준비 완료: 프롬프트 입력 후 직접 재생성을 누르세요.');
+  return true;
+}
+
 function setInpaintBusy(isBusy) {
   if ($('runInpaint')) $('runInpaint').disabled = isBusy;
   if ($('applyInpaintNewLayer')) $('applyInpaintNewLayer').disabled = isBusy || !pendingInpaintResult;
@@ -2794,6 +2824,7 @@ if ($('regionMode')) $('regionMode').onchange = () => { configureRegionSelection
 if ($('copyRegionSelection')) $('copyRegionSelection').onclick = () => putSelectedRegionOnClipboard({ cut: false });
 if ($('cutRegionSelection')) $('cutRegionSelection').onclick = () => putSelectedRegionOnClipboard({ cut: true });
 if ($('pasteRegionSelection')) $('pasteRegionSelection').onclick = () => pasteRegionClipboard().catch(err => { console.error(err); alert(`붙여넣기 실패: ${err.message}`); });
+if ($('regionAiEdit')) $('regionAiEdit').onclick = prepareSelectedRegionAiEdit;
 if ($('clearRegionSelection')) $('clearRegionSelection').onclick = clearRegionSelectionOnly;
 if ($('exportRegionSelection')) $('exportRegionSelection').onclick = exportRegionSelectionPng;
 $('exportPng').onclick = exportFull; $('exportPng2').onclick = exportFull; $('exportSelected').onclick = exportSelectedOnly;
