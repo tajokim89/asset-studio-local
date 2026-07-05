@@ -436,6 +436,7 @@ def classify_chat_command(message: str, context: dict | None = None) -> dict:
     selected_layer = context.get("selectedLayer") if isinstance(context.get("selectedLayer"), dict) else {}
     has_image = bool(selected_layer.get("type") == "image")
     has_mask = bool(context.get("mask", {}).get("count", 0))
+    has_region = bool(context.get("regionSelection", {}).get("count", 0))
 
     def response(action, title, reply, params=None, requires_confirm=True):
         return {
@@ -450,6 +451,7 @@ def classify_chat_command(message: str, context: dict | None = None) -> dict:
             "context_used": {
                 "selectedLayer": context.get("selectedLayer"),
                 "mask": context.get("mask"),
+                "regionSelection": context.get("regionSelection"),
                 "layerCount": context.get("layerCount"),
             },
         }
@@ -480,15 +482,19 @@ def classify_chat_command(message: str, context: dict | None = None) -> dict:
         if not has_image:
             return response("select_image_needed", "이미지 레이어 선택 필요", "배경 제거는 이미지 레이어 선택 후 실행할 수 있습니다. 먼저 이미지 레이어를 선택하세요.", {"tool": "select"}, False)
         return response("remove_bg", "이미지 배경 제거", f"선택 이미지에 {'에셋 시트' if mode == 'sheet' else 'AI Cutout'} 배경 제거를 실행합니다.", {"mode": mode})
-    if any(k in low for k in ["마스크", "mask", "선택영역", "선택 영역"]):
-        return response("activate_mask", "마스크 도구 전환", "마스크 도구로 전환합니다. 빨간 영역은 AI 수정 대상, 파란 영역은 앞가림 보존입니다.", {}, False)
     if any(k in low for k in ["재생성", "inpaint", "수정", "바꿔", "고쳐"]):
         prompt = text
         if not has_image:
             return response("select_image_needed", "이미지 레이어 선택 필요", "선택영역 AI 재생성은 이미지 레이어 선택 후 가능합니다.", {"tool": "select"}, False)
+        if has_region:
+            return response("prepare_region_inpaint", "선택영역 AI 수정 준비", "현재 선택영역을 AI 수정 패널로 연결합니다. 프롬프트를 확인한 뒤 실행하세요.", {"prompt": prompt})
         if not has_mask:
-            return response("activate_mask", "마스크 필요", "먼저 마스크로 바꿀 영역을 지정해야 합니다. 마스크 도구로 전환합니다.", {}, False)
+            return response("activate_region", "선택영역 필요", "먼저 영역 도구로 수정할 부분을 선택하세요. 영역 도구로 전환합니다.", {}, False)
         return response("prepare_inpaint", "선택영역 AI 재생성 준비", "프롬프트를 직접 재생성 입력칸에 넣고 실행 준비를 합니다. 실제 생성은 확인 후 버튼으로 진행하세요.", {"prompt": prompt})
+    if any(k in low for k in ["마스크", "mask"]):
+        return response("activate_mask", "마스크 도구 전환", "마스크 도구로 전환합니다. 빨간 영역은 AI 수정 대상, 파란 영역은 앞가림 보존입니다.", {}, False)
+    if any(k in low for k in ["선택영역", "선택 영역"]):
+        return response("activate_region", "영역 도구 전환", "영역 도구로 전환합니다. 사각형/원형/올가미로 이미지 일부를 선택하세요.", {}, False)
     if any(k in low for k in ["생성", "generate", "만들어"]):
         return response("prepare_generate", "AI 에셋 생성 준비", "AI 생성 도구로 전환하고 프롬프트를 입력합니다. 실제 생성은 확인 후 실행하세요.", {"prompt": text})
     if any(k in low for k in ["내보내", "export", "png", "저장"]):

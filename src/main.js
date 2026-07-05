@@ -553,6 +553,10 @@ function positiveEditMaskOverlays() {
   return maskOverlays().filter(o => o.maskRole === 'selection-mask');
 }
 
+function positiveRegionSelectionOverlays() {
+  return positiveEditMaskOverlays();
+}
+
 function occlusionMaskOverlays() {
   return maskOverlays().filter(o => o.maskRole === 'occlusion-mask');
 }
@@ -2514,12 +2518,15 @@ function canvasChatContext() {
   const visibleLayers = canvas.getObjects().filter(o => !o.excludeFromLayers && !o.isMaskOverlay);
   const editCount = positiveEditMaskOverlays().length;
   const occCount = occlusionMaskOverlays().length;
+  const regionCount = positiveRegionSelectionOverlays().length;
+  const regionBbox = regionBoundsFromMaskOverlays();
   return {
     canvas: { width: canvas.width, height: canvas.height, background: canvas.backgroundColor || 'transparent' },
     selectedLayer: target ? { id: layerKey(target), name: nameOf(target), type: target.isDrawingLayer ? 'drawing' : target.type, visible: target.visible !== false, locked: !!target.locked } : null,
     layerCount: visibleLayers.length,
     layers: visibleLayers.map(o => ({ id: layerKey(o), name: nameOf(o), type: o.isDrawingLayer ? 'drawing' : o.type, visible: o.visible !== false })).slice(0, 20),
     mask: { count: editCount + occCount, editCount, occlusionCount: occCount },
+    regionSelection: { count: regionCount, bbox: regionBbox },
   };
 }
 
@@ -2528,7 +2535,7 @@ function refreshAiChatState() {
   if (!state) return;
   const ctx = canvasChatContext();
   const selected = ctx.selectedLayer ? `${ctx.selectedLayer.name} / ${ctx.selectedLayer.type}` : '선택 없음';
-  state.textContent = `선택: ${selected} · 레이어 ${ctx.layerCount} · 마스크 ${ctx.mask.count}`;
+  state.textContent = `선택: ${selected} · 레이어 ${ctx.layerCount} · 마스크 ${ctx.mask.count} · 선택영역 ${ctx.regionSelection.count}`;
 }
 
 function showChatAction(action) {
@@ -2608,6 +2615,10 @@ async function executeChatAction(action = pendingChatAction) {
       activateTool('mask');
       done('실행됨: 마스크 도구로 전환했습니다.');
       break;
+    case 'activate_region':
+      activateTool('region');
+      done('실행됨: 영역 도구로 전환했습니다. 이미지 위에서 수정할 부분을 선택하세요.');
+      break;
     case 'activate_text':
       activateTool('text');
       done('실행됨: 텍스트 도구로 전환했습니다.');
@@ -2616,6 +2627,13 @@ async function executeChatAction(action = pendingChatAction) {
       activateTool(params.tool || 'select');
       done('안내: 이미지 레이어를 선택한 뒤 다시 명령하세요. 선택 도구로 전환했습니다.');
       break;
+    case 'prepare_region_inpaint': {
+      if ($('inpaintPrompt')) $('inpaintPrompt').value = params.prompt || '';
+      const prepared = prepareSelectedRegionAiEdit();
+      if (prepared) done('준비됨: 선택영역 AI 수정 패널로 연결했습니다. 프롬프트 확인 후 실행하세요.');
+      else done('안내: 이미지 레이어와 선택영역을 먼저 준비하세요.');
+      break;
+    }
     case 'prepare_inpaint':
       if ($('inpaintPrompt')) $('inpaintPrompt').value = params.prompt || '';
       document.querySelector('details')?.setAttribute('open', '');

@@ -2,7 +2,7 @@
 
 A local browser-based AI image asset editor prototype.
 
-Current milestone: **Phase 1 editor base**.
+Current milestone: **Phase 9 AI Chat selected-region edit bridge**.
 
 ## Features in current build
 
@@ -24,6 +24,8 @@ Current milestone: **Phase 1 editor base**.
 - Basic color-key background removal
 - One-click Remove BG creates a transparent cutout layer while preserving/hiding the original
 - AI image generation API stub through local Hermes image provider
+- Region selection tools with copy/cut/paste, transparent region PNG export, and AI edit bridge
+- AI Chat command router for editor actions and selected-region edit preparation
 
 ## Run locally
 
@@ -67,9 +69,4 @@ See:
 
 Next planned phase:
 
-**Phase 2 — Remove BG**
-
-- one-click background removal
-- result as a new transparent cutout layer
-- original layer preserved
-- transparent PNG alpha verification
+**Phase 10 — AI Chat multi-step plan polish or inpaint preview/apply UX polish**
