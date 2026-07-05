@@ -11,7 +11,7 @@ def test_region_selection_copy_cut_buttons_exist():
         'id="cutRegionSelection"',
         '선택영역 복사',
         '선택영역 잘라내기',
-        'phase8f-selection-ux-polish',
+        'phase8g-region-action-polish',
     ]:
         assert token in INDEX
 

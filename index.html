@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Pixel Asset Studio</title>
-  <link rel="stylesheet" href="styles/app.css?v=phase8f-selection-ux-polish" />
+  <link rel="stylesheet" href="styles/app.css?v=phase8g-region-action-polish" />
 </head>
 <body>
 <div class="app">
@@ -57,7 +57,7 @@
     </section>
 
     <section class="option-panel" data-tool-panel="region">
-      <div class="panel"><h3>이미지 부분 선택</h3><p class="hint">먼저 이미지 레이어를 선택한 뒤 사각형/원형/올가미로 특정 부위를 선택합니다. 선택영역은 AI 재생성/inpaint와 마스크 작업에 사용됩니다.</p><label>선택 모양</label><select id="regionMode" class="input"><option value="rect">사각형 선택</option><option value="ellipse">원형/타원 선택</option><option value="lasso">올가미 선택</option></select><div class="row"><button id="copyRegionSelection" class="primary">선택영역 복사</button><button id="cutRegionSelection" class="danger">선택영역 잘라내기</button></div><div class="row"><button id="clearRegionSelection" class="danger">선택영역 지우기</button><button id="exportRegionSelection">선택영역 PNG</button></div><p id="regionSelectionInfo" class="hint">선택영역: 0</p></div>
+      <div class="panel"><h3>이미지 부분 선택</h3><p class="hint">먼저 이미지 레이어를 선택한 뒤 사각형/원형/올가미로 특정 부위를 선택합니다. 선택영역은 AI 재생성/inpaint와 마스크 작업에 사용됩니다.</p><label>선택 모양</label><select id="regionMode" class="input"><option value="rect">사각형 선택</option><option value="ellipse">원형/타원 선택</option><option value="lasso">올가미 선택</option></select><div class="row"><button id="copyRegionSelection" class="primary">선택영역 복사</button><button id="cutRegionSelection" class="danger">선택영역 잘라내기</button></div><div class="row"><button id="pasteRegionSelection" class="primary">선택영역 붙여넣기</button><button id="exportRegionSelection">선택영역 PNG</button></div><button id="clearRegionSelection" style="width:100%;margin-top:8px">선택 해제</button><p id="regionSelectionInfo" class="hint">선택영역: 0</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="pan">
@@ -126,6 +126,6 @@
   </aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
-<script src="src/main.js?v=phase8f-selection-ux-polish"></script>
+<script src="src/main.js?v=phase8g-region-action-polish"></script>
 </body>
 </html>

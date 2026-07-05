@@ -2181,6 +2181,10 @@ function invertMask() {
   setStatus('Mask inverted visually. Phase 3A에서는 반전 미리보기까지 지원합니다.');
 }
 
+function clearRegionSelectionOnly() {
+  clearRegionSelectionVisuals('선택영역을 해제했습니다.');
+}
+
 async function buildMaskDataUrl(kind = 'edit') {
   const overlays = kind === 'occlusion' ? occlusionMaskOverlays() : editMaskOverlays();
   if (!overlays.length) return null;
@@ -2214,6 +2218,24 @@ async function exportMaskPng() {
   if (!dataUrl) { alert('Export할 마스크가 없습니다.'); return; }
   downloadDataUrl(dataUrl, 'asset-studio-mask.png');
   setStatus('Mask PNG를 내보냈습니다: 흰색=수정 영역, 검은색=보호 영역.');
+}
+
+async function exportRegionSelectionPng() {
+  const target = selectedLayerObject();
+  if (!target || target.type !== 'image' || target.isDrawingLayer || target.excludeFromLayers) {
+    alert('먼저 PNG로 내보낼 이미지 레이어를 선택하세요.');
+    return;
+  }
+  const maskDataUrl = await buildMaskDataUrl('edit');
+  const regionBounds = regionBoundsFromMaskOverlays();
+  if (!maskDataUrl || !regionBounds) {
+    alert('먼저 영역 선택 도구에서 사각형/원형/올가미로 이미지 부분을 선택하세요.');
+    return;
+  }
+  const regionUrl = await selectedRegionAsFullCanvasDataUrl(target, maskDataUrl);
+  const regionCroppedUrl = await cropCanvasDataUrlToBounds(regionUrl, regionBounds);
+  downloadDataUrl(regionCroppedUrl, 'asset-studio-region-selection.png');
+  setStatus('선택영역 PNG를 투명 배경 crop으로 내보냈습니다.');
 }
 
 function setInpaintBusy(isBusy) {
@@ -2771,8 +2793,9 @@ $('maskSize').oninput = configureMaskBrush;
 if ($('regionMode')) $('regionMode').onchange = () => { configureRegionSelectionTool(); setStatus(`영역 선택: ${$('regionMode').value}`); };
 if ($('copyRegionSelection')) $('copyRegionSelection').onclick = () => putSelectedRegionOnClipboard({ cut: false });
 if ($('cutRegionSelection')) $('cutRegionSelection').onclick = () => putSelectedRegionOnClipboard({ cut: true });
-if ($('clearRegionSelection')) $('clearRegionSelection').onclick = clearMask;
-if ($('exportRegionSelection')) $('exportRegionSelection').onclick = exportMaskPng;
+if ($('pasteRegionSelection')) $('pasteRegionSelection').onclick = () => pasteRegionClipboard().catch(err => { console.error(err); alert(`붙여넣기 실패: ${err.message}`); });
+if ($('clearRegionSelection')) $('clearRegionSelection').onclick = clearRegionSelectionOnly;
+if ($('exportRegionSelection')) $('exportRegionSelection').onclick = exportRegionSelectionPng;
 $('exportPng').onclick = exportFull; $('exportPng2').onclick = exportFull; $('exportSelected').onclick = exportSelectedOnly;
 $('undoBtn').onclick = undoHistory;
 $('redoBtn').onclick = redoHistory;
