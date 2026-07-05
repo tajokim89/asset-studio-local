@@ -958,7 +958,7 @@ async function generateReplacementObject() {
     const gen = await fetch('/api/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ prompt: objectPrompt, preset: 'game', aspect_ratio: 'square' })
+      body: JSON.stringify({ prompt: objectPrompt, preset: 'game', aspect_ratio: 'square', background_mode: 'chroma_green' })
     });
     const genData = await gen.json();
     if (!gen.ok || !genData.success) throw new Error(genData.error || 'object generation failed');
@@ -3117,9 +3117,11 @@ $('loadProject').onchange = e => {
 $('generateBtn').onclick = async () => {
   const prompt = $('aiPrompt').value.trim();
   if (!prompt) { alert('프롬프트를 입력하세요.'); return; }
-  $('generateBtn').disabled = true; setStatus('AI 에셋 생성 중... 30~90초 정도 걸릴 수 있습니다.');
+  const preset = $('aiPreset').value;
+  const backgroundMode = preset === 'background' ? 'none' : 'chroma_green';
+  $('generateBtn').disabled = true; setStatus(backgroundMode === 'chroma_green' ? 'AI 에셋 생성 중... 배경은 #00FF00 크로마키로 고정합니다.' : 'AI 배경 이미지 생성 중... 30~90초 정도 걸릴 수 있습니다.');
   try {
-    const res = await fetch('/api/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt, preset:$('aiPreset').value, aspect_ratio:$('aiAspect').value }) });
+    const res = await fetch('/api/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt, preset, aspect_ratio:$('aiAspect').value, background_mode: backgroundMode }) });
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'generation failed');
     const url = data.url + '?t=' + Date.now();

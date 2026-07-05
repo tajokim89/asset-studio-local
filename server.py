@@ -51,14 +51,19 @@ def load_provider():
     return mod.OpenAICodexImageGenProvider()
 
 
-def build_prompt(user_prompt: str, preset: str) -> str:
+def build_prompt(user_prompt: str, preset: str, background_mode: str = "none") -> str:
     user_prompt = (user_prompt or "").strip()
     preset = (preset or "general").strip()
+    background_mode = (background_mode or "none").strip()
     suffix = PRESET_SUFFIX.get(preset, PRESET_SUFFIX["general"])
+    chroma = ""
+    if background_mode == "chroma_green":
+        chroma = """
+Chroma key background requirement: render the generated object on a perfectly flat solid green background, exactly RGB(0,255,0) / #00FF00. The green background must be uniform edge-to-edge with no gradient, texture, shadow, vignette, checkerboard, transparency, scenery, floor, or backdrop objects. Keep the subject fully inside the frame and separated from the green so the background can be removed by color key."""
     return f"""{user_prompt or 'Useful image asset'}
 
 Asset Studio preset: {preset}
-Guidance: {suffix}
+Guidance: {suffix}{chroma}
 Production constraints: make it easy to use in a design canvas; avoid watermarks; avoid accidental logos; avoid unreadable text unless explicitly requested.""".strip()
 
 
@@ -579,7 +584,11 @@ class Handler(SimpleHTTPRequestHandler):
                 result = classify_chat_command(message, context)
                 return self.send_json(200 if result.get("success") else 400, result)
             if path == "/api/generate":
-                prompt = build_prompt(data.get("prompt", ""), data.get("preset", "general"))
+                prompt = build_prompt(
+                    data.get("prompt", ""),
+                    data.get("preset", "general"),
+                    data.get("background_mode", "none"),
+                )
                 aspect = data.get("aspect_ratio") or "square"
                 provider = load_provider()
                 result = provider.generate(prompt, aspect_ratio=aspect)

@@ -97,7 +97,7 @@
     </section>
 
     <section class="option-panel" data-tool-panel="ai">
-      <div class="panel"><h3>AI 에셋 생성</h3><textarea id="aiPrompt" class="input" rows="5" placeholder="예: cute robot sticker, isolated, transparent-friendly"></textarea><div class="row"><select id="aiPreset" class="input"><option value="general">General</option><option value="product">Product shot</option><option value="character">Character</option><option value="icon">Icon</option><option value="logo">Logo concept</option><option value="game">Game asset</option><option value="ui">UI element</option><option value="background">Background</option><option value="pixel">Pixel art</option><option value="sticker">Sticker</option><option value="thumbnail">Thumbnail element</option></select><select id="aiAspect" class="input"><option value="square">1:1</option><option value="landscape">16:9</option><option value="portrait">9:16</option></select></div><button id="generateBtn" class="primary" style="width:100%">에셋 생성</button></div>
+      <div class="panel"><h3>AI 에셋 생성</h3><textarea id="aiPrompt" class="input" rows="5" placeholder="예: cute robot sticker, isolated, transparent-friendly"></textarea><p class="hint">Background 프리셋을 제외한 신규 오브젝트는 배경 제거가 쉽도록 #00FF00 / RGB(0,255,0) 크로마키 배경으로 생성합니다.</p><div class="row"><select id="aiPreset" class="input"><option value="general">General</option><option value="product">Product shot</option><option value="character">Character</option><option value="icon">Icon</option><option value="logo">Logo concept</option><option value="game">Game asset</option><option value="ui">UI element</option><option value="background">Background</option><option value="pixel">Pixel art</option><option value="sticker">Sticker</option><option value="thumbnail">Thumbnail element</option></select><select id="aiAspect" class="input"><option value="square">1:1</option><option value="landscape">16:9</option><option value="portrait">9:16</option></select></div><button id="generateBtn" class="primary" style="width:100%">에셋 생성</button></div>
     </section>
 
     <div class="panel"><h3>에셋 갤러리</h3><div id="gallery" class="gallery"></div></div>
@@ -126,6 +126,6 @@
   </aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
-<script src="src/main.js?v=phase11-project-v2"></script>
+<script src="src/main.js?v=phase11-green-bg"></script>
 </body>
 </html>
