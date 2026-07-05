@@ -33,6 +33,7 @@ let replacementGripAnchor = null;
 let pendingInpaintResult = null;
 let pendingChatAction = null;
 let regionClipboard = null;
+let regionPasteCount = 0;
 const $ = (id) => document.getElementById(id);
 const appEl = document.querySelector('.app');
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -188,7 +189,10 @@ function selectedLayerObject() {
   if (obj && !obj.isMaskOverlay && !obj.excludeFromLayers) return obj;
   return objectByLayerId(selectedLayerId);
 }
-function rememberSelectedLayer(obj) { selectedLayerId = layerKey(obj); }
+function rememberSelectedLayer(obj) {
+  if (!obj || obj.isMaskOverlay || obj.excludeFromLayers) return;
+  selectedLayerId = layerKey(obj);
+}
 
 function ensureMeta(obj, name) {
   obj.id ||= uid(obj.type || 'layer');
@@ -1518,6 +1522,7 @@ async function putSelectedRegionOnClipboard({ cut = false } = {}) {
     sourceName: nameOf(target),
     cut,
   };
+  regionPasteCount = 0;
   if (cut) await eraseSelectedImageOnCanvasWithMask(target, maskDataUrl, 'Cut selected region');
   clearRegionSelectionVisuals();
   setStatus(cut ? '선택영역을 잘라내서 내부 클립보드에 보관했습니다. Ctrl+V로 붙여넣으세요.' : '선택영역을 내부 클립보드에 복사했습니다. Ctrl+V로 붙여넣으세요.');
@@ -1529,12 +1534,18 @@ async function pasteRegionClipboard() {
     setStatus('붙여넣을 선택영역 클립보드가 없습니다.');
     return null;
   }
+  const baseX = regionClipboard.bounds.x ?? regionClipboard.bounds.left;
+  const baseY = regionClipboard.bounds.y ?? regionClipboard.bounds.top;
+  const offset = regionPasteCount * 12;
   const pasteBounds = {
     ...regionClipboard.bounds,
-    x: regionClipboard.bounds.x ?? regionClipboard.bounds.left,
-    y: regionClipboard.bounds.y ?? regionClipboard.bounds.top,
+    x: baseX + offset,
+    y: baseY + offset,
+    left: baseX + offset,
+    top: baseY + offset,
   };
   const layer = await addPatchImageUrl(regionClipboard.url, pasteBounds, `${regionClipboard.sourceName || 'Image'} ${regionClipboard.cut ? '잘라낸 영역' : '복사 영역'}`);
+  regionPasteCount += 1;
   setStatus('클립보드 선택영역을 새 이미지 레이어로 붙여넣었습니다.');
   return layer;
 }
@@ -2099,12 +2110,41 @@ function setGripAnchorAt(x, y) {
   return c;
 }
 
-function clearRegionSelectionVisuals() {
+function setRegionOverlayInteractivity(editable) {
+  positiveEditMaskOverlays().forEach(o => {
+    o.selectable = editable;
+    o.evented = editable;
+    o.hasControls = editable;
+    o.hasBorders = editable;
+    o.lockRotation = true;
+    o.excludeFromLayers = true;
+    o.excludeFromExport = true;
+    o.setCoords();
+  });
+}
+
+function updateRegionInfoFromOverlay(overlay) {
+  if (!overlay || !overlay.isMaskOverlay || overlay.maskRole !== 'selection-mask') return;
+  const rect = overlay.getBoundingRect(true, true);
+  const region = maskRegions.find(r => r.id === overlay.maskRegionId);
+  if (region) {
+    region.left = rect.left;
+    region.top = rect.top;
+    region.width = rect.width;
+    region.height = rect.height;
+    region.targetLayerId = overlay.targetLayerId || region.targetLayerId;
+  }
+  updateMaskInfo();
+}
+
+function clearRegionSelectionVisuals(message = 'Selection cleared') {
   const overlays = positiveEditMaskOverlays();
   overlays.forEach(o => canvas.remove(o));
   maskRegions = maskRegions.filter(r => !overlays.some(o => o.maskRegionId === r.id));
+  canvas.discardActiveObject();
   canvas.renderAll();
   updateMaskInfo();
+  setStatus(message);
 }
 
 function clearMask() {
@@ -2295,15 +2335,16 @@ async function runSelectedAreaAiEdit() {
 function configureRegionSelectionTool() {
   if (currentTool !== 'region') return;
   regionSelectionMode = $('regionMode')?.value || regionSelectionMode || 'rect';
+  const count = positiveEditMaskOverlays().length;
   canvas.selection = false;
-  canvas.isDrawingMode = regionSelectionMode === 'lasso';
-  canvas.defaultCursor = regionSelectionMode === 'lasso' ? 'crosshair' : 'crosshair';
+  canvas.isDrawingMode = regionSelectionMode === 'lasso' && count === 0;
+  canvas.defaultCursor = regionSelectionMode === 'lasso' && count === 0 ? 'crosshair' : 'crosshair';
   if (canvas.isDrawingMode) {
     canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
     canvas.freeDrawingBrush.width = 3;
     canvas.freeDrawingBrush.color = 'rgba(239,68,68,0.78)';
   }
-  const count = positiveEditMaskOverlays().length;
+  setRegionOverlayInteractivity(true);
   if ($('regionSelectionInfo')) $('regionSelectionInfo').textContent = `선택영역: ${count}`;
 }
 
@@ -2562,6 +2603,7 @@ function activateTool(tool) {
   });
   if (tool !== 'crop') clearCropPreview();
   if (tool !== 'region' && regionSelectionPreview) { canvas.remove(regionSelectionPreview); regionSelectionPreview = null; isRegionSelecting = false; }
+  if (tool !== 'region') setRegionOverlayInteractivity(false);
   if (['brush','pencil','eraser'].includes(tool)) { setMaskMode(false); setDrawingTool(tool); }
   else { setDrawingTool('select'); setMaskMode(tool === 'mask'); }
   if (tool === 'region') {
@@ -2768,6 +2810,7 @@ canvas.on('selection:updated', () => { if (active() && !canSelectLayer(active())
 canvas.on('selection:cleared', () => { syncProps(); renderLayers(); refreshAiChatState(); });
 canvas.on('mouse:down', (opt) => {
   if (currentTool === 'region') {
+    if (opt.target?.isMaskOverlay && opt.target.maskRole === 'selection-mask') return;
     beginRegionSelection(opt);
     return;
   }
@@ -2869,10 +2912,25 @@ canvas.on('path:created', (e) => {
   renderLayers();
   setStatus('Stroke added to drawing surface. 레이어 목록에는 개별 선을 쌓지 않습니다.');
 });
-canvas.on('object:modified', () => { saveHistory(); syncProps(); renderLayers(); refreshAiChatState(); });
+canvas.on('object:modified', (e) => {
+  if (e.target?.isMaskOverlay && e.target.maskRole === 'selection-mask') updateRegionInfoFromOverlay(e.target);
+  saveHistory(); syncProps(); renderLayers(); refreshAiChatState();
+});
 canvas.on('object:moving', (e) => { if (isLayerLocked(e.target)) { setStatus('레이어가 잠겨 있습니다. Unlock 후 이동하세요.'); e.target.setCoords(); canvas.discardActiveObject(); canvas.renderAll(); } });
 canvas.on('object:added', (e) => { if (e.target) enforceLayerInteractivity(e.target); if (!suppressHistory) renderLayers(); updateEmptyCanvasHint(); refreshAiChatState(); });
 canvas.on('object:removed', () => { if (!suppressHistory) renderLayers(); updateEmptyCanvasHint(); refreshAiChatState(); });
+
+function handleEscapeShortcut(e) {
+  if (e.key !== 'Escape') return false;
+  if (isEditableTextField()) return false;
+  if (regionSelectionPreview || positiveEditMaskOverlays().length) {
+    if (regionSelectionPreview) { canvas.remove(regionSelectionPreview); regionSelectionPreview = null; isRegionSelecting = false; }
+    clearRegionSelectionVisuals('Selection cleared');
+    e.preventDefault();
+    return true;
+  }
+  return false;
+}
 
 function handleClipboardShortcut(e) {
   if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return false;
@@ -2912,6 +2970,7 @@ function handleHistoryShortcut(e) {
 
 window.addEventListener('resize', fitView);
 window.addEventListener('keydown', (e) => {
+  if (handleEscapeShortcut(e)) return;
   if (handleClipboardShortcut(e)) return;
   if (handleHistoryShortcut(e)) return;
   if ((e.metaKey || e.ctrlKey) && ['+','=','-','0'].includes(e.key)) {
