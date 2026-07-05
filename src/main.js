@@ -78,7 +78,19 @@ function setStatus(msg) {
 }
 
 function historyJson() {
-  return JSON.stringify(canvas.toDatalessJSON(['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId']));
+  const historyProps = ['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','excludeFromExport','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId'];
+  const exportFlags = canvas.getObjects().map(o => ({ obj: o, id: o.id, excludeFromExport: o.excludeFromExport }));
+  const flagsById = new Map(exportFlags.map(({ id, excludeFromExport }) => [id, excludeFromExport]));
+  exportFlags.forEach(({ obj }) => { obj.excludeFromExport = false; });
+  try {
+    const json = canvas.toDatalessJSON(historyProps);
+    (json.objects || []).forEach(o => {
+      if (flagsById.has(o.id)) o.excludeFromExport = flagsById.get(o.id);
+    });
+    return JSON.stringify(json);
+  } finally {
+    exportFlags.forEach(({ obj, excludeFromExport }) => { obj.excludeFromExport = excludeFromExport; });
+  }
 }
 
 function labelHistoryEntry(label = '') {
@@ -1174,7 +1186,7 @@ function addMaskPath(path, role = 'selection-mask') {
   });
   canvas.bringToFront(path);
   canvas.renderAll();
-  saveHistory();
+  saveHistory('Mask brush stroke');
   updateMaskInfo();
   if (isOcclusion) setStatus('손/앞가림 마스크 추가. 오브젝트 생성 후 원본 손 픽셀을 위 레이어로 복원합니다.');
   else setStatus(isErase ? '교체 마스크 지우개 stroke added. Export PNG에서는 보호 영역으로 빠집니다.' : '교체 영역 마스크 stroke added.');
@@ -1196,7 +1208,7 @@ function addMaskRect(left, top, width, height) {
   canvas.bringToFront(overlay);
   maskRegions.push(region);
   canvas.renderAll();
-  saveHistory();
+  saveHistory('Mask rectangle');
   updateMaskInfo();
   setStatus(`교체 마스크 사각 추가: ${Math.round(w)}×${Math.round(h)}.`);
   return overlay;
@@ -1853,7 +1865,7 @@ canvas.on('path:created', (e) => {
   }
   path.selectable = false;
   path.evented = false;
-  saveHistory();
+  saveHistory('Brush stroke');
   renderLayers();
   setStatus('Stroke added to drawing surface. 레이어 목록에는 개별 선을 쌓지 않습니다.');
 });
@@ -1861,15 +1873,30 @@ canvas.on('object:modified', () => { saveHistory(); syncProps(); renderLayers();
 canvas.on('object:added', () => { if (!suppressHistory) renderLayers(); updateEmptyCanvasHint(); refreshAiChatState(); });
 canvas.on('object:removed', () => { if (!suppressHistory) renderLayers(); updateEmptyCanvasHint(); refreshAiChatState(); });
 
+function handleHistoryShortcut(e) {
+  if (!(e.metaKey || e.ctrlKey)) return false;
+  const key = e.key.toLowerCase();
+  const isUndoKey = key.toLowerCase() === 'z';
+  const isRedoKey = key.toLowerCase() === 'y';
+  if (!isUndoKey && !isRedoKey) return false;
+  const tag = document.activeElement?.tagName;
+  const type = (document.activeElement?.type || '').toLowerCase();
+  const isTextEditingField = tag === 'TEXTAREA' || (tag === 'INPUT' && ['text','search','url','email','password','tel'].includes(type));
+  if (isTextEditingField) return false;
+  if (key === 'z') e.shiftKey ? loadHistory(historyIndex + 1) : loadHistory(historyIndex - 1);
+  if (key === 'y') loadHistory(historyIndex + 1);
+  e.preventDefault();
+  return true;
+}
+
 window.addEventListener('resize', fitView);
 window.addEventListener('keydown', (e) => {
+  if (handleHistoryShortcut(e)) return;
   const tag = document.activeElement?.tagName;
   if (['INPUT','TEXTAREA','SELECT'].includes(tag)) return;
   if (e.code === 'Space') { activateTool('pan'); e.preventDefault(); }
   if (e.key === 'Delete' || e.key === 'Backspace') { $('deleteObj').click(); e.preventDefault(); }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') { $('duplicateObj').click(); e.preventDefault(); }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.shiftKey ? loadHistory(historyIndex + 1) : loadHistory(historyIndex - 1); e.preventDefault(); }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') { loadHistory(historyIndex + 1); e.preventDefault(); }
 });
 window.addEventListener('keyup', (e) => {
   const tag = document.activeElement?.tagName;

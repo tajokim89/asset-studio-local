@@ -31,3 +31,18 @@ def test_history_entries_carry_labels():
     assert "labelHistoryEntry" in JS
     assert "saveHistory(" in JS
     assert "label:" in JS
+
+
+def test_strokes_and_masks_write_named_history_entries():
+    assert "saveHistory('Brush stroke')" in JS
+    assert "saveHistory('Mask brush stroke')" in JS
+    assert "saveHistory('Mask rectangle')" in JS
+    assert "historyJson" in JS
+    assert "excludeFromExport = false" in JS
+    assert "flagsById" in JS
+
+
+def test_undo_redo_shortcuts_are_checked_before_form_focus_guard():
+    shortcut_idx = JS.index("const key = e.key.toLowerCase()")
+    form_guard_idx = JS.index("['INPUT','TEXTAREA','SELECT'].includes(tag)")
+    assert shortcut_idx < form_guard_idx
