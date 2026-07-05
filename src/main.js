@@ -37,7 +37,7 @@ let regionPasteCount = 0;
 const $ = (id) => document.getElementById(id);
 const appEl = document.querySelector('.app');
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
-const SERIALIZED_PROPS = ['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','excludeFromExport','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId'];
+const SERIALIZED_PROPS = ['id','name','_originalSrc','_phase4PreservedOriginal','_assetId','_assetName','excludeFromLayers','excludeFromExport','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId'];
 
 function setPanelWidth(side, px, persist = true) {
   const maxWidth = Math.max(260, window.innerWidth - 760);
@@ -88,7 +88,7 @@ function setStatus(msg) {
   $('status').textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
 }
 
-function historyJson() {
+function canvasJsonSnapshot() {
   const exportFlags = canvas.getObjects().map(o => ({ obj: o, id: o.id, excludeFromExport: o.excludeFromExport }));
   const flagsById = new Map(exportFlags.map(({ id, excludeFromExport }) => [id, excludeFromExport]));
   exportFlags.forEach(({ obj }) => { obj.excludeFromExport = false; });
@@ -97,10 +97,14 @@ function historyJson() {
     (json.objects || []).forEach(o => {
       if (flagsById.has(o.id)) o.excludeFromExport = flagsById.get(o.id);
     });
-    return JSON.stringify(json);
+    return json;
   } finally {
     exportFlags.forEach(({ obj, excludeFromExport }) => { obj.excludeFromExport = excludeFromExport; });
   }
+}
+
+function historyJson() {
+  return JSON.stringify(canvasJsonSnapshot());
 }
 
 function labelHistoryEntry(label = '') {
@@ -171,6 +175,230 @@ function undoHistory() {
 
 function redoHistory() {
   loadHistory(historyIndex + 1);
+}
+
+function parseCanvasJson(jsonOrString) {
+  if (!jsonOrString) return null;
+  return typeof jsonOrString === 'string' ? JSON.parse(jsonOrString) : jsonOrString;
+}
+
+function projectModulesSkeleton() {
+  return {
+    sprite: { sheets: [], extractions: [], animations: [] },
+    ui: { components: [], themes: [], nineSlice: [] },
+    map: { tilesets: [], tilemaps: [], collision: [], layers: [] },
+  };
+}
+
+function currentEditorState() {
+  return {
+    selectedLayerId,
+    activeDrawingLayerId,
+    currentTool,
+    currentDrawTool,
+    canvasSize: { width: canvas.width, height: canvas.height },
+    background: canvas.backgroundColor || null,
+    checkerboard: $('canvasShell')?.classList.contains('checker') || false,
+    view: { scale: viewScale, pan: { ...canvasPanOffset } },
+    mask: { drawMode: maskDrawMode, regionSelectionMode },
+  };
+}
+
+function applyEditorState(state = {}) {
+  selectedLayerId = state.selectedLayerId || null;
+  activeDrawingLayerId = state.activeDrawingLayerId || activeDrawingLayerId;
+  if (state.canvasSize?.width && state.canvasSize?.height) setCanvasSize(+state.canvasSize.width, +state.canvasSize.height);
+  if ('background' in state) canvas.backgroundColor = state.background || null;
+  if ($('canvasBg') && state.background) $('canvasBg').value = state.background;
+  $('canvasShell')?.classList.toggle('checker', !!state.checkerboard);
+  if (state.mask?.drawMode) maskDrawMode = state.mask.drawMode;
+  if (state.mask?.regionSelectionMode) regionSelectionMode = state.mask.regionSelectionMode;
+  if ($('regionMode') && state.mask?.regionSelectionMode) $('regionMode').value = state.mask.regionSelectionMode;
+  if (state.view?.pan) canvasPanOffset = { x: +state.view.pan.x || 0, y: +state.view.pan.y || 0 };
+  if (state.view?.scale) viewScale = clamp(+state.view.scale || 1, 0.1, 6);
+  updateCanvasTransform();
+}
+
+async function srcToDataUrl(src) {
+  if (!src) throw new Error('empty image src');
+  if (src.startsWith('data:image/')) return src;
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`image fetch failed: ${res.status}`);
+  const blob = await res.blob();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('image read failed'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function imageObjectDataUrl(obj) {
+  const src = obj?.getSrc?.() || obj?.src || obj?._originalSrc || '';
+  if (src.startsWith('data:image/')) return src;
+  const el = obj?._element || obj?._originalElement;
+  if (!el) return srcToDataUrl(src);
+  const w = el.naturalWidth || el.videoWidth || el.width || obj.width || 1;
+  const h = el.naturalHeight || el.videoHeight || el.height || obj.height || 1;
+  const tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = h;
+  tmp.getContext('2d').drawImage(el, 0, 0, w, h);
+  return tmp.toDataURL('image/png');
+}
+
+async function collectEmbeddedImageAssets(canvasJsons = []) {
+  const assets = [];
+  const byObjectKey = new Map();
+  const bySrc = new Map();
+  const registerAsset = (asset, keys = [], src = '') => {
+    if (!asset) return asset;
+    if (!assets.some(a => a.id === asset.id)) assets.push(asset);
+    keys.filter(Boolean).forEach(k => byObjectKey.set(k, asset));
+    if (src) bySrc.set(src.split('?')[0], asset);
+    return asset;
+  };
+  const imageObjects = canvas.getObjects().filter(o => o.type === 'image');
+  for (const obj of imageObjects) {
+    const src = obj.getSrc?.() || obj.src || obj._originalSrc || '';
+    try {
+      const dataUrl = await imageObjectDataUrl(obj);
+      const asset = {
+        id: obj._assetId || uid('asset_img'),
+        name: nameOf(obj),
+        source: src.startsWith('/assets/generated') ? 'generated' : src.startsWith('/assets/processed') ? 'processed' : 'embedded',
+        mime: (dataUrl.match(/^data:([^;]+);/) || [])[1] || 'image/png',
+        dataUrl,
+        width: obj.width || obj._element?.naturalWidth || null,
+        height: obj.height || obj._element?.naturalHeight || null,
+      };
+      obj._assetId = asset.id;
+      registerAsset(asset, [obj.id, obj.layerId, obj._assetId], src);
+    } catch (err) {
+      console.warn('Project image embed failed', err);
+    }
+  }
+  for (const json of canvasJsons) {
+    for (const o of (json?.objects || [])) {
+      if (o.type !== 'image') continue;
+      const src = o.src || o._originalSrc || '';
+      const cleanSrc = src.split('?')[0];
+      if (!src || bySrc.has(cleanSrc) || byObjectKey.has(o.id) || byObjectKey.has(o.layerId) || byObjectKey.has(o._assetId)) continue;
+      try {
+        const dataUrl = await srcToDataUrl(src);
+        const asset = {
+          id: o._assetId || uid('asset_img'),
+          name: o.name || 'Embedded image',
+          source: src.startsWith('/assets/generated') ? 'generated' : src.startsWith('/assets/processed') ? 'processed' : 'embedded',
+          mime: (dataUrl.match(/^data:([^;]+);/) || [])[1] || 'image/png',
+          dataUrl,
+          width: o.width || null,
+          height: o.height || null,
+        };
+        registerAsset(asset, [o.id, o.layerId, o._assetId], src);
+      } catch (err) {
+        console.warn('Project history image embed failed', err);
+      }
+    }
+  }
+  const embedJson = (json) => {
+    (json?.objects || []).forEach(o => {
+      if (o.type !== 'image') return;
+      const cleanSrc = (o.src || '').split('?')[0];
+      const asset = byObjectKey.get(o.id) || byObjectKey.get(o.layerId) || byObjectKey.get(o._assetId) || bySrc.get(cleanSrc);
+      if (!asset) return;
+      o._assetId = asset.id;
+      o._assetName = asset.name;
+      o.src = asset.dataUrl;
+      if (o._originalSrc) o._originalSrc = asset.dataUrl;
+    });
+  };
+  canvasJsons.forEach(embedJson);
+  return assets;
+}
+
+async function buildProjectV2() {
+  const canvasJson = canvasJsonSnapshot();
+  const historyEntries = history.map((entry, idx) => ({
+    label: entry.label || `History ${idx + 1}`,
+    at: entry.at || null,
+    canvasJson: parseCanvasJson(entry.json),
+  }));
+  const jsons = [canvasJson, ...historyEntries.map(e => e.canvasJson).filter(Boolean)];
+  const assets = await collectEmbeddedImageAssets(jsons);
+  const now = new Date().toISOString();
+  return {
+    app: 'asset-studio-local',
+    version: 2,
+    kind: 'project',
+    createdAt: now,
+    updatedAt: now,
+    document: {
+      name: 'Untitled Project',
+      mode: 'image-editor',
+      canvas: {
+        width: canvas.width,
+        height: canvas.height,
+        background: canvas.backgroundColor || null,
+        checkerboard: $('canvasShell')?.classList.contains('checker') || false,
+      },
+    },
+    assets: { images: assets },
+    editor: {
+      canvasJson,
+      history: historyEntries,
+      historyIndex,
+      state: currentEditorState(),
+    },
+    modules: projectModulesSkeleton(),
+  };
+}
+
+function finishProjectLoad(message) {
+  ensureDefaultDrawingLayer();
+  refreshMaskStateFromCanvas();
+  syncProps();
+  renderLayers();
+  renderHistory();
+  refreshAiChatState();
+  canvas.renderAll();
+  setStatus(message);
+}
+
+function loadLegacyProjectV1(project) {
+  suppressHistory = true;
+  canvas.loadFromJSON(project, () => {
+    suppressHistory = false;
+    history = [];
+    historyIndex = -1;
+    saveHistory('불러온 v1 프로젝트');
+    finishProjectLoad('Legacy v1 프로젝트를 불러왔습니다.');
+  });
+}
+
+function loadProjectV2(project) {
+  const editor = project.editor || {};
+  const entries = Array.isArray(editor.history) ? editor.history : [];
+  const idx = clamp(Number.isInteger(editor.historyIndex) ? editor.historyIndex : entries.length - 1, 0, Math.max(0, entries.length - 1));
+  const targetJson = entries[idx]?.canvasJson || editor.canvasJson;
+  if (!targetJson) throw new Error('프로젝트에 canvasJson이 없습니다.');
+  suppressHistory = true;
+  canvas.loadFromJSON(targetJson, () => {
+    history = entries.map((entry, i) => ({
+      json: JSON.stringify(entry.canvasJson || editor.canvasJson || targetJson),
+      label: entry.label || `History ${i + 1}`,
+      at: entry.at || new Date().toISOString(),
+    }));
+    if (!history.length) history = [{ json: JSON.stringify(targetJson), label: '불러온 프로젝트', at: new Date().toISOString() }];
+    historyIndex = clamp(idx, 0, history.length - 1);
+    applyEditorState(editor.state || {});
+    suppressHistory = false;
+    finishProjectLoad(`Project v2 불러오기 완료 · 히스토리 ${historyIndex + 1}/${history.length}`);
+  });
+}
+
+function loadProjectFileObject(project) {
+  if (project?.app === 'asset-studio-local' && project.version === 2) return loadProjectV2(project);
+  return loadLegacyProjectV1(project);
 }
 
 function isEditableTextField(el = document.activeElement) {
@@ -463,7 +691,7 @@ function canvasWithOnlyObjectDataUrl(obj) {
         tmp.dispose();
         reject(err);
       }
-    }, ['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId']);
+    }, ['id','name','_originalSrc','_phase4PreservedOriginal','_assetId','_assetName','excludeFromLayers','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId']);
   });
 }
 
@@ -2849,15 +3077,40 @@ $('exportPng').onclick = exportFull; $('exportPng2').onclick = exportFull; $('ex
 $('undoBtn').onclick = undoHistory;
 $('redoBtn').onclick = redoHistory;
 
-$('saveProject').onclick = () => {
-  const blob = new Blob([JSON.stringify(canvas.toDatalessJSON(SERIALIZED_PROPS), null, 2)], {type:'application/json'});
-  const a = document.createElement('a'); a.download = 'asset-studio-project.json'; a.href = URL.createObjectURL(blob); a.click(); URL.revokeObjectURL(a.href);
+$('saveProject').onclick = async () => {
+  try {
+    setStatus('프로젝트 v2 저장 준비 중... 이미지/히스토리를 포함합니다.');
+    const project = await buildProjectV2();
+    const text = JSON.stringify(project, null, 2);
+    const blob = new Blob([text], {type:'application/json'});
+    if (blob.size > 20 * 1024 * 1024) setStatus(`프로젝트 파일이 큽니다: ${(blob.size / 1024 / 1024).toFixed(1)}MB · 다음 단계에서 압축/ZIP 개선 필요`);
+    const a = document.createElement('a');
+    a.download = 'asset-studio-project-v2.json';
+    a.href = URL.createObjectURL(blob);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`Project v2 저장 완료 · 이미지 ${project.assets.images.length}개 · 히스토리 ${project.editor.history.length}개`);
+  } catch (err) {
+    console.error(err);
+    alert(`프로젝트 저장 실패: ${err.message}`);
+    setStatus(`프로젝트 저장 실패: ${err.message}`);
+  }
 };
 $('loadProjectBtn').onclick = () => $('loadProject').click();
 $('loadProject').onchange = e => {
   const f = e.target.files[0]; if(!f) return;
   const r = new FileReader();
-  r.onload = () => { suppressHistory = true; canvas.loadFromJSON(JSON.parse(r.result), () => { canvas.renderAll(); suppressHistory=false; ensureDefaultDrawingLayer(); refreshMaskStateFromCanvas(); saveHistory(); syncProps(); renderLayers(); }); };
+  r.onload = () => {
+    try {
+      loadProjectFileObject(JSON.parse(r.result));
+    } catch (err) {
+      console.error(err);
+      alert(`프로젝트 불러오기 실패: ${err.message}`);
+      setStatus(`프로젝트 불러오기 실패: ${err.message}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
   r.readAsText(f);
 };
 

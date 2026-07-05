@@ -11,7 +11,7 @@ spec.loader.exec_module(server)
 
 
 def test_phase9_cache_bust_and_chat_mentions_region_edit():
-    assert "phase10-inpaint-preview-apply" in INDEX
+    assert "phase11-project-v2" in INDEX
     assert "선택영역을 AI 수정으로 보낼 수 있습니다" in INDEX
 
 

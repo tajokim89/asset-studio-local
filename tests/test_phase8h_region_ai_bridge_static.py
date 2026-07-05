@@ -7,7 +7,7 @@ JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 
 def test_phase8h_region_panel_has_ai_edit_button_and_cache_bust():
     for token in [
-        "phase10-inpaint-preview-apply",
+        "phase11-project-v2",
         'id="regionAiEdit"',
         "선택영역 AI 수정",
         'id="directInpaintDetails"',

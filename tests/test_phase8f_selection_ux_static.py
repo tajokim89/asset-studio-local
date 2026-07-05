@@ -6,7 +6,7 @@ JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 
 
 def test_phase8f_cache_busted_and_escape_clear_exists():
-    assert "phase10-inpaint-preview-apply" in INDEX
+    assert "phase11-project-v2" in INDEX
     for token in [
         "function handleEscapeShortcut(e)",
         "if (handleEscapeShortcut(e)) return;",
