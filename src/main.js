@@ -13,20 +13,30 @@ let viewScale = 1;
 let isPanning = false;
 let panStart = null;
 let canvasPanOffset = { x: 0, y: 0 };
+let temporaryPanPreviousTool = null;
 let activeDrawingLayerId = null;
 let selectedLayerId = null;
+let isCropDragging = false;
+let cropStart = null;
+let cropPreview = null;
 let isMaskDragging = false;
 let maskStart = null;
 let maskPreview = null;
 let maskRegions = [];
 let maskLockedObjects = false;
 let maskDrawMode = 'brush';
+let regionSelectionMode = 'rect';
+let isRegionSelecting = false;
+let regionSelectionStart = null;
+let regionSelectionPreview = null;
 let replacementGripAnchor = null;
 let pendingInpaintResult = null;
 let pendingChatAction = null;
+let regionClipboard = null;
 const $ = (id) => document.getElementById(id);
 const appEl = document.querySelector('.app');
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+const SERIALIZED_PROPS = ['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','excludeFromExport','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId'];
 
 function setPanelWidth(side, px, persist = true) {
   const maxWidth = Math.max(260, window.innerWidth - 760);
@@ -78,12 +88,11 @@ function setStatus(msg) {
 }
 
 function historyJson() {
-  const historyProps = ['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','excludeFromExport','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId'];
   const exportFlags = canvas.getObjects().map(o => ({ obj: o, id: o.id, excludeFromExport: o.excludeFromExport }));
   const flagsById = new Map(exportFlags.map(({ id, excludeFromExport }) => [id, excludeFromExport]));
   exportFlags.forEach(({ obj }) => { obj.excludeFromExport = false; });
   try {
-    const json = canvas.toDatalessJSON(historyProps);
+    const json = canvas.toDatalessJSON(SERIALIZED_PROPS);
     (json.objects || []).forEach(o => {
       if (flagsById.has(o.id)) o.excludeFromExport = flagsById.get(o.id);
     });
@@ -153,6 +162,20 @@ function loadHistory(idx) {
 
 function jumpToHistory(idx) {
   loadHistory(idx);
+}
+
+function undoHistory() {
+  loadHistory(historyIndex - 1);
+}
+
+function redoHistory() {
+  loadHistory(historyIndex + 1);
+}
+
+function isEditableTextField(el = document.activeElement) {
+  const tag = el?.tagName;
+  const type = (el?.type || '').toLowerCase();
+  return tag === 'TEXTAREA' || (tag === 'INPUT' && ['text','search','url','email','password','tel'].includes(type));
 }
 
 function uid(prefix='layer') { return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2,7)}`; }
@@ -225,6 +248,48 @@ function applyDrawingLayerVisibility(layer) {
   canvas.getObjects().forEach(o => {
     if (o.isDrawingStroke && o.layerId === id) o.visible = layer.visible !== false;
   });
+}
+
+function isLayerLocked(obj) {
+  return !!obj?.locked;
+}
+
+function enforceLayerInteractivity(obj) {
+  if (!obj || obj.excludeFromLayers || obj.isMaskOverlay) return;
+  if (obj.isDrawingLayer) {
+    obj.selectable = false;
+    obj.evented = false;
+    return;
+  }
+  obj.selectable = obj.visible !== false && !isLayerLocked(obj);
+  obj.evented = obj.visible !== false && !isLayerLocked(obj);
+}
+
+function setLayerLocked(obj, locked) {
+  if (!obj) return;
+  obj.locked = !!locked;
+  enforceLayerInteractivity(obj);
+}
+
+function toggleLayerVisibility(obj) {
+  if (!obj) return;
+  obj.visible = !obj.visible;
+  if (obj.isDrawingLayer) applyDrawingLayerVisibility(obj);
+  enforceLayerInteractivity(obj);
+  if (obj.visible === false && active() === obj) canvas.discardActiveObject();
+  canvas.renderAll();
+  saveHistory(obj.visible === false ? 'Hide layer' : 'Show layer');
+  renderLayers();
+  refreshAiChatState();
+  setStatus(`${nameOf(obj)} ${obj.visible === false ? '숨김' : '표시'} 처리됨.`);
+}
+
+function canSelectLayer(obj) {
+  return !!obj && obj.visible !== false && !isLayerLocked(obj);
+}
+
+function htmlEscape(value) {
+  return String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 function layerMembers(layer) {
@@ -790,6 +855,139 @@ function beginRenameLayer(item, obj) {
   input.onblur = () => finish(true);
 }
 
+function deleteLogicalLayer(obj) {
+  if (!obj) return;
+  if (isLayerLocked(obj)) { setStatus('레이어가 잠겨 있습니다. 삭제하려면 먼저 Unlock 하세요.'); return; }
+  const members = layerMembers(obj);
+  members.forEach(o => canvas.remove(o));
+  if (activeDrawingLayerId === (obj.layerId || obj.id)) activeDrawingLayerId = null;
+  selectedLayerId = null;
+  if (!canvas.getObjects().some(o => o.isDrawingLayer)) ensureDefaultDrawingLayer();
+  canvas.discardActiveObject();
+  canvas.renderAll();
+  saveHistory('Delete layer');
+  syncProps();
+  renderLayers();
+  refreshAiChatState();
+  setStatus(`${nameOf(obj)} 삭제됨.`);
+}
+
+function duplicateLogicalLayer(obj) {
+  if (!obj) return;
+  if (isLayerLocked(obj)) { setStatus('레이어가 잠겨 있습니다. 복제하려면 먼저 Unlock 하세요.'); return; }
+  if (obj.isDrawingLayer) {
+    const newLayer = createDrawingLayer(`${nameOf(obj)} copy`);
+    const sourceId = obj.layerId || obj.id;
+    const newId = newLayer.layerId || newLayer.id;
+    const strokes = canvas.getObjects().filter(o => o.isDrawingStroke && o.layerId === sourceId);
+    let pending = strokes.length;
+    if (!pending) { saveHistory('Duplicate drawing layer'); renderLayers(); return; }
+    strokes.forEach(stroke => stroke.clone((clone) => {
+      ensureMeta(clone, stroke.name || 'Stroke copy');
+      clone.id = uid('stroke');
+      clone.layerId = newId;
+      clone.parentLayerName = newLayer.name;
+      clone.visible = newLayer.visible !== false;
+      clone.excludeFromLayers = true;
+      clone.isDrawingStroke = true;
+      clone.selectable = false;
+      clone.evented = false;
+      canvas.add(clone);
+      pending -= 1;
+      if (pending === 0) { canvas.renderAll(); saveHistory('Duplicate drawing layer'); renderLayers(); }
+    }, SERIALIZED_PROPS));
+    return;
+  }
+  obj.clone((clone) => {
+    ensureMeta(clone, `${nameOf(obj)} copy`);
+    clone.id = uid(clone.type || 'layer');
+    clone.name = `${nameOf(obj)} copy`;
+    clone.set({ left: (obj.left || 0) + 24, top: (obj.top || 0) + 24 });
+    clone.locked = false;
+    enforceLayerInteractivity(clone);
+    canvas.add(clone);
+    canvas.setActiveObject(clone);
+    rememberSelectedLayer(clone);
+    canvas.renderAll();
+    saveHistory('Duplicate layer');
+    syncProps();
+    renderLayers();
+    refreshAiChatState();
+    setStatus(`${nameOf(obj)} 복제됨.`);
+  }, SERIALIZED_PROPS);
+}
+
+function selectedMergeableLayers() {
+  const sel = active();
+  if (!sel || sel.type !== 'activeSelection') return [];
+  const selected = sel.getObjects().filter(o => o && !o.isDrawingLayer && !o.excludeFromLayers && !o.isMaskOverlay && o.visible !== false && !isLayerLocked(o));
+  const order = canvas.getObjects();
+  return selected.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+}
+
+function toggleLayerPanelMultiSelect(obj) {
+  if (!obj || obj.isDrawingLayer || !canSelectLayer(obj)) {
+    setStatus(obj?.isDrawingLayer ? 'Drawing Layer는 병합 선택 대상에서 제외됩니다.' : '숨김/잠금 레이어는 다중 선택할 수 없습니다.');
+    return;
+  }
+  const sel = active();
+  const current = sel && sel.type === 'activeSelection' ? sel.getObjects() : (sel && sel !== obj ? [sel] : []);
+  const next = current.includes(obj) ? current.filter(o => o !== obj) : [...current, obj];
+  if (next.length <= 0) {
+    canvas.discardActiveObject();
+  } else if (next.length === 1) {
+    canvas.setActiveObject(next[0]);
+    rememberSelectedLayer(next[0]);
+  } else {
+    const ordered = next.sort((a, b) => canvas.getObjects().indexOf(a) - canvas.getObjects().indexOf(b));
+    const multi = new fabric.ActiveSelection(ordered, { canvas });
+    canvas.setActiveObject(multi);
+    selectedLayerId = null;
+  }
+  canvas.renderAll();
+  syncProps();
+  renderLayers();
+  setStatus(`병합 선택: ${Math.max(1, next.length)}개 레이어`);
+}
+
+function mergeSelectedLayers() {
+  const layers = selectedMergeableLayers();
+  if (layers.length < 2) {
+    setStatus('Merge는 레이어 두 개 이상 선택되어야 실행됩니다. 레이어 패널에서 Shift/Cmd/Ctrl 클릭으로 여러 레이어를 선택하세요.');
+    return;
+  }
+  const sel = new fabric.ActiveSelection(layers, { canvas });
+  canvas.setActiveObject(sel);
+  const group = sel.toGroup();
+  const label = layers.map(nameOf).join(' + ');
+  ensureMeta(group, label);
+  group.name = label;
+  group.locked = false;
+  enforceLayerInteractivity(group);
+  canvas.setActiveObject(group);
+  rememberSelectedLayer(group);
+  canvas.renderAll();
+  saveHistory('Merge selected layers');
+  syncProps();
+  renderLayers();
+  refreshAiChatState();
+  setStatus(`${layers.length}개 선택 레이어를 병합했습니다.`);
+}
+
+function handleLayerAction(act, obj, item) {
+  if (act === 'rename') { beginRenameLayer(item, obj); return; }
+  if (act === 'up') { moveLogicalLayer(obj, 'up'); return; }
+  if (act === 'down') { moveLogicalLayer(obj, 'down'); return; }
+  if (act === 'vis') { toggleLayerVisibility(obj); return; }
+  if (act === 'lock') {
+    setLayerLocked(obj, !isLayerLocked(obj));
+    canvas.discardActiveObject(); canvas.renderAll(); saveHistory(isLayerLocked(obj) ? 'Lock layer' : 'Unlock layer'); renderLayers(); refreshAiChatState(); return;
+  }
+  if (act === 'duplicate') { duplicateLogicalLayer(obj); return; }
+  if (act === 'merge') { mergeSelectedLayers(); return; }
+  if (act === 'delete') { deleteLogicalLayer(obj); return; }
+}
+
 function renderLayers() {
   const box = $('layers');
   box.innerHTML = '';
@@ -797,10 +995,17 @@ function renderLayers() {
   const a = active();
   objs.forEach((obj, idx) => {
     const item = document.createElement('div');
-    const isSelected = obj === a || (!a && layerKey(obj) === selectedLayerId);
-    item.className = 'layer-item' + (isSelected ? ' active' : '');
-    const icon = obj.isDrawingLayer ? '✎' : (obj.visible === false ? '🙈' : '👁');
-    item.innerHTML = `<span>${icon}</span><span class="layer-name" title="Double-click to rename">${nameOf(obj)}</span><button data-act="rename">✎</button><button data-act="up">↑</button><button data-act="down">↓</button><button data-act="vis">V</button><button data-act="lock">L</button>`;
+    const selectedObjects = a && a.type === 'activeSelection' ? a.getObjects() : [];
+    const isSelected = obj === a || selectedObjects.includes(obj) || (!a && layerKey(obj) === selectedLayerId);
+    item.className = 'layer-item' + (isSelected ? ' active' : '') + (obj.visible === false ? ' is-hidden' : '') + (isLayerLocked(obj) ? ' is-locked' : '');
+    const icon = obj.visible === false ? '🙈' : (obj.isDrawingLayer ? '✎' : '👁');
+    const visibilityIcon = obj.visible === false ? '👁️‍🗨️' : '👁️';
+    const visibilityLabel = obj.visible === false ? 'Show layer' : 'Hide layer';
+    const visibilityTitle = visibilityLabel;
+    const lockLabel = isLayerLocked(obj) ? 'Unlock' : 'Lock';
+    const lockTitle = isLayerLocked(obj) ? 'Unlock layer' : 'Lock layer';
+    const stateBadges = `${obj.visible === false ? '<span class="layer-badge">Hidden</span>' : ''}${isLayerLocked(obj) ? '<span class="layer-badge">Locked</span>' : ''}`;
+    item.innerHTML = `<div class="layer-main-row"><span class="layer-icon">${icon}</span><span class="layer-name" title="Double-click to rename">${htmlEscape(nameOf(obj))}</span><span class="layer-state-badges">${stateBadges}</span></div><div class="layer-action-row"><button data-act="rename" draggable="false" title="Rename layer" aria-label="Rename layer">✎</button><button data-act="up" draggable="false" title="Move layer up" aria-label="Move layer up">↑</button><button data-act="down" draggable="false" title="Move layer down" aria-label="Move layer down">↓</button><button data-act="vis" draggable="false" title="${visibilityTitle}" aria-label="${visibilityTitle}" aria-pressed="${obj.visible !== false}">${visibilityIcon}</button><button data-act="lock" draggable="false" title="${lockTitle}" aria-label="${lockTitle}">${lockLabel}</button><button data-act="duplicate" draggable="false" title="Duplicate layer" aria-label="Duplicate layer">Dup</button><button data-act="merge" draggable="false" title="Merge selected layers" aria-label="Merge selected layers">Merge</button><button data-act="delete" draggable="false" title="Delete layer" aria-label="Delete layer">Del</button></div>`;
     item.draggable = true;
     const dragId = obj.layerId || obj.id;
     item.dataset.layerId = dragId;
@@ -824,19 +1029,28 @@ function renderLayers() {
       item.classList.remove('drag-over');
       moveLayerByDrag(e.dataTransfer.getData('text/plain'), dragId);
     };
+    item.querySelectorAll('button[data-act]').forEach(btn => {
+      btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      btn.addEventListener('mousedown', (e) => e.stopPropagation());
+      btn.addEventListener('dragstart', (e) => e.preventDefault());
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const act = btn.dataset.act;
+        handleLayerAction(act, obj, item);
+      });
+    });
     item.onclick = (e) => {
-      if (e.target.dataset.act === 'rename') { beginRenameLayer(item, obj); return; }
-      if (e.target.dataset.act === 'up') { moveLogicalLayer(obj, 'up'); return; }
-      if (e.target.dataset.act === 'down') { moveLogicalLayer(obj, 'down'); return; }
-      if (e.target.dataset.act === 'vis') {
-        obj.visible = !obj.visible;
-        if (obj.isDrawingLayer) applyDrawingLayerVisibility(obj);
-        canvas.renderAll(); saveHistory(); renderLayers(); return;
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        toggleLayerPanelMultiSelect(obj);
+        return;
       }
-      if (e.target.dataset.act === 'lock') {
-        if (obj.isDrawingLayer) obj.locked = !obj.locked;
-        else obj.selectable = obj.evented = !(obj.selectable !== false);
-        canvas.discardActiveObject(); canvas.renderAll(); saveHistory(); renderLayers(); return;
+      if (!canSelectLayer(obj)) {
+        setStatus(obj.visible === false ? '레이어가 숨김 상태입니다. Show 후 선택하세요.' : '레이어가 잠겨 있습니다. Unlock 후 편집하세요.');
+        canvas.discardActiveObject();
+        canvas.renderAll();
+        renderLayers();
+        return;
       }
       if (obj.isDrawingLayer) {
         activeDrawingLayerId = obj.layerId || obj.id;
@@ -929,6 +1143,86 @@ function fitView() {
   setViewScale(scale);
 }
 
+function zoomBy(delta, anchorEvent = null) {
+  setViewScale(viewScale * delta, anchorEvent);
+}
+
+function beginWorkspacePan(e) {
+  if (e.button !== 0 && e.button !== 1) return false;
+  e.preventDefault();
+  isPanning = true;
+  $('workspace')?.classList.add('is-panning');
+  canvas.defaultCursor = 'grabbing';
+  panStart = {
+    x: e.clientX,
+    y: e.clientY,
+    offsetX: canvasPanOffset.x,
+    offsetY: canvasPanOffset.y,
+  };
+  return true;
+}
+
+function updateWorkspacePan(e) {
+  if (!isPanning || !panStart) return;
+  e.preventDefault();
+  canvasPanOffset.x = panStart.offsetX + (e.clientX - panStart.x);
+  canvasPanOffset.y = panStart.offsetY + (e.clientY - panStart.y);
+  updateCanvasStageSize();
+}
+
+function endWorkspacePan() {
+  if (isPanning && currentTool === 'pan') canvas.defaultCursor = 'grab';
+  $('workspace')?.classList.remove('is-panning');
+  isPanning = false;
+  panStart = null;
+}
+
+function startTemporaryPan() {
+  if (temporaryPanPreviousTool || currentTool === 'pan') return;
+  temporaryPanPreviousTool = currentTool;
+  activateTool('pan');
+  setStatus('임시 Pan: Space를 놓으면 이전 도구로 돌아갑니다.');
+}
+
+function endTemporaryPan() {
+  if (!temporaryPanPreviousTool) return;
+  const tool = temporaryPanPreviousTool;
+  temporaryPanPreviousTool = null;
+  activateTool(tool);
+}
+
+function toggleDrawingTool() {
+  activateTool(currentTool === 'brush' ? 'pencil' : 'brush');
+}
+
+function toggleShapeTool() {
+  activateTool('shape');
+  const shapeOrder = ['addRect', 'addCircle', 'addLine', 'addRoundRect'];
+  const current = localStorage.getItem('assetStudio.lastShapeButton') || 'addRect';
+  const nextId = shapeOrder[(shapeOrder.indexOf(current) + 1) % shapeOrder.length] || 'addRect';
+  localStorage.setItem('assetStudio.lastShapeButton', nextId);
+  setStatus(`도형 도구: R을 다시 누르면 다음 기본 도형으로 전환됩니다. 현재 빠른 도형 ${nextId}.`);
+}
+
+function handleToolShortcut(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return false;
+  if (isEditableTextField() || ['SELECT'].includes(document.activeElement?.tagName)) return false;
+  const key = e.key.toLowerCase();
+  switch (key) {
+    case 'a': activateTool('region'); break;
+    case 'v': activateTool('select'); break;
+    case 'c': activateTool('crop'); break;
+    case 'e': activateTool('eraser'); break;
+    case 'm': activateTool('mask'); break;
+    case 't': activateTool('text'); break;
+    case 'b': toggleDrawingTool(); break;
+    case 'r': toggleShapeTool(); break;
+    default: return false;
+  }
+  e.preventDefault();
+  return true;
+}
+
 function downloadDataUrl(dataUrl, name) {
   const a = document.createElement('a');
   a.href = dataUrl;
@@ -968,8 +1262,90 @@ function cropValues() {
   return { x, y, w, h };
 }
 
+function setCropInputs(x, y, w, h) {
+  const cx = clamp(Math.round(x), 0, canvas.width - 1);
+  const cy = clamp(Math.round(y), 0, canvas.height - 1);
+  const cw = clamp(Math.round(w), 1, canvas.width - cx);
+  const ch = clamp(Math.round(h), 1, canvas.height - cy);
+  $('cropX').value = cx;
+  $('cropY').value = cy;
+  $('cropW').value = cw;
+  $('cropH').value = ch;
+  return { x: cx, y: cy, w: cw, h: ch };
+}
+
+function clearCropPreview() {
+  if (cropPreview) canvas.remove(cropPreview);
+  cropPreview = null;
+  cropStart = null;
+  isCropDragging = false;
+  canvas.renderAll();
+}
+
+function beginCropSelection(opt) {
+  const p = canvas.getPointer(opt.e);
+  clearCropPreview();
+  isCropDragging = true;
+  cropStart = { x: clamp(p.x, 0, canvas.width), y: clamp(p.y, 0, canvas.height) };
+  cropPreview = new fabric.Rect({
+    left: cropStart.x,
+    top: cropStart.y,
+    width: 1,
+    height: 1,
+    fill: 'rgba(250,204,21,0.16)',
+    stroke: '#facc15',
+    strokeWidth: 2,
+    strokeDashArray: [10, 6],
+    selectable: false,
+    evented: false,
+    excludeFromLayers: true,
+    excludeFromExport: true,
+    objectCaching: false,
+  });
+  cropPreview.name = '크롭 선택영역';
+  cropPreview.isCropPreview = true;
+  canvas.add(cropPreview);
+  canvas.bringToFront(cropPreview);
+  canvas.renderAll();
+}
+
+function updateCropSelection(opt) {
+  if (!isCropDragging || !cropPreview || !cropStart) return;
+  const p = canvas.getPointer(opt.e);
+  const x = clamp(p.x, 0, canvas.width);
+  const y = clamp(p.y, 0, canvas.height);
+  const left = Math.min(cropStart.x, x);
+  const top = Math.min(cropStart.y, y);
+  const width = Math.abs(x - cropStart.x);
+  const height = Math.abs(y - cropStart.y);
+  cropPreview.set({ left, top, width, height });
+  cropPreview.setCoords();
+  setCropInputs(left, top, Math.max(1, width), Math.max(1, height));
+  canvas.renderAll();
+}
+
+function finishCropSelection() {
+  if (!isCropDragging) return;
+  isCropDragging = false;
+  if (cropPreview) {
+    const r = {
+      left: cropPreview.left || 0,
+      top: cropPreview.top || 0,
+      width: (cropPreview.width || 0) * (cropPreview.scaleX || 1),
+      height: (cropPreview.height || 0) * (cropPreview.scaleY || 1),
+    };
+    if (r.width < 4 || r.height < 4) clearCropPreview();
+    else {
+      setCropInputs(r.left, r.top, r.width, r.height);
+      setStatus(`크롭 영역 선택: ${Math.round(r.width)}×${Math.round(r.height)}. 캔버스 크롭 또는 선택 이미지 크롭을 누르세요.`);
+    }
+  }
+  cropStart = null;
+}
+
 function applyCanvasCrop() {
   const { x, y, w, h } = cropValues();
+  clearCropPreview();
   canvas.getObjects().forEach(o => {
     if (typeof o.left === 'number') o.left -= x;
     if (typeof o.top === 'number') o.top -= y;
@@ -989,6 +1365,7 @@ function cropSelectedImage() {
   const obj = selectedLayerObject();
   if (!obj || obj.type !== 'image') { alert('이미지 레이어를 선택하세요.'); return; }
   const { x, y, w, h } = cropValues();
+  clearCropPreview();
   const states = canvas.getObjects().map(o => ({ obj: o, visible: o.visible }));
   const bg = canvas.backgroundColor;
   canvas.getObjects().forEach(o => { o.visible = o === obj; });
@@ -1044,6 +1421,126 @@ async function selectedImageAsFullCanvasDataUrl(obj) {
   canvas.backgroundColor = bg;
   canvas.renderAll();
   return url;
+}
+
+function maskImageToAlphaCanvas(maskImg, width, height, drawFn = null) {
+  const alpha = document.createElement('canvas');
+  alpha.width = width;
+  alpha.height = height;
+  const actx = alpha.getContext('2d');
+  actx.imageSmoothingEnabled = false;
+  if (drawFn) drawFn(actx, maskImg);
+  else actx.drawImage(maskImg, 0, 0, width, height);
+  const data = actx.getImageData(0, 0, width, height);
+  for (let i = 0; i < data.data.length; i += 4) {
+    const lum = Math.max(data.data[i], data.data[i + 1], data.data[i + 2]);
+    data.data[i] = 255;
+    data.data[i + 1] = 255;
+    data.data[i + 2] = 255;
+    data.data[i + 3] = lum;
+  }
+  actx.putImageData(data, 0, 0);
+  return alpha;
+}
+
+async function selectedRegionAsFullCanvasDataUrl(target, maskDataUrl) {
+  const [sourceImg, maskImg] = await Promise.all([
+    loadImageForCanvas(await selectedImageAsFullCanvasDataUrl(target)),
+    loadImageForCanvas(maskDataUrl),
+  ]);
+  const out = document.createElement('canvas');
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const ctx = out.getContext('2d');
+  ctx.clearRect(0, 0, out.width, out.height);
+  ctx.drawImage(sourceImg, 0, 0, out.width, out.height);
+  const alphaMask = maskImageToAlphaCanvas(maskImg, out.width, out.height);
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.drawImage(alphaMask, 0, 0, out.width, out.height);
+  ctx.globalCompositeOperation = 'source-over';
+  return out.toDataURL('image/png');
+}
+
+async function eraseSelectedImageOnCanvasWithMask(obj, maskDataUrl, historyLabel = 'Cut selected region') {
+  if (!obj || obj.type !== 'image') return false;
+  if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
+  const [sourceImg, maskImg] = await Promise.all([
+    loadImageForCanvas(await selectedImageAsFullCanvasDataUrl(obj)),
+    loadImageForCanvas(maskDataUrl),
+  ]);
+  const out = document.createElement('canvas');
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const ctx = out.getContext('2d');
+  ctx.clearRect(0, 0, out.width, out.height);
+  ctx.drawImage(sourceImg, 0, 0, out.width, out.height);
+  const alphaMask = maskImageToAlphaCanvas(maskImg, out.width, out.height);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.drawImage(alphaMask, 0, 0, out.width, out.height);
+  ctx.globalCompositeOperation = 'source-over';
+  await replaceImageWithCroppedCanvasLayer(obj, out.toDataURL('image/png'), `${nameOf(obj)} cut`, historyLabel);
+  setStatus('선택영역 cut: 캔버스 좌표 기준으로 원본 이미지의 해당 영역만 투명 처리했습니다.');
+  return true;
+}
+
+function regionBoundsFromMaskOverlays() {
+  const overlays = positiveEditMaskOverlays();
+  if (!overlays.length) return null;
+  const rects = overlays.map(o => o.getBoundingRect(true, true));
+  const left = clamp(Math.floor(Math.min(...rects.map(r => r.left))), 0, canvas.width - 1);
+  const top = clamp(Math.floor(Math.min(...rects.map(r => r.top))), 0, canvas.height - 1);
+  const right = clamp(Math.ceil(Math.max(...rects.map(r => r.left + r.width))), left + 1, canvas.width);
+  const bottom = clamp(Math.ceil(Math.max(...rects.map(r => r.top + r.height))), top + 1, canvas.height);
+  const width = Math.max(1, right - left);
+  const height = Math.max(1, bottom - top);
+  return { x: left, y: top, left, top, width, height };
+}
+
+async function putSelectedRegionOnClipboard({ cut = false } = {}) {
+  const target = selectedLayerObject();
+  if (!target || target.type !== 'image' || target.isDrawingLayer || target.excludeFromLayers) {
+    alert('먼저 부분 복사/잘라내기 할 이미지 레이어를 선택하세요.');
+    return null;
+  }
+  const maskDataUrl = await buildMaskDataUrl('edit');
+  const regionBounds = regionBoundsFromMaskOverlays();
+  if (!maskDataUrl || !regionBounds) {
+    alert('먼저 영역 선택 도구에서 사각형/원형/올가미로 이미지 부분을 선택하세요.');
+    return null;
+  }
+  const regionUrl = await selectedRegionAsFullCanvasDataUrl(target, maskDataUrl);
+  const regionCroppedUrl = await cropCanvasDataUrlToBounds(regionUrl, regionBounds);
+  regionClipboard = {
+    kind: 'region-image',
+    url: regionCroppedUrl,
+    bounds: regionBounds,
+    sourceLayerId: layerKey(target),
+    sourceName: nameOf(target),
+    cut,
+  };
+  if (cut) await eraseSelectedImageOnCanvasWithMask(target, maskDataUrl, 'Cut selected region');
+  clearRegionSelectionVisuals();
+  setStatus(cut ? '선택영역을 잘라내서 내부 클립보드에 보관했습니다. Ctrl+V로 붙여넣으세요.' : '선택영역을 내부 클립보드에 복사했습니다. Ctrl+V로 붙여넣으세요.');
+  return regionClipboard;
+}
+
+async function pasteRegionClipboard() {
+  if (!regionClipboard || regionClipboard.kind !== 'region-image') {
+    setStatus('붙여넣을 선택영역 클립보드가 없습니다.');
+    return null;
+  }
+  const pasteBounds = {
+    ...regionClipboard.bounds,
+    x: regionClipboard.bounds.x ?? regionClipboard.bounds.left,
+    y: regionClipboard.bounds.y ?? regionClipboard.bounds.top,
+  };
+  const layer = await addPatchImageUrl(regionClipboard.url, pasteBounds, `${regionClipboard.sourceName || 'Image'} ${regionClipboard.cut ? '잘라낸 영역' : '복사 영역'}`);
+  setStatus('클립보드 선택영역을 새 이미지 레이어로 붙여넣었습니다.');
+  return layer;
+}
+
+async function copySelectedRegionToLayer({ cut = false } = {}) {
+  return putSelectedRegionOnClipboard({ cut });
 }
 
 function clippedObjectBounds(obj) {
@@ -1108,12 +1605,9 @@ async function eraseImageAtNativeResolution(obj, maskDataUrl) {
   octx.drawImage(currentImg, 0, 0, native.width, native.height);
 
   const bbox = clippedObjectBounds(obj);
-  const localMask = document.createElement('canvas');
-  localMask.width = native.width;
-  localMask.height = native.height;
-  const mctx = localMask.getContext('2d');
-  mctx.imageSmoothingEnabled = false;
-  mctx.drawImage(maskImg, bbox.left, bbox.top, bbox.width, bbox.height, 0, 0, native.width, native.height);
+  const localMask = maskImageToAlphaCanvas(maskImg, native.width, native.height, (mctx, img) => {
+    mctx.drawImage(img, bbox.left, bbox.top, bbox.width, bbox.height, 0, 0, native.width, native.height);
+  });
 
   octx.globalCompositeOperation = 'destination-out';
   octx.drawImage(localMask, 0, 0);
@@ -1347,7 +1841,7 @@ async function removeBgSelected(mode='ai') {
     });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'remove-bg failed');
-    const url = data.url + '?t=' + Date.now();
+    const url = data.url.startsWith('data:') ? data.url : data.url + '?t=' + Date.now();
     fabric.Image.fromURL(url, (cutout) => {
       cutout.set({
         left: obj.left, top: obj.top, scaleX: obj.scaleX, scaleY: obj.scaleY,
@@ -1359,14 +1853,12 @@ async function removeBgSelected(mode='ai') {
       const idx = canvas.getObjects().indexOf(obj);
       obj.visible = false;
       canvas.insertAt(cutout, idx + 1, false);
-      canvas.backgroundColor = null;
-      $('canvasShell').classList.add('checker');
       canvas.setActiveObject(cutout);
       rememberSelectedLayer(cutout);
       canvas.renderAll();
       saveHistory(); syncProps(); renderLayers();
       addGallery(url, 'cutout');
-      setStatus(`${mode === 'sheet' ? 'Asset Sheet BG' : 'AI Cutout'} complete (${data.method}). 원본은 숨김 처리했고 Cutout 레이어를 새로 만들었습니다.`);
+      setStatus(`${mode === 'sheet' ? 'Asset Sheet BG' : 'AI Cutout'} complete (${data.method}). 선택한 이미지 레이어에만 적용했습니다. 원본은 숨김 처리했고 Cutout 레이어를 새로 만들었습니다.`);
     }, { crossOrigin: 'anonymous' });
   } catch (err) {
     setStatus('Remove BG failed: ' + err.message);
@@ -1416,6 +1908,7 @@ function updateMaskInfo() {
   const target = selectedLayerObject();
   const targetText = target ? `${nameOf(target)} (${target.type || 'layer'})` : '대상 레이어 없음';
   if ($('maskInfo')) $('maskInfo').textContent = label;
+  if ($('regionSelectionInfo')) $('regionSelectionInfo').textContent = `선택영역: ${editCount}`;
   if ($('aiMaskSummary')) $('aiMaskSummary').textContent = editCount ? `${label} · 대상: ${targetText}` : '선택된 교체 마스크 없음';
   if ($('runInpaint')) $('runInpaint').disabled = editCount === 0;
   if ($('generateReplacement')) $('generateReplacement').disabled = editCount === 0;
@@ -1478,11 +1971,11 @@ function addMaskPath(path, role = 'selection-mask') {
   const isErase = role === 'mask-eraser';
   const isOcclusion = role === 'occlusion-mask';
   path.set({
-    fill: null,
+    fill: path.type === 'path' && role === 'selection-mask' ? 'rgba(239,68,68,0.18)' : null,
     stroke: isErase ? 'rgba(34,197,94,0.78)' : (isOcclusion ? 'rgba(59,130,246,0.68)' : 'rgba(239,68,68,0.62)'),
     strokeLineCap: 'round',
     strokeLineJoin: 'round',
-    strokeDashArray: isErase ? [6, 6] : null,
+    strokeDashArray: path.type === 'path' && role === 'selection-mask' ? [8, 5] : (isErase ? [6, 6] : null),
   });
   canvas.bringToFront(path);
   canvas.renderAll();
@@ -1514,6 +2007,70 @@ function addMaskRect(left, top, width, height) {
   return overlay;
 }
 
+function ensureRegionSelectionTarget() {
+  const target = selectedLayerObject();
+  if (!target || target.type !== 'image' || target.isDrawingLayer || target.excludeFromLayers) {
+    const label = target ? `${nameOf(target)} (${target.isDrawingLayer ? 'drawing layer' : target.type})` : '선택 없음';
+    setStatus(`부분 선택은 이미지 레이어에서만 가능합니다. 현재 선택: ${label}`);
+    return null;
+  }
+  return target;
+}
+
+function addRegionEllipse(left, top, width, height) {
+  const target = ensureRegionSelectionTarget();
+  if (!target) return null;
+  const x = Math.max(0, Math.min(left, left + width));
+  const y = Math.max(0, Math.min(top, top + height));
+  const w = Math.min(canvas.width - x, Math.abs(width));
+  const h = Math.min(canvas.height - y, Math.abs(height));
+  if (w < 4 || h < 4) return null;
+  const ellipse = new fabric.Ellipse({ left: x, top: y, rx: w / 2, ry: h / 2, fill: 'rgba(239,68,68,0.28)', stroke: '#ff3b3b', strokeWidth: 2, strokeDashArray: [8, 5], selectable: false, evented: false, excludeFromLayers: true, excludeFromExport: true, objectCaching: false });
+  decorateMaskOverlay(ellipse, 'selection-mask');
+  ellipse.maskRole = 'selection-mask';
+  ellipse.targetLayerId = layerKey(target);
+  canvas.add(ellipse);
+  canvas.bringToFront(ellipse);
+  maskRegions.push({ id: ellipse.maskRegionId, left: x, top: y, width: w, height: h, targetLayerId: layerKey(target), shape: 'ellipse' });
+  canvas.renderAll();
+  saveHistory('Region ellipse selection');
+  updateMaskInfo();
+  setStatus(`선택 이미지 부분 타원 추가: ${Math.round(w)}×${Math.round(h)}.`);
+  return ellipse;
+}
+
+function closeLassoPath(path) {
+  if (!path) return path;
+  const commands = path.path || [];
+  const last = commands[commands.length - 1];
+  if (commands.length && last?.[0] !== 'Z' && last?.[0] !== 'z') commands.push(['Z']);
+  path.set({
+    path: commands,
+    fill: 'rgba(239,68,68,0.18)',
+    stroke: '#ff3b3b',
+    strokeWidth: 2,
+    strokeDashArray: [8, 5],
+    selectable: false,
+    evented: false,
+    excludeFromLayers: true,
+    excludeFromExport: true,
+    objectCaching: false,
+  });
+  path.setCoords();
+  return path;
+}
+
+function addRegionPath(path) {
+  const target = ensureRegionSelectionTarget();
+  if (!target) { canvas.remove(path); return null; }
+  closeLassoPath(path);
+  addMaskPath(path, 'selection-mask');
+  path.maskRole = 'selection-mask';
+  path.targetLayerId = layerKey(target);
+  setStatus('선택 이미지 부분 올가미 영역을 추가했습니다.');
+  return path;
+}
+
 function setGripAnchorAt(x, y) {
   maskOverlays().filter(o => o.maskRole === 'grip-anchor').forEach(o => canvas.remove(o));
   replacementGripAnchor = { x: clamp(x, 0, canvas.width), y: clamp(y, 0, canvas.height) };
@@ -1536,10 +2093,18 @@ function setGripAnchorAt(x, y) {
   canvas.add(c);
   canvas.bringToFront(c);
   canvas.renderAll();
-  saveHistory();
+  saveHistory('Grip anchor');
   updateMaskInfo();
   setStatus(`손잡이 앵커 지정: ${Math.round(replacementGripAnchor.x)}, ${Math.round(replacementGripAnchor.y)}. 새 오브젝트의 grip %가 이 점에 맞춰집니다.`);
   return c;
+}
+
+function clearRegionSelectionVisuals() {
+  const overlays = positiveEditMaskOverlays();
+  overlays.forEach(o => canvas.remove(o));
+  maskRegions = maskRegions.filter(r => !overlays.some(o => o.maskRegionId === r.id));
+  canvas.renderAll();
+  updateMaskInfo();
 }
 
 function clearMask() {
@@ -1548,7 +2113,7 @@ function clearMask() {
   maskRegions = [];
   replacementGripAnchor = null;
   canvas.renderAll();
-  saveHistory();
+  saveHistory('Clear mask');
   updateMaskInfo();
   setStatus('마스크/앵커를 지웠습니다.');
 }
@@ -1571,7 +2136,7 @@ function invertMask() {
   });
   maskRegions.push(full);
   canvas.renderAll();
-  saveHistory();
+  saveHistory('Invert mask');
   updateMaskInfo();
   setStatus('Mask inverted visually. Phase 3A에서는 반전 미리보기까지 지원합니다.');
 }
@@ -1587,7 +2152,7 @@ async function buildMaskDataUrl(kind = 'edit') {
     const clone = await new Promise(resolve => o.clone(resolve, ['maskRole','isMaskOverlay']));
     const isErase = o.maskRole === 'mask-eraser';
     clone.set({
-      fill: o.type === 'rect' ? (isErase ? '#000' : '#fff') : null,
+      fill: isErase ? '#000' : '#fff',
       stroke: isErase ? '#000' : '#fff',
       opacity: 1,
       selectable: false,
@@ -1725,6 +2290,79 @@ async function runSelectedAreaAiEdit() {
   } finally {
     updateMaskInfo();
   }
+}
+
+function configureRegionSelectionTool() {
+  if (currentTool !== 'region') return;
+  regionSelectionMode = $('regionMode')?.value || regionSelectionMode || 'rect';
+  canvas.selection = false;
+  canvas.isDrawingMode = regionSelectionMode === 'lasso';
+  canvas.defaultCursor = regionSelectionMode === 'lasso' ? 'crosshair' : 'crosshair';
+  if (canvas.isDrawingMode) {
+    canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+    canvas.freeDrawingBrush.width = 3;
+    canvas.freeDrawingBrush.color = 'rgba(239,68,68,0.78)';
+  }
+  const count = positiveEditMaskOverlays().length;
+  if ($('regionSelectionInfo')) $('regionSelectionInfo').textContent = `선택영역: ${count}`;
+}
+
+function beginRegionSelection(opt) {
+  if (regionSelectionMode === 'lasso') return;
+  const target = ensureRegionSelectionTarget();
+  if (!target) return;
+  const p = canvas.getPointer(opt.e);
+  isRegionSelecting = true;
+  regionSelectionStart = { x: clamp(p.x, 0, canvas.width), y: clamp(p.y, 0, canvas.height) };
+  const common = { left: regionSelectionStart.x, top: regionSelectionStart.y, fill: 'rgba(239,68,68,0.18)', stroke: '#ff3b3b', strokeWidth: 2, strokeDashArray: [8, 5], selectable: false, evented: false, excludeFromLayers: true, excludeFromExport: true, objectCaching: false };
+  regionSelectionPreview = regionSelectionMode === 'ellipse'
+    ? new fabric.Ellipse({ ...common, rx: 1, ry: 1 })
+    : new fabric.Rect({ ...common, width: 1, height: 1 });
+  regionSelectionPreview.isMaskOverlay = true;
+  regionSelectionPreview.maskRole = 'preview';
+  regionSelectionPreview.name = '영역 선택 미리보기';
+  canvas.add(regionSelectionPreview);
+  canvas.bringToFront(regionSelectionPreview);
+}
+
+function updateRegionSelection(opt) {
+  if (!isRegionSelecting || !regionSelectionPreview || !regionSelectionStart) return;
+  const p = canvas.getPointer(opt.e);
+  const x = clamp(p.x, 0, canvas.width);
+  const y = clamp(p.y, 0, canvas.height);
+  const left = Math.min(regionSelectionStart.x, x);
+  const top = Math.min(regionSelectionStart.y, y);
+  const width = Math.abs(x - regionSelectionStart.x);
+  const height = Math.abs(y - regionSelectionStart.y);
+  if (regionSelectionMode === 'ellipse') regionSelectionPreview.set({ left, top, rx: width / 2, ry: height / 2 });
+  else regionSelectionPreview.set({ left, top, width, height });
+  regionSelectionPreview.setCoords();
+  canvas.renderAll();
+}
+
+function finishRegionSelection() {
+  if (!isRegionSelecting) return;
+  isRegionSelecting = false;
+  if (regionSelectionPreview) {
+    const left = regionSelectionPreview.left || 0;
+    const top = regionSelectionPreview.top || 0;
+    const width = regionSelectionMode === 'ellipse' ? (regionSelectionPreview.rx || 0) * 2 : (regionSelectionPreview.width || 0);
+    const height = regionSelectionMode === 'ellipse' ? (regionSelectionPreview.ry || 0) * 2 : (regionSelectionPreview.height || 0);
+    canvas.remove(regionSelectionPreview);
+    regionSelectionPreview = null;
+    if (regionSelectionMode === 'ellipse') addRegionEllipse(left, top, width, height);
+    else {
+      const target = ensureRegionSelectionTarget();
+      const overlay = target ? addMaskRect(left, top, width, height) : null;
+      if (overlay && target) {
+        overlay.maskRole = 'selection-mask';
+        overlay.targetLayerId = layerKey(target);
+        setStatus(`선택 이미지 부분 사각 추가: ${Math.round(width)}×${Math.round(height)}.`);
+      }
+    }
+  }
+  regionSelectionStart = null;
+  configureRegionSelectionTool();
 }
 
 function configureMaskBrush() {
@@ -1914,15 +2552,28 @@ function activateTool(tool) {
   currentTool = tool;
   document.querySelectorAll('.tool-button').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
   document.querySelectorAll('.option-panel').forEach(p => p.classList.toggle('active', p.dataset.toolPanel === tool));
-  const toolNames = { select:'선택', pan:'작업영역 이동', crop:'크롭', brush:'브러시', pencil:'펜슬', eraser:'지우개', mask:'마스크', text:'텍스트', shape:'도형', upload:'이미지 가져오기', ai:'AI' };
+  const toolNames = { select:'선택', region:'영역 선택', pan:'작업영역 이동', crop:'크롭', brush:'브러시', pencil:'펜슬', eraser:'지우개', mask:'마스크', text:'텍스트', shape:'도형', upload:'이미지 가져오기', ai:'AI' };
   $('toolModeLabel').textContent = `${toolNames[tool] || tool} 도구`;
   $('workspace').classList.toggle('pan-mode', tool === 'pan');
   canvas.getObjects().forEach(o => {
     if (o.__lockedByPan && tool !== 'pan') { o.selectable = true; delete o.__lockedByPan; }
+    if (o.__lockedByCrop && tool !== 'crop') { o.selectable = true; delete o.__lockedByCrop; }
+    if (o.__lockedByRegion && tool !== 'region') { o.selectable = true; delete o.__lockedByRegion; }
   });
+  if (tool !== 'crop') clearCropPreview();
+  if (tool !== 'region' && regionSelectionPreview) { canvas.remove(regionSelectionPreview); regionSelectionPreview = null; isRegionSelecting = false; }
   if (['brush','pencil','eraser'].includes(tool)) { setMaskMode(false); setDrawingTool(tool); }
   else { setDrawingTool('select'); setMaskMode(tool === 'mask'); }
-  if (tool === 'pan') {
+  if (tool === 'region') {
+    canvas.selection = false;
+    canvas.getObjects().forEach(o => {
+      if (o.isMaskOverlay) return;
+      if (o.selectable !== false) o.__lockedByRegion = true;
+      o.selectable = false;
+    });
+    configureRegionSelectionTool();
+    canvas.renderAll();
+  } else if (tool === 'pan') {
     canvas.selection = false;
     canvas.discardActiveObject();
     canvas.getObjects().forEach(o => {
@@ -1931,13 +2582,24 @@ function activateTool(tool) {
     });
     canvas.defaultCursor = 'grab';
     canvas.renderAll();
+  } else if (tool === 'crop') {
+    canvas.selection = false;
+    canvas.discardActiveObject();
+    canvas.getObjects().forEach(o => {
+      if (o.selectable !== false) o.__lockedByCrop = true;
+      o.selectable = false;
+    });
+    canvas.defaultCursor = 'crosshair';
+    canvas.renderAll();
   } else if (tool !== 'mask') {
+    canvas.selection = true;
     canvas.defaultCursor = 'default';
   }
   const notes = {
     select:'선택 모드. 레이어 선택/이동/리사이즈 가능.',
+    region:'영역 선택 모드. 선택 이미지 레이어 위에서 사각형/원형/올가미로 특정 부분을 선택합니다.',
     pan:'작업영역 이동 모드. 캔버스 판을 자유롭게 드래그합니다.',
-    crop:'크롭 모드. 현재는 자리만 잡혀 있으며 실제 크롭은 다음 단계에서 구현합니다.',
+    crop:'크롭 모드. 캔버스 위에서 드래그해 영역을 잡은 뒤 캔버스 크롭/선택 이미지 크롭을 누르세요.',
     brush:'브러시 모드. 현재 드로잉 레이어에 그립니다.',
     pencil:'펜슬 모드. 얇은 선으로 현재 드로잉 레이어에 그립니다.',
     eraser:'지우개 모드. 투명 지우개 스트로크를 만듭니다.',
@@ -1964,14 +2626,13 @@ if ($('applyCanvasCrop')) $('applyCanvasCrop').onclick = applyCanvasCrop;
 if ($('cropSelectedImage')) $('cropSelectedImage').onclick = cropSelectedImage;
 if ($('resizeFitObjects')) $('resizeFitObjects').onclick = resizeCanvasFitObjects;
 $('fitCanvas').onclick = fitView;
-$('zoomIn').onclick = () => setViewScale(viewScale + 0.1);
-$('zoomOut').onclick = () => setViewScale(viewScale - 0.1);
+$('zoomIn').onclick = () => zoomBy(1.12);
+$('zoomOut').onclick = () => zoomBy(1 / 1.12);
 $('workspace').addEventListener('wheel', (e) => {
   const shell = $('canvasShell');
   if (!shell.contains(e.target) && e.target !== $('workspace')) return;
   e.preventDefault();
-  const step = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-  setViewScale(viewScale * step, e);
+  zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e);
 }, { passive: false });
 $('canvasBg').oninput = () => { canvas.backgroundColor = $('canvasBg').value; $('canvasShell')?.classList.remove('checker'); canvas.renderAll(); saveHistory(); };
 $('transparentBg').onclick = () => { showTransparentCanvasPreview(); canvas.renderAll(); saveHistory(); };
@@ -1988,29 +2649,12 @@ $('uploadInput').onchange = e => handleFiles([...e.target.files]);
 $('workspace').ondragover = e => { e.preventDefault(); };
 $('workspace').ondrop = e => { e.preventDefault(); handleFiles([...e.dataTransfer.files]); };
 $('workspace').addEventListener('mousedown', e => {
-  if (currentTool !== 'pan' || e.button !== 0) return;
-  e.preventDefault();
-  isPanning = true;
-  canvas.defaultCursor = 'grabbing';
-  panStart = {
-    x: e.clientX,
-    y: e.clientY,
-    offsetX: canvasPanOffset.x,
-    offsetY: canvasPanOffset.y,
-  };
+  const middleMouse = e.button === 1;
+  if (currentTool !== 'pan' && !middleMouse) return;
+  beginWorkspacePan(e);
 });
-window.addEventListener('mousemove', e => {
-  if (!isPanning || !panStart) return;
-  e.preventDefault();
-  canvasPanOffset.x = panStart.offsetX + (e.clientX - panStart.x);
-  canvasPanOffset.y = panStart.offsetY + (e.clientY - panStart.y);
-  updateCanvasStageSize();
-});
-window.addEventListener('mouseup', () => {
-  if (isPanning && currentTool === 'pan') canvas.defaultCursor = 'grab';
-  isPanning = false;
-  panStart = null;
-});
+window.addEventListener('mousemove', updateWorkspacePan);
+window.addEventListener('mouseup', endWorkspacePan);
 
 $('addText').onclick = () => addToCanvas(new fabric.Textbox($('newText').value || 'Text', { left: 160, top: 160, width: 420, fontSize: 72, fontFamily: 'Inter, Arial', fill: '#111111' }), 'Text');
 $('addTitle').onclick = () => addToCanvas(new fabric.Textbox('BIG TITLE', { left: 140, top: 140, width: 620, fontSize: 112, fontFamily: 'Inter, Arial', fontWeight: 800, fill: '#111111', stroke: '#ffffff', strokeWidth: 0 }), 'Title');
@@ -2082,12 +2726,17 @@ if ($('aiChatInput')) $('aiChatInput').addEventListener('keydown', (e) => {
 refreshAiChatState();
 $('maskMode').onchange = () => { configureMaskBrush(); setStatus(`Mask ${$('maskMode').value} mode.`); };
 $('maskSize').oninput = configureMaskBrush;
+if ($('regionMode')) $('regionMode').onchange = () => { configureRegionSelectionTool(); setStatus(`영역 선택: ${$('regionMode').value}`); };
+if ($('copyRegionSelection')) $('copyRegionSelection').onclick = () => putSelectedRegionOnClipboard({ cut: false });
+if ($('cutRegionSelection')) $('cutRegionSelection').onclick = () => putSelectedRegionOnClipboard({ cut: true });
+if ($('clearRegionSelection')) $('clearRegionSelection').onclick = clearMask;
+if ($('exportRegionSelection')) $('exportRegionSelection').onclick = exportMaskPng;
 $('exportPng').onclick = exportFull; $('exportPng2').onclick = exportFull; $('exportSelected').onclick = exportSelectedOnly;
-$('undoBtn').onclick = () => loadHistory(historyIndex - 1);
-$('redoBtn').onclick = () => loadHistory(historyIndex + 1);
+$('undoBtn').onclick = undoHistory;
+$('redoBtn').onclick = redoHistory;
 
 $('saveProject').onclick = () => {
-  const blob = new Blob([JSON.stringify(canvas.toDatalessJSON(['id','name','_originalSrc','_phase4PreservedOriginal','excludeFromLayers','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId']), null, 2)], {type:'application/json'});
+  const blob = new Blob([JSON.stringify(canvas.toDatalessJSON(SERIALIZED_PROPS), null, 2)], {type:'application/json'});
   const a = document.createElement('a'); a.download = 'asset-studio-project.json'; a.href = URL.createObjectURL(blob); a.click(); URL.revokeObjectURL(a.href);
 };
 $('loadProjectBtn').onclick = () => $('loadProject').click();
@@ -2114,10 +2763,18 @@ $('generateBtn').onclick = async () => {
   finally { $('generateBtn').disabled = false; }
 };
 
-canvas.on('selection:created', () => { rememberSelectedLayer(active()); syncProps(); renderLayers(); refreshAiChatState(); });
-canvas.on('selection:updated', () => { rememberSelectedLayer(active()); syncProps(); renderLayers(); refreshAiChatState(); });
+canvas.on('selection:created', () => { if (active() && !canSelectLayer(active())) { canvas.discardActiveObject(); setStatus(active()?.visible === false ? '레이어가 숨김 상태입니다. Show 후 선택하세요.' : '레이어가 잠겨 있습니다. Unlock 후 편집하세요.'); } rememberSelectedLayer(active()); syncProps(); renderLayers(); refreshAiChatState(); });
+canvas.on('selection:updated', () => { if (active() && !canSelectLayer(active())) { canvas.discardActiveObject(); setStatus(active()?.visible === false ? '레이어가 숨김 상태입니다. Show 후 선택하세요.' : '레이어가 잠겨 있습니다. Unlock 후 편집하세요.'); } rememberSelectedLayer(active()); syncProps(); renderLayers(); refreshAiChatState(); });
 canvas.on('selection:cleared', () => { syncProps(); renderLayers(); refreshAiChatState(); });
 canvas.on('mouse:down', (opt) => {
+  if (currentTool === 'region') {
+    beginRegionSelection(opt);
+    return;
+  }
+  if (currentTool === 'crop') {
+    beginCropSelection(opt);
+    return;
+  }
   if (currentTool !== 'mask') return;
   if (maskDrawMode === 'anchor') {
     const p = canvas.getPointer(opt.e);
@@ -2136,6 +2793,14 @@ canvas.on('mouse:down', (opt) => {
   canvas.bringToFront(maskPreview);
 });
 canvas.on('mouse:move', (opt) => {
+  if (currentTool === 'region') {
+    updateRegionSelection(opt);
+    return;
+  }
+  if (currentTool === 'crop') {
+    updateCropSelection(opt);
+    return;
+  }
   if (currentTool !== 'mask' || maskDrawMode !== 'rect' || !isMaskDragging || !maskPreview || !maskStart) return;
   const p = canvas.getPointer(opt.e);
   const x = clamp(p.x, 0, canvas.width);
@@ -2145,6 +2810,14 @@ canvas.on('mouse:move', (opt) => {
   canvas.renderAll();
 });
 canvas.on('mouse:up', () => {
+  if (currentTool === 'region') {
+    finishRegionSelection();
+    return;
+  }
+  if (currentTool === 'crop') {
+    finishCropSelection();
+    return;
+  }
   if (currentTool !== 'mask' || maskDrawMode !== 'rect' || !isMaskDragging) return;
   isMaskDragging = false;
   if (maskPreview) {
@@ -2157,6 +2830,12 @@ canvas.on('mouse:up', () => {
 });
 canvas.on('path:created', (e) => {
   const path = e.path;
+  if (currentTool === 'region') {
+    if (regionSelectionMode === 'lasso') addRegionPath(path);
+    else canvas.remove(path);
+    configureRegionSelectionTool();
+    return;
+  }
   if (currentTool === 'mask') {
     const role = maskDrawMode === 'erase' ? 'mask-eraser' : (maskDrawMode === 'occlusion' ? 'occlusion-mask' : 'selection-mask');
     addMaskPath(path, role);
@@ -2191,38 +2870,67 @@ canvas.on('path:created', (e) => {
   setStatus('Stroke added to drawing surface. 레이어 목록에는 개별 선을 쌓지 않습니다.');
 });
 canvas.on('object:modified', () => { saveHistory(); syncProps(); renderLayers(); refreshAiChatState(); });
-canvas.on('object:added', () => { if (!suppressHistory) renderLayers(); updateEmptyCanvasHint(); refreshAiChatState(); });
+canvas.on('object:moving', (e) => { if (isLayerLocked(e.target)) { setStatus('레이어가 잠겨 있습니다. Unlock 후 이동하세요.'); e.target.setCoords(); canvas.discardActiveObject(); canvas.renderAll(); } });
+canvas.on('object:added', (e) => { if (e.target) enforceLayerInteractivity(e.target); if (!suppressHistory) renderLayers(); updateEmptyCanvasHint(); refreshAiChatState(); });
 canvas.on('object:removed', () => { if (!suppressHistory) renderLayers(); updateEmptyCanvasHint(); refreshAiChatState(); });
+
+function handleClipboardShortcut(e) {
+  if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return false;
+  if (isEditableTextField()) return false;
+  const key = e.key.toLowerCase();
+  if (key === 'c') {
+    putSelectedRegionOnClipboard({ cut: false }).catch(err => { console.error(err); alert(`선택영역 복사 실패: ${err.message}`); });
+    e.preventDefault();
+    return true;
+  }
+  if (key === 'x') {
+    putSelectedRegionOnClipboard({ cut: true }).catch(err => { console.error(err); alert(`선택영역 잘라내기 실패: ${err.message}`); });
+    e.preventDefault();
+    return true;
+  }
+  if (key === 'v') {
+    pasteRegionClipboard().catch(err => { console.error(err); alert(`붙여넣기 실패: ${err.message}`); });
+    e.preventDefault();
+    return true;
+  }
+  return false;
+}
 
 function handleHistoryShortcut(e) {
   if (!(e.metaKey || e.ctrlKey)) return false;
   const key = e.key.toLowerCase();
-  const isUndoKey = key.toLowerCase() === 'z';
-  const isRedoKey = key.toLowerCase() === 'y';
+  const isUndoKey = key === 'z';
+  const isRedoKey = key === 'y';
   if (!isUndoKey && !isRedoKey) return false;
-  const tag = document.activeElement?.tagName;
-  const type = (document.activeElement?.type || '').toLowerCase();
-  const isTextEditingField = tag === 'TEXTAREA' || (tag === 'INPUT' && ['text','search','url','email','password','tel'].includes(type));
-  if (isTextEditingField) return false;
-  if (key === 'z') e.shiftKey ? loadHistory(historyIndex + 1) : loadHistory(historyIndex - 1);
-  if (key === 'y') loadHistory(historyIndex + 1);
+  if (isEditableTextField()) return false;
+  if (isUndoKey && e.shiftKey) redoHistory();
+  else if (isUndoKey) undoHistory();
+  else if (isRedoKey) redoHistory();
   e.preventDefault();
   return true;
 }
 
 window.addEventListener('resize', fitView);
 window.addEventListener('keydown', (e) => {
+  if (handleClipboardShortcut(e)) return;
   if (handleHistoryShortcut(e)) return;
+  if ((e.metaKey || e.ctrlKey) && ['+','=','-','0'].includes(e.key)) {
+    if (e.key === '0') fitView();
+    else zoomBy(e.key === '-' ? 1 / 1.12 : 1.12);
+    e.preventDefault();
+    return;
+  }
+  if (handleToolShortcut(e)) return;
   const tag = document.activeElement?.tagName;
   if (['INPUT','TEXTAREA','SELECT'].includes(tag)) return;
-  if (e.code === 'Space') { activateTool('pan'); e.preventDefault(); }
+  if (e.code === 'Space' && !e.repeat) { startTemporaryPan(); e.preventDefault(); }
   if (e.key === 'Delete' || e.key === 'Backspace') { $('deleteObj').click(); e.preventDefault(); }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') { $('duplicateObj').click(); e.preventDefault(); }
 });
 window.addEventListener('keyup', (e) => {
   const tag = document.activeElement?.tagName;
   if (['INPUT','TEXTAREA','SELECT'].includes(tag)) return;
-  if (e.code === 'Space' && currentTool === 'pan') activateTool('select');
+  if (e.code === 'Space') endTemporaryPan();
 });
 
 // Seed gallery with simple in-browser SVG samples

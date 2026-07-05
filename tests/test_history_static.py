@@ -20,9 +20,11 @@ def test_history_render_and_jump_are_wired():
 
 def test_standard_undo_redo_shortcuts_are_handled():
     lower = JS.lower()
-    assert "key.tolowercase() === 'z'" in lower
-    assert "key.tolowercase() === 'y'" in lower
+    assert "const isundokey = key === 'z'" in lower
+    assert "const isredokey = key === 'y'" in lower
     assert "e.shiftkey" in lower
+    assert "function undohistory" in lower
+    assert "function redohistory" in lower
     assert "loadhistory(historyindex - 1" in lower
     assert "loadhistory(historyindex + 1" in lower
 

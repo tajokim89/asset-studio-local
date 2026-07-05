@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Pixel Asset Studio</title>
-  <link rel="stylesheet" href="styles/app.css?v=phase5b-chat-plan" />
+  <link rel="stylesheet" href="styles/app.css?v=phase8e-cut-erase-canvas-coords" />
 </head>
 <body>
 <div class="app">
@@ -32,6 +32,7 @@
 
   <nav class="toolrail" aria-label="Tools">
     <button class="tool-button active" data-tool="select"><b>↖</b><span>선택</span></button>
+    <button class="tool-button" data-tool="region"><b>◌</b><span>영역</span></button>
     <button class="tool-button" data-tool="pan"><b>✋</b><span>이동</span></button>
     <button class="tool-button" data-tool="crop"><b>▣</b><span>크롭</span></button>
     <button class="tool-button" data-tool="brush"><b>🖌</b><span>브러시</span></button>
@@ -55,12 +56,16 @@
       <div class="panel"><h3>선택 / 이동</h3><button id="selectPhotoPickBtn" class="primary" style="width:100%;margin-bottom:8px">사진 넣기</button><p class="hint">캔버스 레이어를 클릭해 선택하고 이동/리사이즈/회전합니다. 오른쪽 Transform 패널에서 수치 편집도 가능합니다.</p></div>
     </section>
 
+    <section class="option-panel" data-tool-panel="region">
+      <div class="panel"><h3>이미지 부분 선택</h3><p class="hint">먼저 이미지 레이어를 선택한 뒤 사각형/원형/올가미로 특정 부위를 선택합니다. 선택영역은 AI 재생성/inpaint와 마스크 작업에 사용됩니다.</p><label>선택 모양</label><select id="regionMode" class="input"><option value="rect">사각형 선택</option><option value="ellipse">원형/타원 선택</option><option value="lasso">올가미 선택</option></select><div class="row"><button id="copyRegionSelection" class="primary">선택영역 복사</button><button id="cutRegionSelection" class="danger">선택영역 잘라내기</button></div><div class="row"><button id="clearRegionSelection" class="danger">선택영역 지우기</button><button id="exportRegionSelection">선택영역 PNG</button></div><p id="regionSelectionInfo" class="hint">선택영역: 0</p></div>
+    </section>
+
     <section class="option-panel" data-tool-panel="pan">
       <div class="panel"><h3>작업영역 이동 / 확대</h3><p class="hint">Pan 모드에서는 캔버스 영역을 드래그해 작업공간을 이동합니다. 상단 −/+로 확대/축소합니다.</p></div>
     </section>
 
     <section class="option-panel" data-tool-panel="crop">
-      <div class="panel"><h3>Crop / Resize</h3><p class="hint">캔버스 좌표 기준으로 자릅니다. 선택 이미지 크롭은 입력한 영역만 새 이미지로 교체합니다.</p><label>Crop X / Y</label><div class="row"><input id="cropX" class="input" type="number" value="0"><input id="cropY" class="input" type="number" value="0"></div><label>Crop W / H</label><div class="row"><input id="cropW" class="input" type="number" value="512"><input id="cropH" class="input" type="number" value="512"></div><div class="row"><button id="applyCanvasCrop" class="primary">캔버스 크롭</button><button id="cropSelectedImage">선택 이미지 크롭</button></div><button id="resizeFitObjects" style="width:100%;margin-top:8px">오브젝트에 캔버스 맞춤</button></div>
+      <div class="panel"><h3>Crop / Resize</h3><p class="hint">캔버스 위에서 드래그해 크롭 영역을 잡거나, 아래 좌표를 직접 입력합니다. 잡은 영역으로 캔버스/선택 이미지를 크롭합니다.</p><label>Crop X / Y</label><div class="row"><input id="cropX" class="input" type="number" value="0"><input id="cropY" class="input" type="number" value="0"></div><label>Crop W / H</label><div class="row"><input id="cropW" class="input" type="number" value="512"><input id="cropH" class="input" type="number" value="512"></div><div class="row"><button id="applyCanvasCrop" class="primary">캔버스 크롭</button><button id="cropSelectedImage">선택 이미지 크롭</button></div><button id="resizeFitObjects" style="width:100%;margin-top:8px">오브젝트에 캔버스 맞춤</button></div>
     </section>
 
     <section class="option-panel" data-tool-panel="brush">
@@ -117,10 +122,10 @@
     <div class="panel"><h3>오브젝트 치환 B안</h3><p class="hint">검→곤봉은 “마스크 bbox에 스티커 붙이기”가 아니라, 손잡이 앵커에 맞춰 배치하고 손/앞가림 마스크를 원본에서 다시 올립니다.</p><div id="aiMaskSummary" class="small">No mask selected</div><label>새 오브젝트</label><textarea id="replaceObjectPrompt" class="input" rows="3" placeholder="예: crude wooden club, held weapon, pixel art, same angle"></textarea><label>피할 것 / Negative</label><input id="replaceObjectNegative" class="input" placeholder="예: goblin, hand, body, background, text, watermark"><label>Replacement grip point on generated PNG (%)</label><div class="row"><input id="replaceAnchorX" class="input" type="number" value="78" min="0" max="100" title="object grip X %"><input id="replaceAnchorY" class="input" type="number" value="82" min="0" max="100" title="object grip Y %"><input id="replaceFitScale" class="input" type="number" value="1.00" min="0.2" max="3" step="0.05" title="fit scale"></div><div class="row"><label class="checkline"><input id="useGripAnchor" type="checkbox" checked> 앵커에 손잡이 맞춤</label><label class="checkline"><input id="clearOriginalUnderMask" type="checkbox" checked> 기존 물체 비움</label></div><div class="row"><label class="checkline"><input id="createOcclusionLayer" type="checkbox" checked> 손/앞가림 레이어 생성</label></div><div class="row"><button id="generateReplacement" class="primary">오브젝트만 생성/앵커 배치</button><button id="previewMask">Mask PNG</button></div><div id="replaceResult" class="small">마스크+앵커 선택 후 새 오브젝트를 생성합니다.</div><hr class="panel-sep"><details><summary>고급: 마스크 안쪽 직접 재생성</summary><p class="hint">스타일이 흔들릴 수 있어 기본값은 아닙니다. 접점 보정/작은 패치에만 사용하세요.</p><label>선택영역 편집 프롬프트</label><textarea id="inpaintPrompt" class="input" rows="3" placeholder="예: 손가락 접점만 자연스럽게 정리"></textarea><label>피할 것 / Negative</label><input id="inpaintNegative" class="input" placeholder="예: full redraw, new body, background, text"><button id="runInpaint" style="width:100%;margin-top:8px">선택영역 직접 재생성</button><div id="inpaintPreviewPanel" class="inpaint-preview hidden"><div class="small">AI 결과 미리보기</div><img id="inpaintPreviewImg" alt="AI edit preview"><div class="row"><button id="applyInpaintNewLayer" class="primary">새 레이어 적용</button><button id="applyInpaintReplace">선택 이미지 교체</button></div><div class="row"><button id="retryInpaint">다시 생성</button><button id="cancelInpaint" class="danger compact-danger">취소</button></div></div><div id="inpaintResult" class="small">Ready after mask selection.</div></details></div>
     <div class="panel"><h3>레이어</h3><div class="row"><button id="addLayer" class="primary">+ 일반 레이어</button><button id="addImageLayer">+ 이미지 자리</button></div><div class="layer-control-grid"><label>Layer opacity</label><input id="layerOpacity" class="input" type="range" min="0" max="1" step="0.05" value="1"><button id="groupSelection">그룹</button><button id="ungroupSelection">그룹 해제</button><button id="exportLayer" class="primary">레이어 PNG</button></div><div id="layers" class="layers"></div></div>
     <div class="panel"><h3>히스토리 <span id="historyCount" class="panel-count">0/0</span></h3><p class="hint">작업 시점이 자동 기록됩니다. 항목을 누르면 포토샵 History처럼 해당 상태로 이동합니다.</p><div id="historyList" class="history-list"></div></div>
-    <div class="panel"><h3>단축키</h3><p class="hint"><span class="kbd">Del</span> 삭제 · <span class="kbd">⌘/Ctrl+D</span> 복제 · <span class="kbd">⌘/Ctrl+Z</span> Undo · <span class="kbd">⌘/Ctrl+Shift+Z</span>/<span class="kbd">⌘/Ctrl+Y</span> Redo · <span class="kbd">Space</span> Pan 임시</p></div>
+    <div class="panel"><h3>단축키</h3><p class="hint"><span class="kbd">V</span> 선택 · <span class="kbd">A</span> 영역 선택 · <span class="kbd">C</span> 크롭 · <span class="kbd">B</span> 브러시/펜슬 토글 · <span class="kbd">E</span> 지우개 · <span class="kbd">M</span> 마스크 · <span class="kbd">T</span> 텍스트 · <span class="kbd">R</span> 도형 · <span class="kbd">Del</span> 삭제 · <span class="kbd">⌘/Ctrl+D</span> 복제 · <span class="kbd">⌘/Ctrl+Z</span> Undo · <span class="kbd">⌘/Ctrl+Shift+Z</span>/<span class="kbd">⌘/Ctrl+Y</span> Redo · <span class="kbd">Space</span> Pan 임시</p></div>
   </aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
-<script src="src/main.js?v=selected-layer-eraser-only-1"></script>
+<script src="src/main.js?v=phase8e-cut-erase-canvas-coords"></script>
 </body>
 </html>

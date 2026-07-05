@@ -319,7 +319,9 @@ body.resizing { user-select: none; cursor: col-resize; }
 .empty-canvas-hint span { color: var(--muted); font-size: 12px; }
 .empty-canvas-hint.hidden { display: none !important; }
 .workspace.pan-mode { cursor: grab; }
-.workspace.pan-mode:active { cursor: grabbing; }
+.workspace.pan-mode:active,
+.workspace.is-panning { cursor: grabbing; }
+.workspace.is-panning .canvas-shell { pointer-events: none; }
 
 .layer-control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 8px 0 10px; align-items: center; }
 .layer-control-grid label { grid-column: span 2; margin: 0; }
@@ -327,26 +329,51 @@ body.resizing { user-select: none; cursor: col-resize; }
 .layers { display: flex; flex-direction: column; gap: 7px; }
 .layer-item {
   display: grid;
-  grid-template-columns: 20px 1fr repeat(5, 30px);
-  align-items: center;
-  gap: 5px;
-  min-height: 38px;
-  padding: 6px;
+  grid-template-columns: 22px 1fr;
+  gap: 6px;
+  min-height: 44px;
+  padding: 7px;
   border: 1px solid #303746;
   border-radius: 12px;
   background: #111722;
   color: #dbe4f0;
 }
+.layer-main-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+.layer-action-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(24px, 1fr));
+  gap: 4px;
+}
 .layer-item.active { border-color: var(--accent); background: rgba(124, 92, 255, .14); }
+.layer-item.is-hidden { opacity: .66; border-style: dashed; }
+.layer-item.is-locked { box-shadow: inset 0 0 0 1px rgba(245,158,11,.28); }
 .layer-item.drag-over { outline: 2px dashed var(--accent2); }
 .layer-item.dragging { opacity: .6; }
+.layer-icon { text-align: center; }
 .layer-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
 }
-.layer-item button { padding: 4px 0; min-width: 0; border-radius: 8px; font-size: 11px; }
+.layer-state-badges { display: inline-flex; gap: 4px; justify-content: flex-end; }
+.layer-badge {
+  border: 1px solid #3b4558;
+  background: #1a2230;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 1px 5px;
+  font-size: 10px;
+  line-height: 16px;
+}
+.layer-item button { padding: 4px 0; min-width: 0; border-radius: 8px; font-size: 10px; }
 .panel-count { float: right; color: var(--muted); font-size: 11px; font-weight: 650; }
 .history-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; }
 .history-item {
