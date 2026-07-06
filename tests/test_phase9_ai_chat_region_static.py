@@ -11,7 +11,7 @@ spec.loader.exec_module(server)
 
 
 def test_phase9_cache_bust_and_chat_mentions_region_edit():
-    assert "phase14-animation-preview" in INDEX
+    assert "phase15-pixel-workflow" in INDEX
     assert "편집명령과 Negative만 입력하면" in INDEX
 
 

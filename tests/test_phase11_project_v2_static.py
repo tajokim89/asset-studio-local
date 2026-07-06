@@ -6,7 +6,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 
 def test_phase11_cache_bust_and_v2_save_hooks_exist():
-    assert "phase14-animation-preview" in INDEX
+    assert "phase15-pixel-workflow" in INDEX
     for token in [
         "async function buildProjectV2()",
         "app: 'asset-studio-local'",

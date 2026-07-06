@@ -6,7 +6,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 
 def test_phase10_cache_bust_and_preview_controls_exist():
-    assert "phase14-animation-preview" in INDEX
+    assert "phase15-pixel-workflow" in INDEX
     for token in [
         'id="inpaintPreviewPanel"',
         'id="inpaintPreviewImg"',

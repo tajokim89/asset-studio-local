@@ -7,7 +7,7 @@ JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 
 def test_phase14_animation_preview_ui_exists():
     required = [
-        "phase14-animation-preview",
+        "phase15-pixel-workflow",
         "애니메이션 미리보기",
         "animFrameCount",
         "animFps",

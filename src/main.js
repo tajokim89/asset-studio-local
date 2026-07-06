@@ -122,6 +122,28 @@ function syncPixelAssetPrompt() {
   return prompt;
 }
 
+function pixelPresetFrameCount() {
+  const anim = $('pixelAnimationPreset')?.value || 'idle';
+  if (anim === 'walk6') return 6;
+  if (anim === 'ui_static') return 1;
+  return 4;
+}
+
+function applyPixelWorkflowGridDefaults() {
+  const frames = pixelPresetFrameCount();
+  const frameW = Math.max(1, +($('pixelFrameW')?.value || 32));
+  const frameH = Math.max(1, +($('pixelFrameH')?.value || 32));
+  if ($('gridCols')) $('gridCols').value = String(frames);
+  if ($('gridRows')) $('gridRows').value = '1';
+  if ($('gridCellW')) $('gridCellW').value = String(frameW);
+  if ($('gridCellH')) $('gridCellH').value = String(frameH);
+  if ($('gridGapX')) $('gridGapX').value = '0';
+  if ($('gridGapY')) $('gridGapY').value = '0';
+  if ($('animFrameCount')) $('animFrameCount').value = String(frames);
+  if ($('animFps')) $('animFps').value = $('pixelAnimationPreset')?.value?.startsWith('walk') ? '10' : '8';
+  return { frames, frameW, frameH };
+}
+
 function recordPixelAssetResult(url, label = 'generated') {
   const slots = $('pixelResultSlots');
   if (!slots || !url) return;
@@ -693,12 +715,19 @@ function fitToCanvasObject(obj, max=560) {
 }
 
 function addImageUrl(url, label='Image') {
-  fabric.Image.fromURL(url, (img) => {
-    img._originalSrc = url;
-    fitToCanvasObject(img);
-    addToCanvas(img, label);
-    setStatus(`${label} added to canvas.`);
-  }, { crossOrigin: 'anonymous' });
+  return new Promise((resolve, reject) => {
+    fabric.Image.fromURL(url, (img) => {
+      try {
+        img._originalSrc = url;
+        fitToCanvasObject(img);
+        addToCanvas(img, label);
+        setStatus(`${label} added to canvas.`);
+        resolve(img);
+      } catch (err) {
+        reject(err);
+      }
+    }, { crossOrigin: 'anonymous' });
+  });
 }
 
 function addPatchImageUrl(url, bbox, label='AI Patch') {
@@ -3584,6 +3613,10 @@ if ($('buildAnimationPreview')) $('buildAnimationPreview').onclick = () => build
 if ($('stopAnimationPreview')) $('stopAnimationPreview').onclick = stopAnimationPreview;
 if ($('buildPixelPrompt')) $('buildPixelPrompt').onclick = syncPixelAssetPrompt;
 if ($('generatePixelAsset')) $('generatePixelAsset').onclick = () => { syncPixelAssetPrompt(); $('generateBtn')?.click(); };
+if ($('runPixelWorkflow')) $('runPixelWorkflow').onclick = () => runPixelWorkflow().catch(err => { console.error(err); alert(`도트 워크플로우 실패: ${err.message}`); setStatus(`도트 워크플로우 실패: ${err.message}`); });
+['pixelFrameW','pixelFrameH','pixelAnimationPreset'].forEach(id => {
+  if ($(id)) $(id).addEventListener('change', () => applyPixelWorkflowGridDefaults());
+});
 ['pixelAssetType','pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelPalette','pixelSubject'].forEach(id => {
   if ($(id)) $(id).addEventListener(id === 'pixelSubject' || id === 'pixelPalette' ? 'input' : 'change', () => syncPixelAssetPrompt());
 });
@@ -3664,9 +3697,9 @@ $('loadProject').onchange = e => {
   r.readAsText(f);
 };
 
-$('generateBtn').onclick = async () => {
+async function generateAiAsset() {
   const prompt = $('aiPrompt').value.trim();
-  if (!prompt) { alert('프롬프트를 입력하세요.'); return; }
+  if (!prompt) { alert('프롬프트를 입력하세요.'); return null; }
   const preset = $('aiPreset').value;
   const backgroundMode = preset === 'background' ? 'none' : 'chroma_green';
   $('generateBtn').disabled = true; setStatus(backgroundMode === 'chroma_green' ? 'AI 에셋 생성 중... 배경은 #00FF00 크로마키로 고정합니다.' : 'AI 배경 이미지 생성 중... 30~90초 정도 걸릴 수 있습니다.');
@@ -3676,12 +3709,31 @@ $('generateBtn').onclick = async () => {
     if (!data.success) throw new Error(data.error || 'generation failed');
     const url = data.url + '?t=' + Date.now();
     addGallery(url, data.model || 'generated');
-    addImageUrl(url, 'AI 생성 에셋');
+    const img = await addImageUrl(url, 'AI 생성 에셋');
     recordPixelAssetResult(url, data.model || 'generated');
     setStatus(`AI generated: ${data.model || ''}`);
-  } catch (err) { setStatus('AI generation failed: ' + err.message); }
+    return { url, img, data };
+  } catch (err) { setStatus('AI generation failed: ' + err.message); throw err; }
   finally { $('generateBtn').disabled = false; }
-};
+}
+
+async function runPixelWorkflow() {
+  syncPixelAssetPrompt();
+  const defaults = applyPixelWorkflowGridDefaults();
+  setStatus(`도트 워크플로우 시작 · ${defaults.frames} frames · ${defaults.frameW}×${defaults.frameH}`);
+  const result = await generateAiAsset();
+  if (!result?.img) return null;
+  canvas.setActiveObject(result.img);
+  rememberSelectedLayer(result.img);
+  if ($('pixelWorkflowCleanBg')?.checked) await removeBgSelected('sheet');
+  applyPixelWorkflowGridDefaults();
+  await detectGridSpriteSlices();
+  if ($('pixelWorkflowPreview')?.checked) await buildAnimationPreview();
+  setStatus(`도트 워크플로우 완료 · ${pixelPresetFrameCount()} frames`);
+  return result;
+}
+
+$('generateBtn').onclick = () => generateAiAsset();
 
 canvas.on('selection:created', () => { if (active() && !canSelectLayer(active())) { canvas.discardActiveObject(); setStatus(active()?.visible === false ? '레이어가 숨김 상태입니다. Show 후 선택하세요.' : '레이어가 잠겨 있습니다. Unlock 후 편집하세요.'); } rememberSelectedLayer(active()); syncProps(); renderLayers(); refreshAiChatState(); });
 canvas.on('selection:updated', () => { if (active() && !canSelectLayer(active())) { canvas.discardActiveObject(); setStatus(active()?.visible === false ? '레이어가 숨김 상태입니다. Show 후 선택하세요.' : '레이어가 잠겨 있습니다. Unlock 후 편집하세요.'); } rememberSelectedLayer(active()); syncProps(); renderLayers(); refreshAiChatState(); });

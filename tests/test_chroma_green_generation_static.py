@@ -27,7 +27,7 @@ def test_object_generation_sends_chroma_green_background_mode():
 
 
 def test_ai_asset_generation_uses_chroma_green_except_background_preset():
-    handler = JS.split("$('generateBtn').onclick = async () =>", 1)[1].split("canvas.on('selection:created'", 1)[0]
+    handler = JS.split("async function generateAiAsset()", 1)[1].split("async function runPixelWorkflow", 1)[0]
     assert "const backgroundMode = preset === 'background' ? 'none' : 'chroma_green';" in handler
     assert "background_mode: backgroundMode" in handler
     assert "#00FF00" in INDEX

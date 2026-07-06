@@ -7,7 +7,7 @@ JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 
 def test_phase8g_region_action_ui_has_paste_and_clear_selection_copy():
     for token in [
-        "phase14-animation-preview",
+        "phase15-pixel-workflow",
         'id="pasteRegionSelection"',
         "선택영역 붙여넣기",
         "선택 해제",
