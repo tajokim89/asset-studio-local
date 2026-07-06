@@ -6,7 +6,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 
 def test_phase10_cache_bust_and_preview_controls_exist():
-    assert "phase12-ai-chat-exec-router2" in INDEX
+    assert "phase11b-project-file-qa" in INDEX
     for token in [
         'id="inpaintPreviewPanel"',
         'id="inpaintPreviewImg"',

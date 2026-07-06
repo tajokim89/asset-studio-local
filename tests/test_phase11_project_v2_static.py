@@ -6,7 +6,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 
 def test_phase11_cache_bust_and_v2_save_hooks_exist():
-    assert "phase12-ai-chat-exec-router2" in INDEX
+    assert "phase11b-project-file-qa" in INDEX
     for token in [
         "async function buildProjectV2()",
         "app: 'asset-studio-local'",
@@ -15,6 +15,20 @@ def test_phase11_cache_bust_and_v2_save_hooks_exist():
         "assets: { images: assets }",
         "modules: projectModulesSkeleton()",
         "asset-studio-project-v2.json",
+    ]:
+        assert token in JS
+
+
+def test_phase11b_project_file_size_and_load_ux():
+    for token in [
+        "function formatBytes(bytes)",
+        "function projectSizeWarning(bytes)",
+        "function projectSummary(project, bytes = 0)",
+        "50 * 1024 * 1024",
+        "20 * 1024 * 1024",
+        "프로젝트 파일 읽는 중",
+        "Project v2 저장 완료 · ${summary}",
+        "r.onerror = () =>",
     ]:
         assert token in JS
 

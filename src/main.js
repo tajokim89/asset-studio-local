@@ -401,6 +401,27 @@ function loadProjectFileObject(project) {
   return loadLegacyProjectV1(project);
 }
 
+function formatBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${n}B`;
+}
+
+function projectSizeWarning(bytes) {
+  if (bytes >= 50 * 1024 * 1024) return '매우 큰 프로젝트입니다. 브라우저 저장/불러오기가 느릴 수 있어 ZIP/압축 포맷 전환이 필요합니다.';
+  if (bytes >= 20 * 1024 * 1024) return '프로젝트 파일이 큽니다. 이미지/히스토리가 많으면 다음 단계에서 압축/ZIP 개선이 필요합니다.';
+  return '';
+}
+
+function projectSummary(project, bytes = 0) {
+  const images = project?.assets?.images?.length || 0;
+  const hist = project?.editor?.history?.length || 0;
+  const objects = project?.editor?.canvasJson?.objects?.length || 0;
+  const size = bytes ? ` · ${formatBytes(bytes)}` : '';
+  return `이미지 ${images}개 · 레이어/오브젝트 ${objects}개 · 히스토리 ${hist}개${size}`;
+}
+
 function isEditableTextField(el = document.activeElement) {
   const tag = el?.tagName;
   const type = (el?.type || '').toLowerCase();
@@ -3134,13 +3155,15 @@ $('saveProject').onclick = async () => {
     const project = await buildProjectV2();
     const text = JSON.stringify(project, null, 2);
     const blob = new Blob([text], {type:'application/json'});
-    if (blob.size > 20 * 1024 * 1024) setStatus(`프로젝트 파일이 큽니다: ${(blob.size / 1024 / 1024).toFixed(1)}MB · 다음 단계에서 압축/ZIP 개선 필요`);
+    const warning = projectSizeWarning(blob.size);
+    const summary = projectSummary(project, blob.size);
+    if (warning) setStatus(`${warning} · ${summary}`);
     const a = document.createElement('a');
     a.download = 'asset-studio-project-v2.json';
     a.href = URL.createObjectURL(blob);
     a.click();
     URL.revokeObjectURL(a.href);
-    setStatus(`Project v2 저장 완료 · 이미지 ${project.assets.images.length}개 · 히스토리 ${project.editor.history.length}개`);
+    setStatus(`Project v2 저장 완료 · ${summary}${warning ? ' · 압축/ZIP 개선 필요' : ''}`);
   } catch (err) {
     console.error(err);
     alert(`프로젝트 저장 실패: ${err.message}`);
@@ -3150,10 +3173,14 @@ $('saveProject').onclick = async () => {
 $('loadProjectBtn').onclick = () => $('loadProject').click();
 $('loadProject').onchange = e => {
   const f = e.target.files[0]; if(!f) return;
+  const warning = projectSizeWarning(f.size);
+  setStatus(`프로젝트 파일 읽는 중... ${f.name} · ${formatBytes(f.size)}${warning ? ' · ' + warning : ''}`);
   const r = new FileReader();
   r.onload = () => {
     try {
-      loadProjectFileObject(JSON.parse(r.result));
+      const project = JSON.parse(r.result);
+      loadProjectFileObject(project);
+      setStatus(`프로젝트 파일 파싱 완료 · ${projectSummary(project, f.size)}${warning ? ' · 큰 파일' : ''}`);
     } catch (err) {
       console.error(err);
       alert(`프로젝트 불러오기 실패: ${err.message}`);
@@ -3161,6 +3188,12 @@ $('loadProject').onchange = e => {
     } finally {
       e.target.value = '';
     }
+  };
+  r.onerror = () => {
+    const msg = r.error?.message || '파일 읽기 오류';
+    alert(`프로젝트 불러오기 실패: ${msg}`);
+    setStatus(`프로젝트 불러오기 실패: ${msg}`);
+    e.target.value = '';
   };
   r.readAsText(f);
 };

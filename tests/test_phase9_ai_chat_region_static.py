@@ -11,7 +11,7 @@ spec.loader.exec_module(server)
 
 
 def test_phase9_cache_bust_and_chat_mentions_region_edit():
-    assert "phase12-ai-chat-exec-router2" in INDEX
+    assert "phase11b-project-file-qa" in INDEX
     assert "편집명령과 Negative만 입력하면" in INDEX
 
 
