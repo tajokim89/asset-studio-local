@@ -7,7 +7,7 @@ JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 
 def test_phase13_pixel_asset_generator_ui_exists():
     required = [
-        "phase13-pixel-generator",
+        "phase14-animation-preview",
         "Pixel Asset Generator",
         "pixelAssetType",
         "pixelAnimationPreset",

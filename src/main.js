@@ -36,6 +36,8 @@ let regionClipboard = null;
 let regionPasteCount = 0;
 let spriteSlices = [];
 let selectedSpriteSliceId = null;
+let animationPreviewTimer = null;
+let animationPreviewFrames = [];
 const $ = (id) => document.getElementById(id);
 const appEl = document.querySelector('.app');
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -956,6 +958,75 @@ function buildGridSpriteSlices() {
     }
   }
   return slices;
+}
+
+async function buildAnimationFramesFromGrid() {
+  if (!activeSpriteTarget()) throw new Error('이미지 레이어 선택 필요');
+  const frameCount = Math.max(1, +($('animFrameCount')?.value || 4));
+  const frames = buildGridSpriteSlices().slice(0, frameCount);
+  const urls = [];
+  for (const slice of frames) {
+    const dataUrl = await spriteSliceDataUrl(slice);
+    const img = await loadHtmlImage(dataUrl);
+    const frameCanvas = document.createElement('canvas');
+    frameCanvas.width = slice.width;
+    frameCanvas.height = slice.height;
+    const ctx = frameCanvas.getContext('2d');
+    ctx.clearRect(0, 0, frameCanvas.width, frameCanvas.height);
+    ctx.drawImage(img, 0, 0);
+    urls.push(frameCanvas.toDataURL('image/png'));
+  }
+  return urls;
+}
+
+function renderAnimationFrameStrip(frames = animationPreviewFrames) {
+  const strip = $('animationFrameStrip');
+  if (!strip) return;
+  strip.innerHTML = '';
+  frames.forEach((url, idx) => {
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = `animation frame ${idx + 1}`;
+    img.dataset.frameIndex = String(idx);
+    strip.appendChild(img);
+  });
+}
+
+function stopAnimationPreview() {
+  if (animationPreviewTimer) clearInterval(animationPreviewTimer);
+  animationPreviewTimer = null;
+  setStatus('애니메이션 미리보기 정지');
+}
+
+function playAnimationPreview(frames = animationPreviewFrames) {
+  const stage = $('animationPreviewStage');
+  if (!stage || !frames.length) return;
+  stopAnimationPreview();
+  let idx = 0;
+  let dir = 1;
+  const mode = $('animMode')?.value || 'loop';
+  const fps = clamp(+($('animFps')?.value || 8), 1, 30);
+  const draw = () => {
+    stage.innerHTML = `<img alt="animation preview frame" src="${frames[idx]}"><span>${idx + 1}/${frames.length} · ${mode}</span>`;
+    if (mode === 'pingpong') {
+      if (idx >= frames.length - 1) dir = -1;
+      if (idx <= 0) dir = 1;
+      idx = clamp(idx + dir, 0, frames.length - 1);
+    } else {
+      idx = (idx + 1) % frames.length;
+    }
+  };
+  draw();
+  animationPreviewTimer = setInterval(draw, Math.round(1000 / fps));
+}
+
+async function buildAnimationPreview() {
+  animationPreviewFrames = await buildAnimationFramesFromGrid();
+  renderAnimationFrameStrip(animationPreviewFrames);
+  playAnimationPreview(animationPreviewFrames);
+  spriteSummary(`애니메이션 미리보기 재생 · ${animationPreviewFrames.length} frames`);
+  setStatus(`애니메이션 미리보기: ${animationPreviewFrames.length} frames`);
+  return animationPreviewFrames;
 }
 
 async function detectGridSpriteSlices() {
@@ -3509,6 +3580,8 @@ if ($('exportSpritePng')) $('exportSpritePng').onclick = exportSpriteSlicePng;
 if ($('exportAllSpritesZip')) $('exportAllSpritesZip').onclick = exportAllSpriteSlicesZip;
 if ($('detectGridSprites')) $('detectGridSprites').onclick = detectGridSpriteSlices;
 if ($('exportGridSpritesZip')) $('exportGridSpritesZip').onclick = exportGridSpriteSlicesZip;
+if ($('buildAnimationPreview')) $('buildAnimationPreview').onclick = () => buildAnimationPreview().catch(err => { console.error(err); alert(`애니메이션 미리보기 실패: ${err.message}`); setStatus(`애니메이션 미리보기 실패: ${err.message}`); });
+if ($('stopAnimationPreview')) $('stopAnimationPreview').onclick = stopAnimationPreview;
 if ($('buildPixelPrompt')) $('buildPixelPrompt').onclick = syncPixelAssetPrompt;
 if ($('generatePixelAsset')) $('generatePixelAsset').onclick = () => { syncPixelAssetPrompt(); $('generateBtn')?.click(); };
 ['pixelAssetType','pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelPalette','pixelSubject'].forEach(id => {

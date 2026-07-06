@@ -7,7 +7,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 def test_phase12_sprite_extract_ui_exists():
     for token in [
-        "phase13-pixel-generator",
+        "phase14-animation-preview",
         "스프라이트 시트 추출",
         'id="spriteMinArea"',
         'id="detectSprites"',
@@ -62,7 +62,7 @@ def test_phase12_extract_layer_and_png_hooks_exist():
 
 def test_phase12b_batch_zip_export_ui_exists():
     for token in [
-        "phase13-pixel-generator",
+        "phase14-animation-preview",
         'id="exportAllSpritesZip"',
         "전체 조각 ZIP",
     ]:
@@ -84,7 +84,7 @@ def test_phase12b_batch_zip_export_logic_exists():
 
 def test_phase12c_grid_slice_ui_exists():
     for token in [
-        "phase13-pixel-generator",
+        "phase14-animation-preview",
         "그리드 슬라이스",
         'id="gridCols"',
         'id="gridRows"',

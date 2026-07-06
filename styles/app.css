@@ -213,6 +213,31 @@ details summary { cursor: pointer; color: #d7def0; font-size: 12px; font-weight:
 .range-value { color: #c4b5fd; font-weight: 760; }
 .kbd { border: 1px solid #3b4352; background: #111722; border-radius: 6px; padding: 1px 5px; color: #e5e7eb; }
 
+.animation-preview-stage {
+  min-height: 104px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 8px;
+  color: var(--muted);
+  background-color: #151b26;
+  background-image:
+    linear-gradient(45deg, rgba(255,255,255,.08) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255,255,255,.08) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255,255,255,.08) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.08) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.animation-preview-stage img { max-width: 96px; max-height: 96px; image-rendering: pixelated; }
+.animation-preview-stage span { font-size: 11px; color: #d7def0; }
+.animation-frame-strip { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.animation-frame-strip img { width: 42px; height: 42px; object-fit: contain; image-rendering: pixelated; border: 1px solid var(--line-soft); border-radius: 8px; background: #10131a; }
+
 .pixel-result-slots {
   display: grid;
   grid-template-columns: 1fr 1fr;
