@@ -6,7 +6,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 
 def test_phase11_cache_bust_and_v2_save_hooks_exist():
-    assert "phase12b-sprite-batch-zip" in INDEX
+    assert "phase12c-grid-slice" in INDEX
     for token in [
         "async function buildProjectV2()",
         "app: 'asset-studio-local'",

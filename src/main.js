@@ -886,6 +886,88 @@ async function exportAllSpriteSlicesZip() {
   }
 }
 
+function buildGridSpriteSlices() {
+  const target = activeSpriteTarget();
+  if (!target) throw new Error('이미지 레이어 선택 필요');
+  const cols = Math.max(1, +($('gridCols')?.value || 1));
+  const rows = Math.max(1, +($('gridRows')?.value || 1));
+  const cellW = Math.max(1, +($('gridCellW')?.value || 32));
+  const cellH = Math.max(1, +($('gridCellH')?.value || 32));
+  const gapX = Math.max(0, +($('gridGapX')?.value || 0));
+  const gapY = Math.max(0, +($('gridGapY')?.value || 0));
+  const left = Math.round(target.left || 0);
+  const top = Math.round(target.top || 0);
+  const slices = [];
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      slices.push({
+        id: uid('grid-sprite'),
+        x: left + col * (cellW + gapX),
+        y: top + row * (cellH + gapY),
+        width: cellW,
+        height: cellH,
+        area: cellW * cellH,
+        row,
+        col,
+        grid: true,
+      });
+    }
+  }
+  return slices;
+}
+
+async function detectGridSpriteSlices() {
+  try {
+    spriteSlices = buildGridSpriteSlices();
+    selectedSpriteSliceId = spriteSlices[0]?.id || null;
+    renderSpriteGuides();
+    spriteSummary(`그리드 ${spriteSlices.length}개 미리보기 · ${$('gridCols')?.value || 1}×${$('gridRows')?.value || 1}`);
+    setStatus(`그리드 슬라이스 미리보기: ${spriteSlices.length}개`);
+    return spriteSlices;
+  } catch (err) {
+    console.error(err); alert(`그리드 미리보기 실패: ${err.message}`); setStatus(`그리드 미리보기 실패: ${err.message}`);
+    return [];
+  }
+}
+
+async function exportGridSpriteSlicesZip() {
+  try {
+    if (!activeSpriteTarget()) throw new Error('이미지 레이어 선택 필요');
+    const gridSlices = buildGridSpriteSlices();
+    spriteSlices = gridSlices;
+    selectedSpriteSliceId = spriteSlices[0]?.id || null;
+    renderSpriteGuides();
+    const encoder = new TextEncoder();
+    const files = [];
+    const manifest = {
+      sourceLayer: activeSpriteTarget()?.name || 'selected image',
+      mode: 'grid',
+      count: gridSlices.length,
+      cols: Math.max(1, +($('gridCols')?.value || 1)),
+      rows: Math.max(1, +($('gridRows')?.value || 1)),
+      cellWidth: Math.max(1, +($('gridCellW')?.value || 32)),
+      cellHeight: Math.max(1, +($('gridCellH')?.value || 32)),
+      gapX: Math.max(0, +($('gridGapX')?.value || 0)),
+      gapY: Math.max(0, +($('gridGapY')?.value || 0)),
+      slices: [],
+    };
+    for (let i = 0; i < gridSlices.length; i++) {
+      const slice = gridSlices[i];
+      const filename = `grid-sprite-${String(i + 1).padStart(3, '0')}.png`; // grid-sprite-001.png
+      const url = await spriteSliceDataUrl(slice);
+      files.push({ name: filename, bytes: dataUrlToBytes(url) });
+      manifest.slices.push({ file: filename, index: i + 1, row: slice.row, col: slice.col, x: slice.x, y: slice.y, width: slice.width, height: slice.height });
+    }
+    files.push({ name: 'grid-manifest.json', bytes: encoder.encode(JSON.stringify(manifest, null, 2)) });
+    const zipBlob = buildStoredZip(files);
+    downloadBlob(zipBlob, 'grid-sprite-slices.zip');
+    spriteSummary(`그리드 ZIP 내보내기 · ${gridSlices.length}개 + grid-manifest.json`);
+    setStatus(`그리드 ZIP 내보내기 완료: ${gridSlices.length}개`);
+  } catch (err) {
+    console.error(err); alert(`그리드 ZIP 추출 실패: ${err.message}`); setStatus(`그리드 ZIP 추출 실패: ${err.message}`);
+  }
+}
+
 function canvasWithOnlyObjectDataUrl(obj) {
   return new Promise((resolve, reject) => {
     const el = document.createElement('canvas');
@@ -3383,6 +3465,8 @@ if ($('clearSprites')) $('clearSprites').onclick = clearSpriteGuides;
 if ($('extractSpriteLayer')) $('extractSpriteLayer').onclick = extractSpriteSliceToLayer;
 if ($('exportSpritePng')) $('exportSpritePng').onclick = exportSpriteSlicePng;
 if ($('exportAllSpritesZip')) $('exportAllSpritesZip').onclick = exportAllSpriteSlicesZip;
+if ($('detectGridSprites')) $('detectGridSprites').onclick = detectGridSpriteSlices;
+if ($('exportGridSpritesZip')) $('exportGridSpritesZip').onclick = exportGridSpriteSlicesZip;
 if ($('runInpaint')) $('runInpaint').onclick = runSelectedAreaAiEdit;
 if ($('applyInpaintNewLayer')) $('applyInpaintNewLayer').onclick = applyPendingInpaintAsLayer;
 if ($('applyInpaintReplace')) $('applyInpaintReplace').onclick = applyPendingInpaintAsReplacement;

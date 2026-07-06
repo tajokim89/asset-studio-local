@@ -7,7 +7,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 def test_phase12_sprite_extract_ui_exists():
     for token in [
-        "phase12b-sprite-batch-zip",
+        "phase12c-grid-slice",
         "스프라이트 시트 추출",
         'id="spriteMinArea"',
         'id="detectSprites"',
@@ -62,7 +62,7 @@ def test_phase12_extract_layer_and_png_hooks_exist():
 
 def test_phase12b_batch_zip_export_ui_exists():
     for token in [
-        "phase12b-sprite-batch-zip",
+        "phase12c-grid-slice",
         'id="exportAllSpritesZip"',
         "전체 조각 ZIP",
     ]:
@@ -78,5 +78,35 @@ def test_phase12b_batch_zip_export_logic_exists():
         "sprite-001.png",
         "downloadBlob(zipBlob, 'sprite-slices.zip')",
         "$('exportAllSpritesZip').onclick",
+    ]:
+        assert token in JS
+
+
+def test_phase12c_grid_slice_ui_exists():
+    for token in [
+        "phase12c-grid-slice",
+        "그리드 슬라이스",
+        'id="gridCols"',
+        'id="gridRows"',
+        'id="gridCellW"',
+        'id="gridCellH"',
+        'id="gridGapX"',
+        'id="gridGapY"',
+        'id="detectGridSprites"',
+        'id="exportGridSpritesZip"',
+    ]:
+        assert token in INDEX
+
+
+def test_phase12c_grid_slice_logic_exists():
+    for token in [
+        "function buildGridSpriteSlices()",
+        "async function detectGridSpriteSlices()",
+        "async function exportGridSpriteSlicesZip()",
+        "grid-sprite-001.png",
+        "grid-manifest.json",
+        "spriteSummary(`그리드",
+        "$('detectGridSprites').onclick",
+        "$('exportGridSpritesZip').onclick",
     ]:
         assert token in JS
