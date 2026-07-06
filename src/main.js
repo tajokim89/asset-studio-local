@@ -90,6 +90,48 @@ function setStatus(msg) {
   $('status').textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
 }
 
+function buildPixelAssetPrompt() {
+  const type = $('pixelAssetType')?.value || 'character';
+  const anim = $('pixelAnimationPreset')?.value || 'idle';
+  const style = $('pixelStylePreset')?.value || '32bit_refined';
+  const direction = $('pixelDirection')?.value || 'front';
+  const palette = ($('pixelPalette')?.value || 'limited dark game palette').trim();
+  const subject = ($('pixelSubject')?.value || 'game character').trim();
+  const typeLine = type === 'ui_panel' ? 'UI game asset, clean panel parts, reusable game UI component' : `${type} game asset`;
+  const animLine = {
+    idle: 'idle animation frames, 4-frame subtle breathing pose, evenly spaced sprite sheet cells',
+    walk4: 'walk cycle frames, 4-frame walking animation, real alternating legs and arms, evenly spaced sprite sheet cells',
+    walk6: 'walk cycle frames, 6-frame walking animation, real alternating legs and arms, evenly spaced sprite sheet cells',
+    attack: 'attack animation frames, anticipation, swing, follow-through, evenly spaced sprite sheet cells',
+    hurt: 'hurt animation frames, impact recoil and recovery, evenly spaced sprite sheet cells',
+    ui_static: 'UI static single asset, no animation frames, crisp reusable interface element',
+  }[anim] || 'idle animation frames';
+  const styleLine = `${style.replaceAll('_', ' ')}, refined pixel art, not chunky NES, clean silhouette, game-ready production quality`;
+  return `${subject}\n${typeLine}\n${animLine}\nDirection: ${direction}\nPalette: ${palette}\nStyle: ${styleLine}\nOutput: pixel-art sprite sheet when animated, transparent background, isolated asset, centered, consistent scale, clean alpha edges, no text, no watermark, no logo, no mockup frame.`;
+}
+
+function syncPixelAssetPrompt() {
+  // Pixel generator relies on background_mode: 'chroma_green' via generateBtn for transparent-friendly extraction.
+  const prompt = buildPixelAssetPrompt();
+  if ($('aiPrompt')) $('aiPrompt').value = prompt;
+  if ($('aiPreset')) $('aiPreset').value = $('pixelAssetType')?.value === 'ui_panel' ? 'ui' : 'pixel';
+  if ($('aiAspect')) $('aiAspect').value = 'square';
+  setStatus('도트 에셋 프롬프트 조립 완료.');
+  return prompt;
+}
+
+function recordPixelAssetResult(url, label = 'generated') {
+  const slots = $('pixelResultSlots');
+  if (!slots || !url) return;
+  const card = document.createElement('div');
+  card.className = 'pixel-result-slot filled';
+  const anim = $('pixelAnimationPreset')?.value || 'idle';
+  const type = $('pixelAssetType')?.value || 'character';
+  card.innerHTML = `<img alt="pixel asset result" src="${url}"><span>${type} · ${anim} · ${label}</span>`;
+  slots.prepend(card);
+  while (slots.children.length > 6) slots.removeChild(slots.lastElementChild);
+}
+
 function canvasJsonSnapshot() {
   const exportFlags = canvas.getObjects().map(o => ({ obj: o, id: o.id, excludeFromExport: o.excludeFromExport }));
   const flagsById = new Map(exportFlags.map(({ id, excludeFromExport }) => [id, excludeFromExport]));
@@ -3467,6 +3509,11 @@ if ($('exportSpritePng')) $('exportSpritePng').onclick = exportSpriteSlicePng;
 if ($('exportAllSpritesZip')) $('exportAllSpritesZip').onclick = exportAllSpriteSlicesZip;
 if ($('detectGridSprites')) $('detectGridSprites').onclick = detectGridSpriteSlices;
 if ($('exportGridSpritesZip')) $('exportGridSpritesZip').onclick = exportGridSpriteSlicesZip;
+if ($('buildPixelPrompt')) $('buildPixelPrompt').onclick = syncPixelAssetPrompt;
+if ($('generatePixelAsset')) $('generatePixelAsset').onclick = () => { syncPixelAssetPrompt(); $('generateBtn')?.click(); };
+['pixelAssetType','pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelPalette','pixelSubject'].forEach(id => {
+  if ($(id)) $(id).addEventListener(id === 'pixelSubject' || id === 'pixelPalette' ? 'input' : 'change', () => syncPixelAssetPrompt());
+});
 if ($('runInpaint')) $('runInpaint').onclick = runSelectedAreaAiEdit;
 if ($('applyInpaintNewLayer')) $('applyInpaintNewLayer').onclick = applyPendingInpaintAsLayer;
 if ($('applyInpaintReplace')) $('applyInpaintReplace').onclick = applyPendingInpaintAsReplacement;
@@ -3557,6 +3604,7 @@ $('generateBtn').onclick = async () => {
     const url = data.url + '?t=' + Date.now();
     addGallery(url, data.model || 'generated');
     addImageUrl(url, 'AI 생성 에셋');
+    recordPixelAssetResult(url, data.model || 'generated');
     setStatus(`AI generated: ${data.model || ''}`);
   } catch (err) { setStatus('AI generation failed: ' + err.message); }
   finally { $('generateBtn').disabled = false; }
