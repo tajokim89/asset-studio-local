@@ -11,8 +11,8 @@ spec.loader.exec_module(server)
 
 
 def test_phase9_cache_bust_and_chat_mentions_region_edit():
-    assert "phase11-project-v2" in INDEX
-    assert "선택영역을 AI 수정으로 보낼 수 있습니다" in INDEX
+    assert "phase12-ai-chat-exec-router2" in INDEX
+    assert "편집명령과 Negative만 입력하면" in INDEX
 
 
 def test_chat_context_tracks_region_selection_separately_from_mask_tool():
@@ -25,24 +25,26 @@ def test_chat_context_tracks_region_selection_separately_from_mask_tool():
         assert token in JS
 
 
-def test_server_routes_selected_region_edit_to_region_inpaint_action():
+def test_server_routes_selected_region_edit_to_executable_inpaint_action():
     context = {
         "selectedLayer": {"type": "image", "name": "Fixture Image"},
         "mask": {"count": 0, "editCount": 0, "occlusionCount": 0},
         "regionSelection": {"count": 1, "bbox": {"x": 10, "y": 12, "width": 32, "height": 40}},
     }
-    result = server.classify_chat_command("선택영역 얼굴 부분 자연스럽게 수정해줘", context)
+    result = server.classify_chat_command("선택영역 얼굴 부분 자연스럽게 수정해줘", context, "손 변형")
     assert result["success"] is True
-    assert result["action"]["type"] == "prepare_region_inpaint"
+    assert result["action"]["type"] == "execute_inpaint"
     assert result["action"]["params"]["prompt"] == "선택영역 얼굴 부분 자연스럽게 수정해줘"
+    assert result["action"]["params"]["negative"] == "손 변형"
     assert result["action"]["requires_confirm"] is True
 
 
-def test_prepare_region_inpaint_executes_bridge_not_generic_details():
+def test_execute_inpaint_runs_bridge_and_generation_request():
     for token in [
-        "case 'prepare_region_inpaint':",
+        "case 'execute_inpaint':",
         "const prepared = prepareSelectedRegionAiEdit();",
-        "if ($('inpaintPrompt')) $('inpaintPrompt').value = params.prompt || '';",
-        "done('준비됨: 선택영역 AI 수정 패널로 연결했습니다. 프롬프트 확인 후 실행하세요.');",
+        "if ($('inpaintNegative')) $('inpaintNegative').value = params.negative || '';",
+        "await runSelectedAreaAiEdit();",
+        "미리보기에서 새 레이어/교체/재시도를 선택하세요",
     ]:
         assert token in JS

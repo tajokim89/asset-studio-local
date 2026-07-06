@@ -1,9 +1,9 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-INDEX = (ROOT / "index.html").read_text()
-JS = (ROOT / "src" / "main.js").read_text()
-SERVER = (ROOT / "server.py").read_text()
+INDEX = (ROOT / "index.html").read_text(encoding="utf-8")
+JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
+SERVER = (ROOT / "server.py").read_text(encoding="utf-8")
 
 
 def test_object_replacement_button_is_usable_without_mask():
@@ -15,8 +15,10 @@ def test_object_replacement_button_is_usable_without_mask():
     assert "addImageUrl(objectUrl, `Object - ${prompt.slice(0, 28)}`);" in JS
 
 
-def test_ai_chat_can_prepare_object_replacement_flow():
-    assert '"prepare_replace_object"' in SERVER
-    assert "오브젝트 치환 B안에 프롬프트를 넣습니다" in SERVER
-    assert "case 'prepare_replace_object':" in JS
-    assert "$('replaceObjectPrompt').value = params.prompt || '';" in JS
+def test_ai_chat_executes_object_replacement_flow_with_negative():
+    assert 'id="aiChatNegative"' in INDEX
+    assert '"execute_replace_object"' in SERVER
+    assert "내부 오브젝트 치환 파이프라인을 호출합니다" in SERVER
+    assert "case 'execute_replace_object':" in JS
+    assert "$('replaceObjectNegative').value = params.negative || '';" in JS
+    assert "await generateReplacementObject();" in JS

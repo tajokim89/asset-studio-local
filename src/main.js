@@ -640,13 +640,16 @@ function addPatchImageUrl(url, bbox, label='AI Patch') {
       try {
         img._originalSrc = url;
         const box = bbox || { x: 0, y: 0, width: img.width, height: img.height };
+        const pxW = Number(bbox?.patch_width || bbox?.width || img.width);
+        const pxH = Number(bbox?.patch_height || bbox?.height || img.height);
+        const exactPatch = Math.abs(pxW - img.width) <= 1 && Math.abs(pxH - img.height) <= 1;
         img.set({
           left: box.x,
           top: box.y,
           originX: 'left',
           originY: 'top',
-          scaleX: box.width / img.width,
-          scaleY: box.height / img.height,
+          scaleX: exactPatch ? 1 : box.width / img.width,
+          scaleY: exactPatch ? 1 : box.height / img.height,
         });
         ensureMeta(img, label);
         canvas.add(img);
@@ -949,12 +952,42 @@ async function generateReplacementObject() {
   if (!prompt) { alert('새 오브젝트 설명을 입력하세요.'); $('replaceObjectPrompt')?.focus(); return; }
   const btn = $('generateReplacement');
   btn.disabled = true;
-  if ($('replaceResult')) $('replaceResult').textContent = hasReplacementMask ? '새 오브젝트만 생성 중...' : '마스크 없이 새 오브젝트 레이어 생성 중...';
-  setStatus(hasReplacementMask ? 'B안: 원본 보호 + 새 오브젝트 PNG 생성 중...' : '새 오브젝트 PNG 생성 중... #00FF00 배경을 강제합니다.');
+  if ($('replaceResult')) $('replaceResult').textContent = hasReplacementMask ? '선택 이미지+마스크를 참고해 오브젝트 치환 중...' : '마스크 없이 새 오브젝트 레이어 생성 중...';
+  setStatus(hasReplacementMask ? 'B안: 선택 이미지 crop + 마스크를 AI에 같이 보내 치환 중...' : '새 오브젝트 PNG 생성 중... #00FF00 배경을 강제합니다.');
   try {
     const target = selectedLayerObject();
+    if (hasReplacementMask) {
+      if (!target || target.type !== 'image' || target.isDrawingLayer || target.excludeFromLayers) {
+        const label = target ? `${nameOf(target)} (${target.isDrawingLayer ? 'drawing layer' : target.type})` : '선택 없음';
+        throw new Error(`마스크 기반 치환은 이미지 레이어 선택이 필요합니다. 현재 선택: ${label}`);
+      }
+      const image = await canvasWithOnlyObjectDataUrl(target);
+      const mask = await buildMaskDataUrl('edit');
+      if (!mask) throw new Error('교체 마스크를 만들 수 없습니다.');
+      const res = await fetch('/api/replace-object', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ image, mask, prompt, negative, target_layer_id: layerKey(target) })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'reference object replacement failed');
+      const objectUrl = data.url + '?t=' + Date.now();
+      addGallery(objectUrl, 'replacement-ref');
+      let cleared = false;
+      if ($('clearOriginalUnderMask')?.checked) cleared = await createSourceMinusMaskLayer(target, mask);
+      const patchBox = { ...data.bbox, patch_width: data.patch_width, patch_height: data.patch_height };
+      await addPatchImageUrl(objectUrl, patchBox, `Replacement Ref - ${prompt.slice(0, 28)}`);
+      let occluded = false;
+      if ($('createOcclusionLayer')?.checked && occlusionMaskOverlays().length) {
+        const occMask = await buildMaskDataUrl('occlusion');
+        if (occMask) occluded = await createOcclusionLayerFromTarget(target, occMask);
+      }
+      if ($('replaceResult')) $('replaceResult').textContent = `완료: 선택 이미지/마스크 참고 치환 패치 적용${cleared ? ' + 기존 물체 영역 비움' : ''}${occluded ? ' + 손/앞가림 레이어' : ''} (${data.method}). patch ${data.patch_width || data.bbox.width}×${data.patch_height || data.bbox.height}, bbox ${Math.round(data.bbox.width)}×${Math.round(data.bbox.height)}.`;
+      return;
+    }
+
     const contextName = target ? nameOf(target) : 'current canvas';
-    const objectPrompt = `${prompt}\n\nGenerate ONLY the replacement object as an isolated transparent-friendly game asset. It will be placed over a masked area of ${contextName}. Do not include the original character, hand, body, scene, background panel, text, logo, watermark, or full image redraw. Match pixel/game asset style, scale, outline thickness, angle, and lighting. Negative: ${negative || 'background, character body, text, watermark'}`;
+    const objectPrompt = `${prompt}\n\nGenerate ONLY the replacement/new object as an isolated transparent-friendly game asset. It may later be placed over ${contextName}. Do not include character, hand, body, scene, text, logo, watermark, or full image redraw. Match pixel/game asset style when possible. Negative: ${negative || 'background, character body, text, watermark'}`;
     const gen = await fetch('/api/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -981,25 +1014,8 @@ async function generateReplacementObject() {
     }
     objectUrl = await trimImageUrlToAlphaDataUrl(objectUrl, 2);
     addGallery(objectUrl, 'replacement');
-    let cleared = false;
-    if ($('clearOriginalUnderMask')?.checked && target?.type === 'image') {
-      const mask = await buildMaskDataUrl('edit');
-      if (mask) cleared = await createSourceMinusMaskLayer(target, mask);
-    }
-    if (hasReplacementMask) {
-      await addReplacementImageUrl(objectUrl, bbox, `Replacement - ${prompt.slice(0, 28)}`);
-    } else {
-      addImageUrl(objectUrl, `Object - ${prompt.slice(0, 28)}`);
-    }
-    let occluded = false;
-    if ($('createOcclusionLayer')?.checked && target?.type === 'image' && occlusionMaskOverlays().length) {
-      const occMask = await buildMaskDataUrl('occlusion');
-      if (occMask) occluded = await createOcclusionLayerFromTarget(target, occMask);
-    }
-    const anchorText = hasReplacementMask && replacementGripAnchor && $('useGripAnchor')?.checked !== false ? '앵커 배치 + ' : hasReplacementMask ? 'bbox 배치 + ' : '';
-    if ($('replaceResult')) $('replaceResult').textContent = hasReplacementMask
-      ? `완료: ${cleared ? '기존 물체 영역 비움 + ' : ''}${anchorText}새 오브젝트 레이어 생성${occluded ? ' + 손/앞가림 레이어 생성' : ''} (${method}). 원본 레이어는 숨김 보존됨.`
-      : `완료: #00FF00 배경 생성 후 크로마키 제거된 새 오브젝트 레이어를 추가했습니다 (${method}).`;
+    addImageUrl(objectUrl, `Object - ${prompt.slice(0, 28)}`);
+    if ($('replaceResult')) $('replaceResult').textContent = `완료: #00FF00 배경 생성 후 크로마키 제거된 새 오브젝트 레이어를 추가했습니다 (${method}).`;
   } catch (err) {
     const msg = `오브젝트 치환 실패: ${err.message}`;
     if ($('replaceResult')) $('replaceResult').textContent = msg;
@@ -2161,7 +2177,11 @@ function updateMaskInfo() {
   if ($('aiMaskSummary')) $('aiMaskSummary').textContent = editCount ? `${label} · 대상: ${targetText}` : '선택된 교체 마스크 없음';
   if ($('runInpaint')) $('runInpaint').disabled = editCount === 0;
   if ($('generateReplacement')) $('generateReplacement').disabled = false;
-  if ($('replaceResult') && editCount === 0) $('replaceResult').textContent = '마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다.';
+  if ($('replaceResult') && editCount === 0) {
+    const currentReplaceText = $('replaceResult').textContent || '';
+    const isActiveOrCompleted = /생성 중|치환 중|완료|실패/.test(currentReplaceText);
+    if (!isActiveOrCompleted) $('replaceResult').textContent = '마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다.';
+  }
   if ($('inpaintResult') && editCount === 0) $('inpaintResult').textContent = '마스크 선택 후 실행할 수 있습니다.';
 }
 
@@ -2543,7 +2563,8 @@ async function applyPendingInpaintAsLayer() {
   if (!pendingInpaintResult) return;
   setInpaintBusy(true);
   try {
-    await addPatchImageUrl(pendingInpaintResult.url, pendingInpaintResult.bbox, `${pendingInpaintResult.label} patch`);
+    const patchBox = { ...pendingInpaintResult.bbox, patch_width: pendingInpaintResult.patch_width, patch_height: pendingInpaintResult.patch_height };
+    await addPatchImageUrl(pendingInpaintResult.url, patchBox, `${pendingInpaintResult.label} patch`);
     clearPendingInpaintResult('새 패치 레이어로 적용했습니다. Undo/Redo에 반영됨.');
   } catch (err) {
     if ($('inpaintResult')) $('inpaintResult').textContent = `적용 실패: ${err.message}`;
@@ -2596,7 +2617,7 @@ async function runSelectedAreaAiEdit() {
     return;
   }
   const mask = await buildMaskDataUrl();
-  const image = exportCanvasWithoutMaskOverlays();
+  const image = await canvasWithOnlyObjectDataUrl(target);
   pendingInpaintResult = null;
   setInpaintBusy(true);
   if ($('inpaintPreviewPanel')) $('inpaintPreviewPanel').classList.add('hidden');
@@ -2781,17 +2802,18 @@ function showChatAction(action) {
     panel.classList.add('hidden');
     return;
   }
-  text.textContent = `${action.title || action.type}\n${JSON.stringify(action.params || {})}`;
+  text.textContent = `${action.title || action.type}\n실행 방식: ${action.type}\n${JSON.stringify(action.params || {})}`;
   panel.classList.remove('hidden');
   if (!action.requires_confirm) executeChatAction(action);
 }
 
 async function sendAiChat() {
   const input = $('aiChatInput');
+  const negativeInput = $('aiChatNegative');
   const message = (input?.value || '').trim();
+  const negative = (negativeInput?.value || '').trim();
   if (!message) return;
-  appendChatMessage('user', message);
-  input.value = '';
+  appendChatMessage('user', negative ? `${message}\nNEGATIVE: ${negative}` : message);
   pendingChatAction = null;
   $('aiChatAction')?.classList.add('hidden');
   if ($('sendAiChat')) $('sendAiChat').disabled = true;
@@ -2799,7 +2821,7 @@ async function sendAiChat() {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, context: canvasChatContext() }),
+      body: JSON.stringify({ message, negative, context: canvasChatContext() }),
     });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'chat failed');
@@ -2861,30 +2883,45 @@ async function executeChatAction(action = pendingChatAction) {
       activateTool(params.tool || 'select');
       done('안내: 이미지 레이어를 선택한 뒤 다시 명령하세요. 선택 도구로 전환했습니다.');
       break;
+    case 'execute_inpaint':
     case 'prepare_region_inpaint': {
       if ($('inpaintPrompt')) $('inpaintPrompt').value = params.prompt || '';
+      if ($('inpaintNegative')) $('inpaintNegative').value = params.negative || '';
       const prepared = prepareSelectedRegionAiEdit();
-      if (prepared) done('준비됨: 선택영역 AI 수정 패널로 연결했습니다. 프롬프트 확인 후 실행하세요.');
-      else done('안내: 이미지 레이어와 선택영역을 먼저 준비하세요.');
+      if (prepared) {
+        appendChatMessage('assistant', '실행 시작: 선택영역 직접 재생성 요청을 보냅니다. 결과는 미리보기로 뜹니다.');
+        await runSelectedAreaAiEdit();
+        done('실행됨: 선택영역 AI 재생성 요청 완료. 미리보기에서 새 레이어/교체/재시도를 선택하세요.');
+      } else done('안내: 이미지 레이어와 선택영역을 먼저 준비하세요.');
       break;
     }
     case 'prepare_inpaint':
       if ($('inpaintPrompt')) $('inpaintPrompt').value = params.prompt || '';
-      document.querySelector('details')?.setAttribute('open', '');
-      done('준비됨: 직접 재생성 프롬프트를 입력했습니다. 실행 버튼으로 생성하세요.');
+      if ($('inpaintNegative')) $('inpaintNegative').value = params.negative || '';
+      if ($('directInpaintDetails')) $('directInpaintDetails').open = true;
+      appendChatMessage('assistant', '실행 시작: 마스크 영역 직접 재생성 요청을 보냅니다. 결과는 미리보기로 뜹니다.');
+      await runSelectedAreaAiEdit();
+      done('실행됨: 선택영역 AI 재생성 요청 완료. 미리보기에서 적용 방식을 선택하세요.');
       break;
+    case 'execute_generate':
     case 'prepare_generate':
       activateTool('ai');
-      if ($('aiPrompt')) $('aiPrompt').value = params.prompt || '';
-      done('준비됨: AI 생성 프롬프트를 입력했습니다. 에셋 생성 버튼으로 실행하세요.');
+      if ($('aiPrompt')) $('aiPrompt').value = params.negative ? `${params.prompt || ''}\n\nNegative: ${params.negative}` : (params.prompt || '');
+      appendChatMessage('assistant', '실행 시작: AI 에셋 생성을 요청합니다.');
+      $('generateBtn')?.click();
+      done('실행됨: AI 에셋 생성 요청을 시작했습니다.');
       break;
+    case 'execute_replace_object':
     case 'prepare_replace_object':
       if ($('replaceObjectPrompt')) {
         $('replaceObjectPrompt').value = params.prompt || '';
         $('replaceObjectPrompt').focus();
       }
+      if ($('replaceObjectNegative')) $('replaceObjectNegative').value = params.negative || '';
       document.getElementById('aiEditPanel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      done('준비됨: 오브젝트 치환 B안에 프롬프트를 넣었습니다. 마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다.');
+      appendChatMessage('assistant', '실행 시작: 내부 오브젝트 치환 파이프라인을 호출합니다. 마스크가 있으면 참고 치환, 없으면 새 오브젝트 레이어로 생성합니다.');
+      await generateReplacementObject();
+      done('실행됨: 오브젝트 치환/생성 요청을 완료했습니다. 결과는 캔버스와 상태 메시지를 확인하세요.');
       break;
     case 'export_png':
       exportFull();

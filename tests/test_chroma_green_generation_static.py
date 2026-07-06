@@ -15,6 +15,9 @@ def test_generate_api_accepts_chroma_green_background_mode():
     assert "force_chroma_green_background(src.read_bytes())" in SERVER
     assert '"background_mode": background_mode' in SERVER
     assert "def remove_chroma_green_bytes" in SERVER
+    assert "subtle green spill/halo" in SERVER
+    assert "green_ratio > 1.22" in SERVER
+    assert "transparent_neighbors >= 5" in SERVER
     assert '"chroma-green-key"' in SERVER
 
 

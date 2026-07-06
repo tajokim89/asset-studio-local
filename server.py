@@ -173,7 +173,15 @@ def force_chroma_green_background(raw: bytes, tolerance: int = 44) -> bytes:
 
 
 def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18) -> bytes:
-    """Make border-connected #00FF00 chroma backdrop transparent."""
+    """Remove #00FF00 chroma backdrop plus subtle green spill/halo.
+
+    Generated objects often come back with exact green at the border and darker
+    yellow-green residue around edges. A strict chroma key leaves that halo, so
+    this uses three passes:
+    1) flood-remove border-connected green backdrop,
+    2) remove/neutralize green spill on remaining opaque pixels,
+    3) delete edge speckles surrounded by transparency.
+    """
     from collections import deque
     from PIL import Image
 
@@ -188,7 +196,15 @@ def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18) -> bytes:
 
     def green_like(x, y):
         r, g, b, a = px[x, y]
-        return a == 0 or (r <= tolerance and g >= 255 - tolerance and b <= tolerance)
+        if a == 0:
+            return True
+        # Exact/near chroma green and compressed dark green backdrop variants.
+        green_dom = g - max(r, b)
+        green_ratio = g / max(1, (r + b) / 2)
+        return (
+            (r <= tolerance and g >= 255 - tolerance and b <= tolerance)
+            or (g > 80 and green_dom > max(22, tolerance) and green_ratio > 1.25 and b < 140)
+        )
 
     seen = set()
     while q:
@@ -199,6 +215,41 @@ def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18) -> bytes:
         r, g, b, a = px[x, y]
         px[x, y] = (r, g, b, 0)
         q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+
+    # Cleanup spill left on the object edge. Strong green/yellow-green residue is
+    # usually not valid object material for generated wooden/metal game assets;
+    # remove it. We keep this mode explicit to chroma_green only, not generic BG removal.
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a <= 0:
+                continue
+            green_dom = g - max(r, b)
+            green_ratio = g / max(1, (r + b) / 2)
+            if g > 55 and green_dom > 18 and green_ratio > 1.22 and b < 120:
+                px[x, y] = (r, g, b, 0)
+            elif g > 45 and green_dom > 8 and green_ratio > 1.10 and b < 100:
+                base = int((r + b) / 2)
+                nr = max(r, base + 8)
+                ng = min(base, g)
+                nb = min(b, base)
+                px[x, y] = (nr, ng, nb, int(a * 0.55))
+
+    # Remove tiny greenish edge speckles touching mostly-transparent neighborhood.
+    for y in range(1, h - 1):
+        for x in range(1, w - 1):
+            r, g, b, a = px[x, y]
+            if a <= 0:
+                continue
+            transparent_neighbors = 0
+            for yy in (y - 1, y, y + 1):
+                for xx in (x - 1, x, x + 1):
+                    if xx == x and yy == y:
+                        continue
+                    if px[xx, yy][3] == 0:
+                        transparent_neighbors += 1
+            if transparent_neighbors >= 5 and g > max(r, b) + 6 and g > 35:
+                px[x, y] = (r, g, b, 0)
 
     out = io.BytesIO()
     img.save(out, format="PNG")
@@ -376,7 +427,24 @@ User edit request for the white masked area only: {prompt.strip()}
 Return the same crop composition. Match the original pixel-art style, palette, lighting, scale, outline thickness, and perspective. No new background panel, no rectangle fill, no watermark, no text.""".strip()
 
 
-def collect_codex_edit_b64(image_data_url: str, mask_data_url: str, prompt: str, negative: str = "") -> tuple[str, str, str]:
+def build_replace_object_prompt(prompt: str, negative: str = "") -> str:
+    neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
+    return f"""You are editing a cropped region from an existing game/pixel-art image.
+
+Object replacement contract:
+- The first input image is the real reference/context crop. Study its style, angle, scale, palette, lighting, outline thickness, and hand/contact geometry.
+- The second input image is a black/white mask. White pixels are where the old object was selected. Black pixels are protected context.
+- Generate the requested replacement object so it fits the masked area and matches the surrounding image.
+- Do not draw a new character/body/hand/background/scene. Do not redesign protected context.
+- The result will be locally clipped to the white mask and placed back at the original bbox, so draw the replacement at the same crop scale, not as a centered sticker.
+
+Replacement request: {prompt.strip()}
+{neg}
+
+Return the same crop composition. No text, no watermark, no full-image redraw.""".strip()
+
+
+def collect_codex_edit_b64(image_data_url: str, mask_data_url: str, prompt: str, negative: str = "", prompt_is_final: bool = False) -> tuple[str, str, str]:
     """Use the Codex image-generation tool as an image-edit backend.
 
     The tool returns a full image; we still composite it locally through the mask so
@@ -400,7 +468,7 @@ def collect_codex_edit_b64(image_data_url: str, mask_data_url: str, prompt: str,
     aspect, _size_px = aspect_from_image_data_url(image_data_url)
     tier_id, meta = mod._resolve_model()
     size = mod._SIZES.get(aspect, mod._SIZES["square"])
-    edit_prompt = build_inpaint_prompt(prompt, negative)
+    edit_prompt = prompt if prompt_is_final else build_inpaint_prompt(prompt, negative)
     headers = _codex_cloudflare_headers(token)
     headers.update({
         "Accept": "text/event-stream",
@@ -456,6 +524,11 @@ def collect_codex_edit_b64(image_data_url: str, mask_data_url: str, prompt: str,
     if not image_b64:
         raise RuntimeError("Codex edit response contained no image result")
     return image_b64, tier_id, meta["quality"]
+
+
+def collect_codex_replacement_b64(image_data_url: str, mask_data_url: str, prompt: str, negative: str = "") -> tuple[str, str, str]:
+    """Reference-guided object replacement using the same image+mask edit path."""
+    return collect_codex_edit_b64(image_data_url, mask_data_url, build_replace_object_prompt(prompt, negative), "", prompt_is_final=True)
 
 
 def image_to_data_url(img) -> str:
@@ -517,7 +590,29 @@ def composite_patch_with_mask(original_crop_data_url: str, mask_crop_data_url: s
     return out.getvalue()
 
 
-def classify_chat_command(message: str, context: dict | None = None) -> dict:
+def replacement_patch_with_mask(original_crop_data_url: str, mask_crop_data_url: str, generated_b64: str) -> bytes:
+    """Return generated pixels clipped to the edit mask, sized 1:1 to the crop bbox."""
+    from PIL import Image, ImageFilter
+
+    orig_raw, _ = data_url_to_bytes(original_crop_data_url)
+    mask_raw, _ = data_url_to_bytes(mask_crop_data_url)
+    gen_raw = base64.b64decode(generated_b64)
+
+    original = Image.open(io.BytesIO(orig_raw)).convert("RGBA")
+    generated = Image.open(io.BytesIO(gen_raw)).convert("RGBA")
+    if generated.size != original.size:
+        generated = generated.resize(original.size, Image.Resampling.LANCZOS)
+    mask = Image.open(io.BytesIO(mask_raw)).convert("L")
+    if mask.size != original.size:
+        mask = mask.resize(original.size, Image.Resampling.BILINEAR)
+    alpha = mask.filter(ImageFilter.GaussianBlur(radius=0.35))
+    generated.putalpha(alpha)
+    out = io.BytesIO()
+    generated.save(out, format="PNG")
+    return out.getvalue()
+
+
+def classify_chat_command(message: str, context: dict | None = None, negative: str = "") -> dict:
     """Small local command router for the editor chat panel.
 
     This intentionally returns confirmable editor actions instead of executing anything
@@ -525,6 +620,7 @@ def classify_chat_command(message: str, context: dict | None = None) -> dict:
     """
     context = context or {}
     text = (message or "").strip()
+    negative = (negative or "").strip()
     low = text.lower()
     selected_layer = context.get("selectedLayer") if isinstance(context.get("selectedLayer"), dict) else {}
     has_image = bool(selected_layer.get("type") == "image")
@@ -577,22 +673,22 @@ def classify_chat_command(message: str, context: dict | None = None) -> dict:
         return response("remove_bg", "이미지 배경 제거", f"선택 이미지에 {'에셋 시트' if mode == 'sheet' else 'AI Cutout'} 배경 제거를 실행합니다.", {"mode": mode})
     if any(k in low for k in ["오브젝트", "물체", "무기", "검", "곤봉", "칼", "도끼", "replace object", "object replacement"]):
         if any(k in low for k in ["치환", "교체", "바꿔", "replace", "swap", "만들", "생성"]):
-            return response("prepare_replace_object", "오브젝트 생성/치환 준비", "오브젝트 치환 B안에 프롬프트를 넣습니다. 마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다.", {"prompt": text})
+            return response("execute_replace_object", "오브젝트 자동 치환/생성", "실행하면 AI Chat이 내부 오브젝트 치환 파이프라인을 호출합니다. 마스크가 있으면 참고 치환, 없으면 새 오브젝트 레이어 생성으로 처리합니다.", {"prompt": text, "negative": negative})
     if any(k in low for k in ["재생성", "inpaint", "수정", "바꿔", "고쳐"]):
         prompt = text
         if not has_image:
             return response("select_image_needed", "이미지 레이어 선택 필요", "선택영역 AI 재생성은 이미지 레이어 선택 후 가능합니다.", {"tool": "select"}, False)
         if has_region:
-            return response("prepare_region_inpaint", "선택영역 AI 수정 준비", "현재 선택영역을 AI 수정 패널로 연결합니다. 프롬프트를 확인한 뒤 실행하세요.", {"prompt": prompt})
+            return response("execute_inpaint", "선택영역 AI 수정 실행", "실행하면 현재 선택영역/마스크로 직접 재생성을 요청하고 결과 미리보기를 만듭니다.", {"prompt": prompt, "negative": negative})
         if not has_mask:
             return response("activate_region", "선택영역 필요", "먼저 영역 도구로 수정할 부분을 선택하세요. 영역 도구로 전환합니다.", {}, False)
-        return response("prepare_inpaint", "선택영역 AI 재생성 준비", "프롬프트를 직접 재생성 입력칸에 넣고 실행 준비를 합니다. 실제 생성은 확인 후 버튼으로 진행하세요.", {"prompt": prompt})
+        return response("execute_inpaint", "선택영역 AI 재생성 실행", "실행하면 현재 마스크 영역으로 직접 재생성을 요청하고 결과 미리보기를 만듭니다.", {"prompt": prompt, "negative": negative})
     if any(k in low for k in ["마스크", "mask"]):
         return response("activate_mask", "마스크 도구 전환", "마스크 도구로 전환합니다. 빨간 영역은 AI 수정 대상, 파란 영역은 앞가림 보존입니다.", {}, False)
     if any(k in low for k in ["선택영역", "선택 영역"]):
         return response("activate_region", "영역 도구 전환", "영역 도구로 전환합니다. 사각형/원형/올가미로 이미지 일부를 선택하세요.", {}, False)
     if any(k in low for k in ["생성", "generate", "만들어"]):
-        return response("prepare_generate", "AI 에셋 생성 준비", "AI 생성 도구로 전환하고 프롬프트를 입력합니다. 실제 생성은 확인 후 실행하세요.", {"prompt": text})
+        return response("execute_generate", "AI 에셋 생성 실행", "실행하면 AI 생성 도구로 프롬프트를 보내 새 에셋 생성을 시작합니다.", {"prompt": text, "negative": negative})
     if any(k in low for k in ["내보내", "export", "png", "저장"]):
         return response("export_png", "PNG 내보내기", "현재 캔버스를 PNG로 내보냅니다.")
     if any(k in low for k in ["텍스트", "text", "글자"]):
@@ -665,14 +761,43 @@ class Handler(SimpleHTTPRequestHandler):
                     "url": f"/assets/processed/{name}",
                     "path": str(dst),
                     "bbox": bbox,
+                    "patch_width": bbox["width"],
+                    "patch_height": bbox["height"],
                     "model": model,
                     "quality": quality,
-                    "method": "codex-crop-edit+transparent-mask-patch",
+                    "method": "codex-crop-edit+transparent-mask-patch+1to1-bbox",
+                })
+            if path == "/api/replace-object":
+                prompt = str(data.get("prompt", "")).strip()
+                negative = str(data.get("negative", "")).strip()
+                image = data.get("image", "")
+                mask = data.get("mask", "")
+                if not prompt:
+                    return self.send_json(400, {"success": False, "error": "Prompt is required"})
+                if not image or not mask:
+                    return self.send_json(400, {"success": False, "error": "Image and mask are required"})
+                crop_image, crop_mask, bbox = prepare_inpaint_crop(image, mask)
+                generated_b64, model, quality = collect_codex_replacement_b64(crop_image, crop_mask, prompt, negative)
+                out = replacement_patch_with_mask(crop_image, crop_mask, generated_b64)
+                name = f"replacement_patch_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+                dst = PROCESSED / name
+                dst.write_bytes(out)
+                return self.send_json(200, {
+                    "success": True,
+                    "url": f"/assets/processed/{name}",
+                    "path": str(dst),
+                    "bbox": bbox,
+                    "patch_width": bbox["width"],
+                    "patch_height": bbox["height"],
+                    "model": model,
+                    "quality": quality,
+                    "method": "codex-reference-object-replace+transparent-mask-patch+1to1-bbox",
                 })
             if path == "/api/chat":
                 message = str(data.get("message", ""))
+                negative = str(data.get("negative", ""))
                 context = data.get("context") if isinstance(data.get("context"), dict) else {}
-                result = classify_chat_command(message, context)
+                result = classify_chat_command(message, context, negative)
                 return self.send_json(200 if result.get("success") else 400, result)
             if path == "/api/generate":
                 background_mode = data.get("background_mode", "none")
