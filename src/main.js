@@ -34,6 +34,8 @@ let pendingInpaintResult = null;
 let pendingChatAction = null;
 let regionClipboard = null;
 let regionPasteCount = 0;
+let spriteSlices = [];
+let selectedSpriteSliceId = null;
 const $ = (id) => document.getElementById(id);
 const appEl = document.querySelector('.app');
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -695,6 +697,193 @@ function loadHtmlImage(url) {
     img.onerror = () => reject(new Error('preview image load failed'));
     img.src = url;
   });
+}
+
+function spriteSummary(msg) {
+  if ($('spriteExtractSummary')) $('spriteExtractSummary').textContent = msg;
+}
+
+function clearSpriteGuides() {
+  canvas.getObjects().filter(o => o.maskRole === 'sprite-guide').forEach(o => canvas.remove(o));
+  spriteSlices = [];
+  selectedSpriteSliceId = null;
+  spriteSummary('탐지 박스 없음');
+  canvas.renderAll();
+}
+
+function activeSpriteTarget() {
+  const target = selectedLayerObject();
+  if (!target || target.type !== 'image' || target.isDrawingLayer || target.excludeFromLayers) return null;
+  return target;
+}
+
+function extractImageDataComponents(imgData, minArea = 48) {
+  const { width, height, data } = imgData;
+  const seen = new Uint8Array(width * height);
+  const slices = [];
+  const alphaAt = (x, y) => data[(y * width + x) * 4 + 3];
+  const isSolid = (x, y) => alphaAt(x, y) > 12;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const start = y * width + x;
+      if (seen[start] || !isSolid(x, y)) { seen[start] = 1; continue; }
+      const q = [[x, y]];
+      seen[start] = 1;
+      let minX = x, maxX = x, minY = y, maxY = y, area = 0;
+      for (let qi = 0; qi < q.length; qi++) {
+        const [cx, cy] = q[qi];
+        area++;
+        if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+        if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+        for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) {
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const idx = ny * width + nx;
+          if (seen[idx]) continue;
+          seen[idx] = 1;
+          if (isSolid(nx, ny)) q.push([nx, ny]);
+        }
+      }
+      const w = maxX - minX + 1;
+      const h = maxY - minY + 1;
+      if (area >= minArea && w >= 2 && h >= 2) {
+        slices.push({ id: uid('sprite'), x: minX, y: minY, width: w, height: h, area });
+      }
+    }
+  }
+  return slices.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+}
+
+async function detectSpriteSlices() {
+  const target = activeSpriteTarget();
+  if (!target) { spriteSummary('이미지 레이어를 선택해야 합니다.'); setStatus('스프라이트 추출: 이미지 레이어 선택 필요'); return []; }
+  clearSpriteGuides();
+  const dataUrl = await canvasWithOnlyObjectDataUrl(target);
+  const img = await loadHtmlImage(dataUrl);
+  const el = document.createElement('canvas');
+  el.width = canvas.width; el.height = canvas.height;
+  const ctx = el.getContext('2d', { willReadFrequently: true });
+  ctx.clearRect(0, 0, el.width, el.height);
+  ctx.drawImage(img, 0, 0);
+  const minArea = Math.max(1, +($('spriteMinArea')?.value || 48));
+  spriteSlices = extractImageDataComponents(ctx.getImageData(0, 0, el.width, el.height), minArea);
+  selectedSpriteSliceId = spriteSlices[0]?.id || null;
+  renderSpriteGuides();
+  const msg = spriteSlices.length ? `${spriteSlices.length}개 조각 탐지 · 첫 조각 선택됨` : '조각 없음 · 배경 제거/투명 PNG 상태를 확인하세요';
+  spriteSummary(msg); setStatus(`스프라이트 시트 추출: ${msg}`);
+  return spriteSlices;
+}
+
+function renderSpriteGuides() {
+  canvas.getObjects().filter(o => o.maskRole === 'sprite-guide').forEach(o => canvas.remove(o));
+  spriteSlices.forEach((slice, idx) => {
+    const selected = slice.id === selectedSpriteSliceId;
+    const rect = new fabric.Rect({
+      left: slice.x,
+      top: slice.y,
+      width: slice.width,
+      height: slice.height,
+      fill: 'rgba(0,0,0,0)',
+      stroke: selected ? '#22c55e' : '#f59e0b',
+      strokeWidth: selected ? 3 : 2,
+      strokeDashArray: selected ? null : [6, 4],
+      selectable: true,
+      evented: true,
+      hasControls: false,
+      lockMovementX: true,
+      lockMovementY: true,
+      name: `Sprite Slice ${idx + 1}`,
+      excludeFromLayers: true,
+      excludeFromExport: true,
+      isMaskOverlay: true,
+      maskRole: 'sprite-guide',
+      spriteSliceId: slice.id,
+    });
+    rect.on('mousedown', () => {
+      selectedSpriteSliceId = slice.id;
+      renderSpriteGuides();
+      spriteSummary(`선택 조각 ${idx + 1}/${spriteSlices.length} · ${slice.width}×${slice.height} · area ${slice.area}`);
+    });
+    canvas.add(rect);
+  });
+  canvas.renderAll();
+}
+
+function selectedSpriteSlice() {
+  return spriteSlices.find(s => s.id === selectedSpriteSliceId) || spriteSlices[0] || null;
+}
+
+async function spriteSliceDataUrl(slice = selectedSpriteSlice()) {
+  const target = activeSpriteTarget();
+  if (!target) throw new Error('이미지 레이어 선택 필요');
+  if (!slice) throw new Error('탐지된 조각 없음');
+  const dataUrl = await canvasWithOnlyObjectDataUrl(target);
+  const img = await loadHtmlImage(dataUrl);
+  const el = document.createElement('canvas');
+  el.width = slice.width; el.height = slice.height;
+  const ctx = el.getContext('2d');
+  ctx.clearRect(0, 0, el.width, el.height);
+  ctx.drawImage(img, slice.x, slice.y, slice.width, slice.height, 0, 0, slice.width, slice.height);
+  return el.toDataURL('image/png');
+}
+
+async function extractSpriteSliceToLayer() {
+  try {
+    const slice = selectedSpriteSlice();
+    const url = await spriteSliceDataUrl(slice);
+    const layer = await addPatchImageUrl(url, { x: slice.x, y: slice.y, width: slice.width, height: slice.height, patch_width: slice.width, patch_height: slice.height }, `Sprite Slice ${spriteSlices.indexOf(slice) + 1}`);
+    layer._originalSrc = url;
+    spriteSummary(`조각 레이어 생성 · ${slice.width}×${slice.height}`);
+  } catch (err) {
+    console.error(err); alert(`조각 레이어 추출 실패: ${err.message}`); setStatus(`조각 레이어 추출 실패: ${err.message}`);
+  }
+}
+
+async function exportSpriteSlicePng() {
+  try {
+    const slice = selectedSpriteSlice();
+    const url = await spriteSliceDataUrl(slice);
+    downloadDataUrl(url, `sprite-slice-${String(spriteSlices.indexOf(slice) + 1).padStart(2, '0')}.png`);
+    spriteSummary(`조각 PNG 내보내기 · ${slice.width}×${slice.height}`);
+  } catch (err) {
+    console.error(err); alert(`조각 PNG 추출 실패: ${err.message}`); setStatus(`조각 PNG 추출 실패: ${err.message}`);
+  }
+}
+
+async function exportAllSpriteSlicesZip() {
+  try {
+    if (!activeSpriteTarget()) throw new Error('이미지 레이어 선택 필요');
+    if (!spriteSlices.length) await detectSpriteSlices();
+    if (!spriteSlices.length) throw new Error('탐지된 조각 없음');
+    const encoder = new TextEncoder();
+    const files = [];
+    const manifest = {
+      sourceLayer: activeSpriteTarget()?.name || 'selected image',
+      count: spriteSlices.length,
+      slices: [],
+    };
+    for (let i = 0; i < spriteSlices.length; i++) {
+      const slice = spriteSlices[i];
+      const filename = `sprite-${String(i + 1).padStart(3, '0')}.png`; // sprite-001.png
+      const url = await spriteSliceDataUrl(slice);
+      files.push({ name: filename, bytes: dataUrlToBytes(url) });
+      manifest.slices.push({
+        file: filename,
+        index: i + 1,
+        x: slice.x,
+        y: slice.y,
+        width: slice.width,
+        height: slice.height,
+        area: slice.area,
+      });
+    }
+    files.push({ name: 'manifest.json', bytes: encoder.encode(JSON.stringify(manifest, null, 2)) });
+    const zipBlob = buildStoredZip(files);
+    downloadBlob(zipBlob, 'sprite-slices.zip');
+    spriteSummary(`전체 조각 ZIP 내보내기 · ${spriteSlices.length}개 + manifest.json`);
+    setStatus(`스프라이트 ZIP 내보내기 완료: ${spriteSlices.length}개`);
+  } catch (err) {
+    console.error(err); alert(`전체 조각 ZIP 추출 실패: ${err.message}`); setStatus(`전체 조각 ZIP 추출 실패: ${err.message}`);
+  }
 }
 
 function canvasWithOnlyObjectDataUrl(obj) {
@@ -1507,6 +1696,74 @@ function downloadDataUrl(dataUrl, name) {
   a.href = dataUrl;
   a.download = name;
   a.click();
+}
+
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function dataUrlToBytes(dataUrl) {
+  const base64 = dataUrl.split(',', 2)[1] || '';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+let crc32Table = null;
+function crc32Bytes(bytes) {
+  if (!crc32Table) {
+    crc32Table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      crc32Table[n] = c >>> 0;
+    }
+  }
+  let crc = 0xffffffff;
+  for (const b of bytes) crc = crc32Table[(crc ^ b) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function uint16LE(n) { return [n & 0xff, (n >>> 8) & 0xff]; }
+function uint32LE(n) { return [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]; }
+
+function buildStoredZip(files) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  for (const file of files) {
+    const nameBytes = encoder.encode(file.name);
+    const data = file.bytes instanceof Uint8Array ? file.bytes : encoder.encode(String(file.bytes || ''));
+    const crc = crc32Bytes(data);
+    const local = new Uint8Array([
+      ...uint32LE(0x04034b50), ...uint16LE(20), ...uint16LE(0), ...uint16LE(0),
+      ...uint16LE(0), ...uint16LE(0), ...uint32LE(crc), ...uint32LE(data.length), ...uint32LE(data.length),
+      ...uint16LE(nameBytes.length), ...uint16LE(0),
+    ]);
+    chunks.push(local, nameBytes, data);
+    const centralHeader = new Uint8Array([
+      ...uint32LE(0x02014b50), ...uint16LE(20), ...uint16LE(20), ...uint16LE(0), ...uint16LE(0),
+      ...uint16LE(0), ...uint16LE(0), ...uint32LE(crc), ...uint32LE(data.length), ...uint32LE(data.length),
+      ...uint16LE(nameBytes.length), ...uint16LE(0), ...uint16LE(0), ...uint16LE(0), ...uint16LE(0),
+      ...uint32LE(0), ...uint32LE(offset),
+    ]);
+    central.push(centralHeader, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const centralSize = central.reduce((sum, chunk) => sum + chunk.length, 0);
+  const centralOffset = offset;
+  const eocd = new Uint8Array([
+    ...uint32LE(0x06054b50), ...uint16LE(0), ...uint16LE(0), ...uint16LE(files.length), ...uint16LE(files.length),
+    ...uint32LE(centralSize), ...uint32LE(centralOffset), ...uint16LE(0),
+  ]);
+  return new Blob([...chunks, ...central, eocd], { type: 'application/zip' });
 }
 
 function exportFull() {
@@ -3121,6 +3378,11 @@ $('clearMask').onclick = clearMask;
 $('invertMask').onclick = invertMask;
 $('exportMask').onclick = exportMaskPng;
 if ($('previewMask')) $('previewMask').onclick = exportMaskPng;
+if ($('detectSprites')) $('detectSprites').onclick = () => detectSpriteSlices().catch(err => { console.error(err); alert(`조각 탐지 실패: ${err.message}`); setStatus(`조각 탐지 실패: ${err.message}`); });
+if ($('clearSprites')) $('clearSprites').onclick = clearSpriteGuides;
+if ($('extractSpriteLayer')) $('extractSpriteLayer').onclick = extractSpriteSliceToLayer;
+if ($('exportSpritePng')) $('exportSpritePng').onclick = exportSpriteSlicePng;
+if ($('exportAllSpritesZip')) $('exportAllSpritesZip').onclick = exportAllSpriteSlicesZip;
 if ($('runInpaint')) $('runInpaint').onclick = runSelectedAreaAiEdit;
 if ($('applyInpaintNewLayer')) $('applyInpaintNewLayer').onclick = applyPendingInpaintAsLayer;
 if ($('applyInpaintReplace')) $('applyInpaintReplace').onclick = applyPendingInpaintAsReplacement;

@@ -35,8 +35,8 @@ def test_phase7a_pan_zoom_shortcuts_exist():
         "['+','=','-','0'].includes(e.key)",
     ]:
         assert token in JS
-    assert "styles/app.css?v=phase11b-project-file-qa" in INDEX
-    assert "src/main.js?v=phase11b-project-file-qa" in INDEX
+    assert "styles/app.css?v=phase12b-sprite-batch-zip" in INDEX
+    assert "src/main.js?v=phase12b-sprite-batch-zip" in INDEX
     assert ".workspace.is-panning" in CSS
 
 
