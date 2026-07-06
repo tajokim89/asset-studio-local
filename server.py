@@ -27,6 +27,32 @@ HERMES_REPO = Path(os.environ.get("HERMES_REPO", "/Users/tajokim/.hermes/hermes-
 PROVIDER_PATH = HERMES_REPO / "plugins/image_gen/openai-codex/__init__.py"
 sys.path.insert(0, str(HERMES_REPO))
 
+RUNTIME_DEPENDENCIES = {
+    "httpx": "httpx>=0.28.0",
+    "PIL": "pillow>=12.1.0",
+    "numpy": "numpy>=2.3.0",
+}
+
+
+def check_runtime_dependencies() -> None:
+    """Fail at startup with an actionable message instead of during AI generation."""
+    missing = []
+    for module_name, package_name in RUNTIME_DEPENDENCIES.items():
+        if importlib.util.find_spec(module_name) is None:
+            missing.append(package_name)
+    if not missing:
+        return
+    python = sys.executable
+    raise SystemExit(
+        "Missing Python runtime dependencies: "
+        + ", ".join(missing)
+        + "\nFix: "
+        + f"{python} -m pip install -r requirements.txt"
+        + "\nOr run: ./scripts/run_server.sh"
+        + f"\nCurrent Python: {python}"
+    )
+
+
 PRESET_SUFFIX = {
     "general": "Clean, useful image asset. No watermark.",
     "product": "Product photography style, isolated subject, clean lighting, usable commercial asset. No watermark.",
@@ -531,6 +557,91 @@ def collect_codex_replacement_b64(image_data_url: str, mask_data_url: str, promp
     return collect_codex_edit_b64(image_data_url, mask_data_url, build_replace_object_prompt(prompt, negative), "", prompt_is_final=True)
 
 
+def build_reference_sprite_prompt(prompt: str, negative: str = "") -> str:
+    neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
+    return f"""Create a new pixel-art game asset sprite sheet from the supplied reference image.
+
+Reference contract:
+- The input image is the source/reference character or asset. Keep the same identity, costume, silhouette language, palette, outline thickness, pixel scale, lighting, and camera angle.
+- Generate the requested animation/asset sheet as a NEW output; do not merely upscale, crop, or copy the reference.
+- Use evenly spaced sprite-sheet cells when animation frames are requested.
+- Use a flat exact RGB(0,255,0) / #00FF00 chroma-key background edge-to-edge so the app can remove it after generation.
+- No text, no numbers, no watermark, no mockup frame.
+
+User request: {prompt.strip()}
+{neg}""".strip()
+
+
+def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, negative: str = "") -> tuple[str, str, str]:
+    """Generate a new sprite/asset sheet while using the selected image as style/identity reference."""
+    import httpx
+    from agent.auxiliary_client import _codex_cloudflare_headers
+
+    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex_reference", PROVIDER_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load openai-codex image provider")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    token = mod._read_codex_access_token()
+    if not token:
+        raise RuntimeError("No Codex/ChatGPT OAuth credentials available. Run hermes auth codex.")
+
+    tier_id, meta = mod._resolve_model()
+    headers = _codex_cloudflare_headers(token)
+    headers.update({
+        "Accept": "text/event-stream",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    })
+    payload = {
+        "model": mod._CODEX_CHAT_MODEL,
+        "store": False,
+        "instructions": "You generate pixel-art game assets from a supplied reference image. Preserve identity/style and output a clean chroma-green sprite sheet.",
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": build_reference_sprite_prompt(prompt, negative)},
+                {"type": "input_text", "text": "Reference image to preserve identity/style:"},
+                {"type": "input_image", "image_url": data_url_to_png_data_url(reference_data_url)},
+            ],
+        }],
+        "tools": [{
+            "type": "image_generation",
+            "model": mod.API_MODEL,
+            "size": mod._SIZES.get("square", "1024x1024"),
+            "quality": meta["quality"],
+            "output_format": "png",
+            "background": "opaque",
+            "partial_images": 1,
+        }],
+        "tool_choice": {
+            "type": "allowed_tools",
+            "mode": "required",
+            "tools": [{"type": "image_generation"}],
+        },
+        "stream": True,
+    }
+
+    image_b64 = None
+    timeout = httpx.Timeout(300.0, connect=30.0, read=300.0, write=30.0, pool=30.0)
+    with httpx.Client(timeout=timeout, headers=headers) as http:
+        with http.stream("POST", f"{mod._CODEX_BASE_URL}/responses", json=payload) as response:
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                exc.response.read()
+                raise RuntimeError(f"Codex reference generation API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
+            for event in mod._iter_sse_json(response):
+                found = mod._extract_image_b64(event)
+                if found:
+                    image_b64 = found
+    if not image_b64:
+        raise RuntimeError("Codex reference generation response contained no image result")
+    return image_b64, tier_id, meta["quality"]
+
+
 def image_to_data_url(img) -> str:
     out = io.BytesIO()
     img.save(out, format="PNG")
@@ -799,6 +910,29 @@ class Handler(SimpleHTTPRequestHandler):
                 context = data.get("context") if isinstance(data.get("context"), dict) else {}
                 result = classify_chat_command(message, context, negative)
                 return self.send_json(200 if result.get("success") else 400, result)
+            if path == "/api/generate-reference":
+                reference_image = data.get("reference_image") or data.get("image")
+                if not reference_image:
+                    return self.send_json(400, {"success": False, "error": "reference_image is required"})
+                background_mode = data.get("background_mode", "chroma_green")
+                prompt = build_prompt(
+                    data.get("prompt", ""),
+                    data.get("preset", "pixel"),
+                    background_mode,
+                )
+                image_b64, model, quality = collect_codex_reference_sprite_b64(
+                    reference_image,
+                    prompt,
+                    data.get("negative", ""),
+                )
+                raw = base64.b64decode(image_b64)
+                name = f"reference_generated_{int(time.time())}.png"
+                dst = GENERATED / name
+                if str(background_mode or "none").strip() == "chroma_green":
+                    dst.write_bytes(force_chroma_green_background(raw))
+                else:
+                    dst.write_bytes(raw)
+                return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": model, "quality": quality, "provider": "openai-codex-reference", "background_mode": background_mode, "method": "reference-image-sprite-generation"})
             if path == "/api/generate":
                 background_mode = data.get("background_mode", "none")
                 prompt = build_prompt(
@@ -825,6 +959,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    check_runtime_dependencies()
     os.chdir(ROOT)
     port = int(os.environ.get("PORT", "4184"))
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)

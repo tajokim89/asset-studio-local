@@ -35,8 +35,8 @@ def test_phase7a_pan_zoom_shortcuts_exist():
         "['+','=','-','0'].includes(e.key)",
     ]:
         assert token in JS
-    assert "styles/app.css?v=phase15-pixel-workflow" in INDEX
-    assert "src/main.js?v=phase15-pixel-workflow" in INDEX
+    assert "styles/app.css?v=phase16-reference-asset-pack" in INDEX
+    assert "src/main.js?v=phase16-reference-asset-pack" in INDEX
     assert ".workspace.is-panning" in CSS
 
 

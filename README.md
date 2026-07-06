@@ -29,15 +29,16 @@ Current milestone: **Phase 9 AI Chat selected-region edit bridge**.
 
 ## Run locally
 
-Install dependencies:
+Start the local server with the guarded runner. This picks the Hermes/project Python when available and installs missing runtime dependencies before serving, so AI generation does not fail later with missing modules:
+
+```bash
+./scripts/run_server.sh
+```
+
+Manual fallback:
 
 ```bash
 python3 -m pip install -r requirements.txt
-```
-
-Start the local server:
-
-```bash
 python3 server.py
 ```
 

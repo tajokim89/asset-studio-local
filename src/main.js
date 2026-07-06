@@ -156,6 +156,12 @@ function recordPixelAssetResult(url, label = 'generated') {
   while (slots.children.length > 6) slots.removeChild(slots.lastElementChild);
 }
 
+function withCacheBust(url) {
+  if (!url) return url;
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+}
+
 function canvasJsonSnapshot() {
   const exportFlags = canvas.getObjects().map(o => ({ obj: o, id: o.id, excludeFromExport: o.excludeFromExport }));
   const flagsById = new Map(exportFlags.map(({ id, excludeFromExport }) => [id, excludeFromExport]));
@@ -2593,10 +2599,10 @@ async function removeBgSelected(mode='ai') {
   if (!obj || obj.type !== 'image') {
     const label = obj ? `${nameOf(obj)} (${obj.isDrawingLayer ? 'drawing layer' : obj.type})` : '없음';
     alert(`Remove BG는 이미지 레이어에서만 가능합니다. 현재 선택: ${label}`);
-    return;
+    return null;
   }
   const btn = mode === 'sheet' ? $('removeSheetBg') : $('removeBg');
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
   setStatus(mode === 'sheet' ? 'Asset Sheet BG running... 여러 아이템을 보존하는 테두리 배경 제거 중입니다.' : 'AI Cutout running... 첫 실행은 모델 다운로드 때문에 오래 걸릴 수 있습니다.');
   try {
     if (!obj._originalSrc) obj._originalSrc = obj.getSrc();
@@ -2609,29 +2615,35 @@ async function removeBgSelected(mode='ai') {
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'remove-bg failed');
     const url = data.url.startsWith('data:') ? data.url : data.url + '?t=' + Date.now();
-    fabric.Image.fromURL(url, (cutout) => {
-      cutout.set({
-        left: obj.left, top: obj.top, scaleX: obj.scaleX, scaleY: obj.scaleY,
-        angle: obj.angle, opacity: obj.opacity, originX: obj.originX, originY: obj.originY,
-        flipX: obj.flipX, flipY: obj.flipY,
-      });
-      cutout._originalSrc = url;
-      ensureMeta(cutout, `Cutout - ${nameOf(obj)}`);
-      const idx = canvas.getObjects().indexOf(obj);
-      obj.visible = false;
-      canvas.insertAt(cutout, idx + 1, false);
-      canvas.setActiveObject(cutout);
-      rememberSelectedLayer(cutout);
-      canvas.renderAll();
-      saveHistory(); syncProps(); renderLayers();
-      addGallery(url, 'cutout');
-      setStatus(`${mode === 'sheet' ? 'Asset Sheet BG' : 'AI Cutout'} complete (${data.method}). 선택한 이미지 레이어에만 적용했습니다. 원본은 숨김 처리했고 Cutout 레이어를 새로 만들었습니다.`);
-    }, { crossOrigin: 'anonymous' });
+    const cutout = await new Promise((resolve, reject) => {
+      fabric.Image.fromURL(url, (loaded) => {
+        if (!loaded) { reject(new Error('cutout image load failed')); return; }
+        resolve(loaded);
+      }, { crossOrigin: 'anonymous' });
+    });
+    cutout.set({
+      left: obj.left, top: obj.top, scaleX: obj.scaleX, scaleY: obj.scaleY,
+      angle: obj.angle, opacity: obj.opacity, originX: obj.originX, originY: obj.originY,
+      flipX: obj.flipX, flipY: obj.flipY,
+    });
+    cutout._originalSrc = url;
+    ensureMeta(cutout, `Cutout - ${nameOf(obj)}`);
+    const idx = canvas.getObjects().indexOf(obj);
+    obj.visible = false;
+    canvas.insertAt(cutout, idx + 1, false);
+    canvas.setActiveObject(cutout);
+    rememberSelectedLayer(cutout);
+    canvas.renderAll();
+    saveHistory(); syncProps(); renderLayers();
+    addGallery(url, 'cutout');
+    setStatus(`${mode === 'sheet' ? 'Asset Sheet BG' : 'AI Cutout'} complete (${data.method}). 선택한 이미지 레이어에만 적용했습니다. 원본은 숨김 처리했고 Cutout 레이어를 새로 만들었습니다.`);
+    return { url, cutout, data };
   } catch (err) {
     setStatus('Remove BG failed: ' + err.message);
     alert('Remove BG 실패: ' + err.message);
+    return null;
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -3614,6 +3626,7 @@ if ($('stopAnimationPreview')) $('stopAnimationPreview').onclick = stopAnimation
 if ($('buildPixelPrompt')) $('buildPixelPrompt').onclick = syncPixelAssetPrompt;
 if ($('generatePixelAsset')) $('generatePixelAsset').onclick = () => { syncPixelAssetPrompt(); $('generateBtn')?.click(); };
 if ($('runPixelWorkflow')) $('runPixelWorkflow').onclick = () => runPixelWorkflow().catch(err => { console.error(err); alert(`도트 워크플로우 실패: ${err.message}`); setStatus(`도트 워크플로우 실패: ${err.message}`); });
+if ($('runPixelSamplePack')) $('runPixelSamplePack').onclick = () => runPixelSamplePack().catch(err => { console.error(err); alert(`샘플팩 생성 실패: ${err.message}`); setStatus(`샘플팩 생성 실패: ${err.message}`); });
 ['pixelFrameW','pixelFrameH','pixelAnimationPreset'].forEach(id => {
   if ($(id)) $(id).addEventListener('change', () => applyPixelWorkflowGridDefaults());
 });
@@ -3702,17 +3715,26 @@ async function generateAiAsset() {
   if (!prompt) { alert('프롬프트를 입력하세요.'); return null; }
   const preset = $('aiPreset').value;
   const backgroundMode = preset === 'background' ? 'none' : 'chroma_green';
-  $('generateBtn').disabled = true; setStatus(backgroundMode === 'chroma_green' ? 'AI 에셋 생성 중... 배경은 #00FF00 크로마키로 고정합니다.' : 'AI 배경 이미지 생성 중... 30~90초 정도 걸릴 수 있습니다.');
+  const useReference = !!$('pixelUseReference')?.checked && preset === 'pixel';
+  const referenceObj = useReference ? selectedLayerObject() : null;
+  if (useReference && (!referenceObj || referenceObj.type !== 'image')) {
+    const label = referenceObj ? `${nameOf(referenceObj)} (${referenceObj.type})` : '없음';
+    throw new Error(`기준 이미지 레이어를 먼저 선택해야 합니다. 현재 선택: ${label}`);
+  }
+  $('generateBtn').disabled = true; setStatus(useReference ? '기준 이미지 기반 AI 에셋 생성 중... 선택 레이어의 캐릭터/스타일을 참조합니다.' : (backgroundMode === 'chroma_green' ? 'AI 에셋 생성 중... 배경은 #00FF00 크로마키로 고정합니다.' : 'AI 배경 이미지 생성 중... 30~90초 정도 걸릴 수 있습니다.'));
   try {
-    const res = await fetch('/api/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt, preset, aspect_ratio:$('aiAspect').value, background_mode: backgroundMode }) });
+    const endpoint = useReference ? '/api/generate-reference' : '/api/generate';
+    const payload = { prompt, preset, aspect_ratio:$('aiAspect').value, background_mode: backgroundMode };
+    if (useReference) payload.reference_image = imageObjectToDataUrl(referenceObj);
+    const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'generation failed');
-    const url = data.url + '?t=' + Date.now();
-    addGallery(url, data.model || 'generated');
-    const img = await addImageUrl(url, 'AI 생성 에셋');
-    recordPixelAssetResult(url, data.model || 'generated');
-    setStatus(`AI generated: ${data.model || ''}`);
-    return { url, img, data };
+    const url = withCacheBust(data.url);
+    addGallery(url, data.method || data.model || 'generated');
+    const img = await addImageUrl(url, useReference ? `참조 생성 - ${nameOf(referenceObj)}` : 'AI 생성 에셋');
+    recordPixelAssetResult(url, data.method || data.model || 'generated');
+    setStatus(useReference ? `Reference AI generated: ${data.model || ''}` : `AI generated: ${data.model || ''}`);
+    return { url, img, data, referenceObj: referenceObj || null };
   } catch (err) { setStatus('AI generation failed: ' + err.message); throw err; }
   finally { $('generateBtn').disabled = false; }
 }
@@ -3725,12 +3747,64 @@ async function runPixelWorkflow() {
   if (!result?.img) return null;
   canvas.setActiveObject(result.img);
   rememberSelectedLayer(result.img);
-  if ($('pixelWorkflowCleanBg')?.checked) await removeBgSelected('sheet');
+  let finalUrl = result.url;
+  let finalImg = result.img;
+  if ($('pixelWorkflowCleanBg')?.checked) {
+    const cleaned = await removeBgSelected('sheet');
+    if (cleaned?.cutout) {
+      finalUrl = cleaned.url;
+      finalImg = cleaned.cutout;
+      recordPixelAssetResult(finalUrl, `cleaned · ${cleaned.data?.method || 'sheet'}`);
+    }
+  }
+  canvas.setActiveObject(finalImg);
+  rememberSelectedLayer(finalImg);
   applyPixelWorkflowGridDefaults();
   await detectGridSpriteSlices();
   if ($('pixelWorkflowPreview')?.checked) await buildAnimationPreview();
   setStatus(`도트 워크플로우 완료 · ${pixelPresetFrameCount()} frames`);
-  return result;
+  return { ...result, finalUrl, finalImg };
+}
+
+async function runPixelSamplePack() {
+  const baseReference = $('pixelUseReference')?.checked ? selectedLayerObject() : null;
+  if ($('pixelUseReference')?.checked && (!baseReference || baseReference.type !== 'image')) {
+    const label = baseReference ? `${nameOf(baseReference)} (${baseReference.type})` : '없음';
+    throw new Error(`샘플팩은 기준 이미지 레이어를 먼저 선택해야 합니다. 현재 선택: ${label}`);
+  }
+  const subjectBase = ($('pixelSubject')?.value || 'same reference character, dark fantasy game asset').trim();
+  const style = $('pixelStylePreset')?.value || '32bit_refined';
+  const direction = $('pixelDirection')?.value || 'front';
+  const palette = ($('pixelPalette')?.value || 'limited dark game palette').trim();
+  const jobs = [
+    { type: 'character', anim: 'idle', subject: `${subjectBase}, idle animation sprite sheet` },
+    { type: 'character', anim: 'walk4', subject: `${subjectBase}, walking animation sprite sheet, same character design` },
+    { type: 'ui_panel', anim: 'ui_static', subject: 'dark game UI panel and button asset sheet, muted brass trim, black plate, reusable interface parts' },
+  ];
+  const packBtn = $('runPixelSamplePack');
+  if (packBtn) packBtn.disabled = true;
+  try {
+    const results = [];
+    for (const [idx, job] of jobs.entries()) {
+      $('pixelAssetType').value = job.type;
+      $('pixelAnimationPreset').value = job.anim;
+      $('pixelStylePreset').value = style;
+      $('pixelDirection').value = direction;
+      $('pixelPalette').value = palette;
+      $('pixelSubject').value = job.subject;
+      if (baseReference) {
+        canvas.setActiveObject(baseReference);
+        rememberSelectedLayer(baseReference);
+      }
+      setStatus(`샘플팩 생성 중 ${idx + 1}/${jobs.length} · ${job.anim}`);
+      const result = await runPixelWorkflow();
+      if (result) results.push(result);
+    }
+    setStatus(`샘플팩 완료 · ${results.length}/${jobs.length}개를 페이지에서 생성했습니다.`);
+    return results;
+  } finally {
+    if (packBtn) packBtn.disabled = false;
+  }
 }
 
 $('generateBtn').onclick = () => generateAiAsset();

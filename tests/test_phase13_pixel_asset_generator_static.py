@@ -47,4 +47,4 @@ def test_phase13_generation_routes_through_real_generate_button():
     assert "$('generatePixelAsset').onclick" in JS
     assert "$('generateBtn')?.click()" in JS
     assert "syncPixelAssetPrompt()" in JS
-    assert "recordPixelAssetResult(url, data.model || 'generated')" in JS
+    assert "recordPixelAssetResult(url, data.method || data.model || 'generated')" in JS
