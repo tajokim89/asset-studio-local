@@ -95,34 +95,43 @@ function setStatus(msg) {
 function directionLabelsForMode(mode = $('pixelDirectionMode')?.value || 'single') {
   if (mode === '8dir') return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   if (mode === '4dir') return ['S', 'W', 'E', 'N'];
-  return [($('pixelReferenceDirection')?.value || 'S')];
+  return [($('pixelTargetDirection')?.value || 'S')];
+}
+
+function directionLabel(code) {
+  return ({ S:'S/front', SW:'SW/front-left', W:'W/left true side profile', NW:'NW/back-left', N:'N/back', NE:'NE/back-right', E:'E/right true side profile', SE:'SE/front-right' })[code] || code;
 }
 
 function buildDirectionalSpriteSheetContract(anim = $('pixelAnimationPreset')?.value || 'idle') {
   const mode = $('pixelDirectionMode')?.value || 'single';
   const dirs = directionLabelsForMode(mode);
   const refDir = $('pixelReferenceDirection')?.value || 'S';
+  const targetDir = $('pixelTargetDirection')?.value || 'S';
   const walkFrames = Math.max(3, Math.min(8, +($('pixelWalkFrames')?.value || 4)));
   const isWalk = anim.startsWith('walk');
   const directionLine = mode === '8dir'
     ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
-    : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single direction sprite. Direction: ${refDir}.`);
+    : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single direction output ONLY. Target direction: ${directionLabel(targetDir)}. Do not generate a turnaround sheet, contact sheet, extra rows, or other directions.`);
   const frameLine = isWalk
-    ? `Walk columns: idle -> stepA -> idle -> stepB. Use ${walkFrames} frames per direction; stepA and stepB must be opposite arm/leg phases, not body bobbing.`
-    : 'Idle columns: one stable idle frame per direction; no random extra poses.';
-  return `${directionLine}\nReference image direction: ${refDir}. Preserve that view most closely and rotate the same character consistently into other requested directions.\n${frameLine}\nSheet grid: ${dirs.length} rows x ${isWalk ? walkFrames : 1} columns, evenly spaced cells, same scale and pivot in every cell.`;
+    ? `Walk columns: idle -> stepA -> idle -> stepB. Use ${walkFrames} frames per requested direction; stepA and stepB must be opposite arm/leg phases, not body bobbing.`
+    : (mode === 'single' ? 'Idle contract: exactly one clean idle sprite for the target direction, not a row/stack of variants.' : 'Idle columns: one stable idle frame per direction; no random extra poses.');
+  const gridLine = mode === 'single'
+    ? `Sheet grid: 1 row x 1 column for idle, or 1 row x ${isWalk ? walkFrames : 1} columns for walk. The visible character must face ${directionLabel(targetDir)}.`
+    : `Sheet grid: ${dirs.length} rows x ${isWalk ? walkFrames : 1} columns, evenly spaced cells, same scale and pivot in every cell.`;
+  return `${directionLine}\nReference image direction: ${directionLabel(refDir)}. Use it only as the source view/style identity. Target direction is ${directionLabel(targetDir)}.\n${frameLine}\n${gridLine}`;
 }
 
 function buildPixelAssetPrompt() {
   const type = $('pixelAssetType')?.value || 'character';
   const anim = $('pixelAnimationPreset')?.value || 'idle';
   const style = $('pixelStylePreset')?.value || '32bit_refined';
-  const direction = $('pixelDirection')?.value || 'front';
+  const singleMode = ($('pixelDirectionMode')?.value || 'single') === 'single';
+  const direction = singleMode ? directionLabel($('pixelTargetDirection')?.value || 'S') : ($('pixelDirection')?.value || 'front');
   const palette = ($('pixelPalette')?.value || 'limited dark game palette').trim();
   const subject = ($('pixelSubject')?.value || 'game character').trim();
   const typeLine = type === 'ui_panel' ? 'UI game asset, clean panel parts, reusable game UI component' : `${type} game asset`;
   const animLine = {
-    idle: 'idle animation frames, 4-frame subtle breathing pose, evenly spaced sprite sheet cells',
+    idle: singleMode ? 'single-frame idle sprite, no sheet stack, no extra variants' : 'idle animation frames, one readable idle pose per requested direction, evenly spaced sprite sheet cells',
     walk4: 'walk cycle frames, 4-frame walking animation, real alternating legs and arms, evenly spaced sprite sheet cells',
     walk6: 'walk cycle frames, 6-frame walking animation, real alternating legs and arms, evenly spaced sprite sheet cells',
     attack: 'attack animation frames, anticipation, swing, follow-through, evenly spaced sprite sheet cells',
@@ -3655,10 +3664,10 @@ if ($('runPixelSamplePack')) $('runPixelSamplePack').onclick = () => runPixelSam
 if ($('generate8DirIdle')) $('generate8DirIdle').onclick = () => runDirectionalPixelWorkflow('idle').catch(err => { console.error(err); alert(`8방향 idle 생성 실패: ${err.message}`); setStatus(`8방향 idle 생성 실패: ${err.message}`); });
 if ($('generate8DirWalk')) $('generate8DirWalk').onclick = () => runDirectionalPixelWorkflow('walk').catch(err => { console.error(err); alert(`8방향 walk 생성 실패: ${err.message}`); setStatus(`8방향 walk 생성 실패: ${err.message}`); });
 if ($('runDirectionalPixelPack')) $('runDirectionalPixelPack').onclick = () => runDirectionalPixelPack().catch(err => { console.error(err); alert(`8방향 통합 생성 실패: ${err.message}`); setStatus(`8방향 통합 생성 실패: ${err.message}`); });
-['pixelFrameW','pixelFrameH','pixelAnimationPreset','pixelDirectionMode','pixelWalkFrames'].forEach(id => {
+['pixelFrameW','pixelFrameH','pixelAnimationPreset','pixelDirectionMode','pixelTargetDirection','pixelWalkFrames'].forEach(id => {
   if ($(id)) $(id).addEventListener('change', () => applyPixelWorkflowGridDefaults());
 });
-['pixelAssetType','pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelDirectionMode','pixelReferenceDirection','pixelWalkFrames','pixelChromaMode','pixelPalette','pixelSubject'].forEach(id => {
+['pixelAssetType','pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelDirectionMode','pixelTargetDirection','pixelReferenceDirection','pixelWalkFrames','pixelChromaMode','pixelPalette','pixelSubject'].forEach(id => {
   if ($(id)) $(id).addEventListener(id === 'pixelSubject' || id === 'pixelPalette' ? 'input' : 'change', () => syncPixelAssetPrompt());
 });
 if ($('runInpaint')) $('runInpaint').onclick = runSelectedAreaAiEdit;
@@ -3759,6 +3768,7 @@ async function generateAiAsset() {
       preset,
       aspect_ratio: aspect,
       background_mode: backgroundMode,
+      target_direction: $('pixelTargetDirection')?.value || 'S',
       reference_direction: $('pixelReferenceDirection')?.value || 'S',
       direction_mode: $('pixelDirectionMode')?.value || 'single',
       animation_mode: ($('pixelAnimationPreset')?.value || 'idle').startsWith('walk') ? 'walk' : 'idle',

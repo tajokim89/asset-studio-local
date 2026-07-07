@@ -13,7 +13,10 @@ SERVER = (ROOT / "server.py").read_text(encoding="utf-8")
 def test_phase17_directional_character_controls_exist():
     for token in [
         'id="pixelDirectionMode"',
+        'value="single" selected',
         'value="8dir"',
+        'id="pixelTargetDirection"',
+        'Target W/left',
         '8방향 Idle 생성',
         '8방향 Walk 생성',
         'id="pixelReferenceDirection"',
@@ -30,7 +33,12 @@ def test_phase17_directional_character_controls_exist():
 def test_phase17_directional_prompt_and_payload_are_explicit():
     for token in [
         "function directionLabelsForMode",
+        "function directionLabel",
         "function buildDirectionalSpriteSheetContract",
+        "Single direction output ONLY",
+        "Do not generate a turnaround sheet",
+        "target_direction",
+        "W/left true side profile",
         "8-direction",
         "N, NE, E, SE, S, SW, W, NW",
         "idle -> stepA -> idle -> stepB",
@@ -58,6 +66,9 @@ def test_phase17_pixel_generate_button_calls_generation_without_legacy_hidden_bu
 def test_phase17_server_reference_prompt_includes_direction_contract():
     for token in [
         "direction_mode",
+        "target_direction",
+        "Generate exactly ONE target direction",
+        "Do NOT create a turnaround sheet",
         "reference_direction",
         "animation_mode",
         "walk_frames",

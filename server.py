@@ -576,7 +576,7 @@ def collect_codex_replacement_b64(image_data_url: str, mask_data_url: str, promp
     return collect_codex_edit_b64(image_data_url, mask_data_url, build_replace_object_prompt(prompt, negative), "", prompt_is_final=True)
 
 
-def build_reference_sprite_prompt(prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> str:
+def build_reference_sprite_prompt(prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> str:
     neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
     direction_contract = ""
     if direction_mode == "8dir":
@@ -592,6 +592,14 @@ Directional sprite-sheet contract:
 - 4-direction output. Direction row order must be exactly: S, W, E, N.
 - The supplied reference image direction is reference_direction={reference_direction}. Preserve that view most closely, then rotate the same character design into the other directions.
 - Side rows must read as true side profiles. Back row must remove front-only face/chest details.""".format(reference_direction=reference_direction)
+    else:
+        direction_contract = """
+Single-direction contract:
+- Generate exactly ONE target direction: target_direction={target_direction}.
+- Do NOT create a turnaround sheet, contact sheet, vertical stack, 8-direction set, or multiple direction variants.
+- The supplied reference image direction is reference_direction={reference_direction}; use it only for identity/style, then orient the final sprite to target_direction={target_direction}.
+- If target_direction is W or E, the result must be a true side profile, not a 3/4 front view.
+- If target_direction is S, the result must face camera/front.""".format(reference_direction=reference_direction, target_direction=target_direction)
     frame_contract = ""
     if animation_mode == "walk":
         frame_contract = f"""
@@ -622,7 +630,7 @@ User request: {prompt.strip()}
 {neg}""".strip()
 
 
-def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> tuple[str, str, str]:
+def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> tuple[str, str, str]:
     """Generate a new sprite/asset sheet while using the selected image as style/identity reference."""
     import httpx
     from agent.auxiliary_client import _codex_cloudflare_headers
@@ -652,7 +660,7 @@ def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, neg
             "type": "message",
             "role": "user",
             "content": [
-                {"type": "input_text", "text": build_reference_sprite_prompt(prompt, negative, direction_mode=direction_mode, reference_direction=reference_direction, animation_mode=animation_mode, walk_frames=walk_frames)},
+                {"type": "input_text", "text": build_reference_sprite_prompt(prompt, negative, direction_mode=direction_mode, reference_direction=reference_direction, target_direction=target_direction, animation_mode=animation_mode, walk_frames=walk_frames)},
                 {"type": "input_text", "text": "Reference image to preserve identity/style:"},
                 {"type": "input_image", "image_url": data_url_to_png_data_url(reference_data_url)},
             ],
@@ -979,6 +987,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data.get("negative", ""),
                     direction_mode=str(data.get("direction_mode", "single")),
                     reference_direction=str(data.get("reference_direction", "S")),
+                    target_direction=str(data.get("target_direction", "S")),
                     animation_mode=str(data.get("animation_mode", "idle")),
                     walk_frames=int(data.get("walk_frames", 4) or 4),
                 )
