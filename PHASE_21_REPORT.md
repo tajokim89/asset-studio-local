@@ -56,6 +56,8 @@ This keeps mirror pairs mechanically identical and reduces final sprite-set QA f
 - `tests/test_phase21_sprite_action_matrix.py`
   - Added regression tests for direction source policy, action matrix, action prompt, and UI payload shape.
 
+- Direction/action generation contract tightened after user correction: **directions are generated one-by-one only**. Walk/attack/idle/etc. may have multiple frames, but only for one selected direction per request. Templates explicitly forbid all-8-direction sheets/contact sheets for direction source generation and action generation.
+
 ## Verification
 
 RED:

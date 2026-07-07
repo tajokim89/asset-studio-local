@@ -18,9 +18,11 @@ def test_phase21_locks_source_direction_generation_to_left_side_plus_flips():
     assert MIRRORED_8DIR_SOURCE_DIRECTIONS == ["S", "N", "W", "SW", "NW"]
     prompt = build_static_direction_reference_prompt("armored cleanup worker", "W")
     assert "SOURCE DIRECTION W only" in prompt
+    assert "Generate exactly one direction in this request" in prompt
     assert "true side profile facing screen-left" in prompt
     assert "Do not generate E, SE, or NE" in prompt
     assert "right-facing views are created by app-side horizontal flip" in prompt
+    assert "Do not output an 8-direction sheet" in prompt
 
 
 def test_phase21_action_matrix_defines_idle_walk_attack_hit_death_contracts():
@@ -34,7 +36,7 @@ def test_phase21_action_matrix_defines_idle_walk_attack_hit_death_contracts():
     assert SPRITE_ACTION_MATRIX["death"]["terminal"] is True
 
 
-def test_phase21_action_prompt_preserves_direction_reference_and_fixed_columns():
+def test_phase21_action_prompt_is_one_direction_action_strip_not_all_directions():
     prompt = build_sprite_action_prompt(
         "rusty sanitation knight",
         action="attack",
@@ -43,9 +45,12 @@ def test_phase21_action_prompt_preserves_direction_reference_and_fixed_columns()
     )
     assert "ACTION attack" in prompt
     assert "DIRECTION SW" in prompt
+    assert "Generate exactly one direction in this request" in prompt
+    assert "Do not output all 8 directions" in prompt
     assert "front-left three-quarter" in prompt
     assert "use the accepted SW static reference as frame 1 identity anchor" in prompt
     assert "Column order must be exactly: ready, windup, strike, recover" in prompt
+    assert "Keep all frames in evenly spaced cells on one horizontal row for this direction" in prompt
     assert "Do not change identity, equipment, palette, proportions, pivot, or feet baseline" in prompt
     assert "flat exact RGB(0,255,0) / #00FF00 chroma-key background" in prompt
 

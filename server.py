@@ -943,6 +943,8 @@ def build_static_direction_reference_prompt(prompt: str, direction: str, negativ
     neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
     return f"""Static direction reference generation contract.
 Generate SOURCE DIRECTION {direction} only: {DIRECTION_PROMPT_CONTRACTS[direction]}.
+Generate exactly one direction in this request.
+Do not output an 8-direction sheet, 4-direction sheet, contact sheet, or multiple direction variants.
 Do not generate E, SE, or NE source sprites; right-facing views are created by app-side horizontal flip.
 Preserve one stable character identity, outfit, equipment, palette, outline thickness, pixel scale, pivot, and feet baseline.
 Use a flat exact RGB(0,255,0) / #00FF00 chroma-key background edge-to-edge.
@@ -967,6 +969,8 @@ def build_sprite_action_prompt(prompt: str, action: str = "idle", direction: str
 ACTION {action}
 DIRECTION {direction}: {direction_contract}
 Frame count: {spec['frames']}
+Generate exactly one direction in this request.
+Do not output all 8 directions, a multi-direction atlas, or alternate direction candidates.
 Column order must be exactly: {', '.join(spec['columns'])}
 Action contract: {spec['contract']}
 Do not change identity, equipment, palette, proportions, pivot, or feet baseline between frames.
