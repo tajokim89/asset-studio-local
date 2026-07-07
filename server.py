@@ -491,6 +491,43 @@ def evaluate_sprite_source_geometry_quality(
     }
 
 
+def select_geometry_consistent_source_set(source_dirs, max_geometry_attempts: int, generate_fn, validate_fn) -> tuple[dict, dict]:
+    """Regenerate geometry-failed directions instead of accepting/rejecting after one set.
+
+    generate_fn(direction, round_index) must return (raw_png, qa). validate_fn(sources)
+    returns the same shape as evaluate_sprite_source_geometry_quality.
+    """
+    max_geometry_attempts = max(1, int(max_geometry_attempts))
+    source_dirs = [str(d).upper() for d in source_dirs]
+    sources = {}
+    generation_qa = {d: [] for d in source_dirs}
+    geometry_rounds = []
+
+    def regenerate(d, round_index):
+        raw, qa = generate_fn(d, round_index)
+        sources[d] = raw
+        generation_qa[d].append({"round": round_index, "qa": qa})
+
+    for d in source_dirs:
+        regenerate(d, 1)
+
+    last_geometry_qa = None
+    for round_index in range(1, max_geometry_attempts + 1):
+        geometry_qa = validate_fn(sources)
+        last_geometry_qa = geometry_qa
+        geometry_rounds.append(geometry_qa)
+        if geometry_qa.get("pass") is True:
+            return sources, {"geometry_qa": geometry_qa, "geometry_rounds": geometry_rounds, "generation_qa": generation_qa}
+        failed = [str(d).upper() for d in geometry_qa.get("failed_directions", []) if str(d).upper() in source_dirs]
+        if not failed or round_index >= max_geometry_attempts:
+            break
+        for d in failed:
+            regenerate(d, round_index + 1)
+
+    raise RuntimeError(f"No geometry-consistent source set after {max_geometry_attempts} attempts; fail closed: {last_geometry_qa}")
+
+
+
 def build_8dir_mirror_sheet_from_source_pngs(sources: dict, cell_size: int = 420, layout: str = "row") -> tuple[bytes, dict]:
     """Build canonical 8-direction sheet from 5 generated sources plus exact flips.
 
@@ -1157,6 +1194,7 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
     model = ""
     quality = ""
     max_source_attempts = int(os.environ.get("ASSET_STUDIO_DIRECTION_QA_ATTEMPTS", "3"))
+    max_geometry_attempts = int(os.environ.get("ASSET_STUDIO_GEOMETRY_QA_ATTEMPTS", "3"))
 
     def make_candidate(direction: str, attempt: int):
         nonlocal model, quality
@@ -1181,15 +1219,23 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
         )
         return processed, qa
 
-    for direction in source_dirs:
+    def generate_direction_valid_source(direction: str, geometry_round: int):
         processed, qa = select_valid_direction_candidate(
             direction,
             max_source_attempts,
             make_candidate,
             classify_direction_candidate_with_codex_vision,
         )
-        source_pngs[direction] = processed
-        source_qa[direction] = qa
+        qa["geometry_round"] = geometry_round
+        return processed, qa
+
+    source_pngs, geometry_set_qa = select_geometry_consistent_source_set(
+        source_dirs,
+        max_geometry_attempts,
+        generate_direction_valid_source,
+        evaluate_sprite_source_geometry_quality,
+    )
+    source_qa = geometry_set_qa.get("generation_qa", {})
     sheet, qa = build_8dir_mirror_sheet_from_source_pngs(source_pngs, cell_size=420, layout="row")
     sprite_set_qa = {"status": "skipped", "reason": "ASSET_STUDIO_SPRITE_SET_VISION_QA=0"}
     if os.environ.get("ASSET_STUDIO_SPRITE_SET_VISION_QA", "1") != "0":
@@ -1197,6 +1243,7 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
         if sprite_set_qa.get("pass") is not True:
             raise RuntimeError(f"sprite-set visual QA failed; fail closed: {sprite_set_qa}")
     qa["source_qa"] = source_qa
+    qa["geometry_set_qa"] = geometry_set_qa
     qa["sprite_set_visual_qa"] = sprite_set_qa
     qa["direction_qa"] = {"status": "pass", "target_direction": "8dir", "method": "S/N/W/SW/NW sources + E/SE/NE flips"}
     return sheet, model, quality, qa
