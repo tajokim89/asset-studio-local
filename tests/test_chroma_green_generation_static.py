@@ -12,7 +12,8 @@ def test_generate_api_accepts_chroma_green_background_mode():
     assert 'background_mode == "chroma_green"' in SERVER
     assert 'RGB(0,255,0) / #00FF00' in SERVER
     assert 'data.get("background_mode", "none")' in SERVER
-    assert "force_chroma_green_background(src.read_bytes())" in SERVER
+    assert "postprocess_pixel_generation_bytes(" in SERVER
+    assert "force_chroma_green_background(processed)" in SERVER
     assert '"background_mode": background_mode' in SERVER
     assert "def remove_chroma_green_bytes" in SERVER
     assert "subtle green spill/halo" in SERVER

@@ -300,6 +300,127 @@ def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18, mode: str = "glob
     return out.getvalue()
 
 
+def _png_bytes_from_image(img) -> bytes:
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _alpha_bbox(img, threshold: int = 0):
+    alpha = img.getchannel("A")
+    mask = alpha.point(lambda a: 255 if a > threshold else 0)
+    return mask.getbbox()
+
+
+def _component_bboxes(img, min_area: int = 8):
+    """Return connected opaque component bboxes sorted in reading order."""
+    from collections import deque
+    px = img.load()
+    w, h = img.size
+    seen = set()
+    boxes = []
+    for y in range(h):
+        for x in range(w):
+            if (x, y) in seen or px[x, y][3] == 0:
+                continue
+            q = deque([(x, y)])
+            seen.add((x, y))
+            minx = maxx = x
+            miny = maxy = y
+            count = 0
+            while q:
+                cx, cy = q.popleft()
+                count += 1
+                minx = min(minx, cx); maxx = max(maxx, cx)
+                miny = min(miny, cy); maxy = max(maxy, cy)
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if nx < 0 or ny < 0 or nx >= w or ny >= h or (nx, ny) in seen:
+                        continue
+                    if px[nx, ny][3] == 0:
+                        continue
+                    seen.add((nx, ny))
+                    q.append((nx, ny))
+            if count >= min_area:
+                boxes.append({"bbox": (minx, miny, maxx + 1, maxy + 1), "area": count})
+    return sorted(boxes, key=lambda b: (b["bbox"][1], b["bbox"][0]))
+
+
+def _direction_slot_index(direction: str, slot_count: int) -> int:
+    direction = (direction or "S").upper()
+    canonical8 = ["S", "SW", "W", "NW", "N", "NE", "E", "SE"]
+    if direction in canonical8:
+        return min(slot_count - 1, canonical8.index(direction))
+    return 0
+
+
+def _crop_with_transparent_padding(img, bbox, pad: int = 1):
+    from PIL import Image
+    x0, y0, x1, y1 = bbox
+    crop = img.crop((x0, y0, x1, y1))
+    if pad <= 0:
+        return crop
+    out = Image.new("RGBA", (crop.width + pad * 2, crop.height + pad * 2), (0, 0, 0, 0))
+    out.alpha_composite(crop, (pad, pad))
+    return out
+
+
+def _crop_single_direction_candidate(img, target_direction: str = "S"):
+    bbox = _alpha_bbox(img)
+    if not bbox:
+        return img, {"status": "fail", "reason": "no_opaque_pixels", "target_direction": target_direction}
+    cropped = img.crop(bbox)
+    components = _component_bboxes(cropped)
+    if len(components) >= 6:
+        idx = _direction_slot_index(target_direction, 8)
+        cell_w = max(1, cropped.width // 8)
+        x0 = max(0, idx * cell_w)
+        x1 = cropped.width if idx == 7 else min(cropped.width, (idx + 1) * cell_w)
+        cell = cropped.crop((x0, 0, x1, cropped.height))
+        tight = _alpha_bbox(cell)
+        if tight:
+            result = _crop_with_transparent_padding(cell, tight)
+        else:
+            result = cell
+        return result, {"status": "pass", "reason": "selected_equal_grid_slot", "target_direction": target_direction, "component_count": len(components), "selected_slot": idx, "bbox": [bbox[0] + x0 + (tight[0] if tight else 0), bbox[1] + (tight[1] if tight else 0), bbox[0] + x0 + (tight[2] if tight else (x1 - x0)), bbox[1] + (tight[3] if tight else cropped.height)]}
+    if len(components) <= 1:
+        tight = _alpha_bbox(cropped)
+        if tight:
+            cropped = _crop_with_transparent_padding(cropped, tight)
+        return cropped, {"status": "pass", "reason": "single_component", "target_direction": target_direction, "component_count": len(components), "selected_slot": 0, "bbox": list(bbox)}
+    idx = _direction_slot_index(target_direction, len(components))
+    chosen = components[idx]
+    x0, y0, x1, y1 = chosen["bbox"]
+    result = _crop_with_transparent_padding(cropped, (x0, y0, x1, y1))
+    tight = _alpha_bbox(result)
+    return result, {"status": "pass", "reason": "selected_direction_slot", "target_direction": target_direction, "component_count": len(components), "selected_slot": idx, "bbox": [bbox[0] + x0, bbox[1] + y0, bbox[0] + x1, bbox[1] + y1]}
+
+
+def postprocess_pixel_generation_bytes(raw: bytes, background_mode: str = "none", direction_mode: str = "single", target_direction: str = "S", animation_mode: str = "idle", chroma_mode: str = "global") -> tuple[bytes, dict]:
+    from PIL import Image
+    """Normalize generated pixel assets before the browser sees them.
+
+    For single-target idle assets, never return the model's full turnaround sheet:
+    remove chroma, split opaque candidates, select the requested direction slot,
+    and return one transparent sprite crop.
+    """
+    processed = raw
+    method_steps = []
+    if str(background_mode or "none").strip() == "chroma_green":
+        processed = force_chroma_green_background(processed)
+        processed = remove_chroma_green_bytes(processed, mode=chroma_mode)
+        method_steps.append(f"chroma-{chroma_mode}")
+    img = Image.open(io.BytesIO(processed)).convert("RGBA")
+    direction_qa = {"status": "skipped", "target_direction": target_direction}
+    if str(direction_mode or "single") == "single" and str(animation_mode or "idle") == "idle":
+        img, direction_qa = _crop_single_direction_candidate(img, target_direction)
+        method_steps.append("single-target-crop")
+    out = _png_bytes_from_image(img)
+    qa = chroma_green_report(out)
+    qa["direction_qa"] = direction_qa
+    qa["method"] = "+".join(method_steps) if method_steps else "none"
+    return out, qa
+
+
 def edge_aware_sheet_remove(raw: bytes, tolerance: int = 24, edge_threshold: int = 40) -> bytes:
     """Preserve-mask sheet cleanup: remove border backdrop, protect obvious item pixels.
 
@@ -594,12 +715,14 @@ Directional sprite-sheet contract:
 - Side rows must read as true side profiles. Back row must remove front-only face/chest details.""".format(reference_direction=reference_direction)
     else:
         direction_contract = """
-Single-direction contract:
-- Generate exactly ONE target direction: target_direction={target_direction}.
-- Do NOT create a turnaround sheet, contact sheet, vertical stack, 8-direction set, or multiple direction variants.
-- The supplied reference image direction is reference_direction={reference_direction}; use it only for identity/style, then orient the final sprite to target_direction={target_direction}.
-- If target_direction is W or E, the result must be a true side profile, not a 3/4 front view.
-- If target_direction is S, the result must face camera/front.""".format(reference_direction=reference_direction, target_direction=target_direction)
+Single-target internal extraction sheet contract:
+- Generate an internal extraction sheet as one horizontal row with separated candidates in exactly this left-to-right order: S, SW, W, NW, N, NE, E, SE.
+- Direction meaning is screen-space: SW means the body turns toward screen-left while still showing front details; W means a true side profile facing screen-left; SE/E face screen-right.
+- The app will crop and return only the requested target direction: target_direction={target_direction}.
+- The supplied reference image direction is reference_direction={reference_direction}; use it for identity/style, then rotate the same character into the canonical candidate order.
+- If target_direction is W or E, the corresponding candidate must be a true side profile, not a 3/4 front view.
+- If target_direction is S, the corresponding candidate must face camera/front.
+- Keep the candidates separated by green background gaps so postprocessing can isolate the selected slot.""".format(reference_direction=reference_direction, target_direction=target_direction)
     frame_contract = ""
     if animation_mode == "walk":
         frame_contract = f"""
@@ -992,13 +1115,18 @@ class Handler(SimpleHTTPRequestHandler):
                     walk_frames=int(data.get("walk_frames", 4) or 4),
                 )
                 raw = base64.b64decode(image_b64)
+                out, qa = postprocess_pixel_generation_bytes(
+                    raw,
+                    background_mode=background_mode,
+                    direction_mode=str(data.get("direction_mode", "single")),
+                    target_direction=str(data.get("target_direction", "S")),
+                    animation_mode=str(data.get("animation_mode", "idle")),
+                    chroma_mode=str(data.get("chroma_mode", "global")),
+                )
                 name = f"reference_generated_{int(time.time())}.png"
                 dst = GENERATED / name
-                if str(background_mode or "none").strip() == "chroma_green":
-                    dst.write_bytes(force_chroma_green_background(raw))
-                else:
-                    dst.write_bytes(raw)
-                return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": model, "quality": quality, "provider": "openai-codex-reference", "background_mode": background_mode, "method": "reference-image-sprite-generation"})
+                dst.write_bytes(out)
+                return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": model, "quality": quality, "provider": "openai-codex-reference", "background_mode": background_mode, "qa": qa, "method": f"reference-image-sprite-generation+{qa.get('method', 'postprocess')}"})
             if path == "/api/generate":
                 background_mode = data.get("background_mode", "none")
                 prompt = build_prompt(
@@ -1012,13 +1140,18 @@ class Handler(SimpleHTTPRequestHandler):
                 if not result.get("success"):
                     return self.send_json(500, {"success": False, "error": result.get("error") or str(result)})
                 src = Path(result["image"])
+                out, qa = postprocess_pixel_generation_bytes(
+                    src.read_bytes(),
+                    background_mode=background_mode,
+                    direction_mode=str(data.get("direction_mode", "single")),
+                    target_direction=str(data.get("target_direction", "S")),
+                    animation_mode=str(data.get("animation_mode", "idle")),
+                    chroma_mode=str(data.get("chroma_mode", "global")),
+                )
                 name = f"generated_{int(time.time())}_{src.name}"
                 dst = GENERATED / name
-                if str(background_mode or "none").strip() == "chroma_green":
-                    dst.write_bytes(force_chroma_green_background(src.read_bytes()))
-                else:
-                    shutil.copy2(src, dst)
-                return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": result.get("model"), "provider": result.get("provider"), "background_mode": background_mode})
+                dst.write_bytes(out)
+                return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": result.get("model"), "provider": result.get("provider"), "background_mode": background_mode, "qa": qa, "method": f"generate+{qa.get('method', 'postprocess')}"})
             return self.send_json(404, {"success": False, "error": "Unknown API endpoint"})
         except Exception as e:
             return self.send_json(500, {"success": False, "error": str(e)})

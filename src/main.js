@@ -99,7 +99,7 @@ function directionLabelsForMode(mode = $('pixelDirectionMode')?.value || 'single
 }
 
 function directionLabel(code) {
-  return ({ S:'S/front', SW:'SW/front-left', W:'W/left true side profile', NW:'NW/back-left', N:'N/back', NE:'NE/back-right', E:'E/right true side profile', SE:'SE/front-right' })[code] || code;
+  return ({ S:'S/front, face camera', SW:'SW/front-left, body turned toward screen-left', W:'W/left true side profile, face screen-left', NW:'NW/back-left, back turned toward screen-left', N:'N/back', NE:'NE/back-right, back turned toward screen-right', E:'E/right true side profile, face screen-right', SE:'SE/front-right, body turned toward screen-right' })[code] || code;
 }
 
 function buildDirectionalSpriteSheetContract(anim = $('pixelAnimationPreset')?.value || 'idle') {
@@ -111,7 +111,7 @@ function buildDirectionalSpriteSheetContract(anim = $('pixelAnimationPreset')?.v
   const isWalk = anim.startsWith('walk');
   const directionLine = mode === '8dir'
     ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
-    : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single direction output ONLY. Target direction: ${directionLabel(targetDir)}. Do not generate a turnaround sheet, contact sheet, extra rows, or other directions.`);
+    : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single target via internal extraction sheet. Generate one horizontal row of separated candidates in exactly this left-to-right order: S, SW, W, NW, N, NE, E, SE. Screen-space directions: SW/W turn toward screen-left, SE/E turn toward screen-right. The app will crop and return only the requested target direction: ${directionLabel(targetDir)}.`);
   const frameLine = isWalk
     ? `Walk columns: idle -> stepA -> idle -> stepB. Use ${walkFrames} frames per requested direction; stepA and stepB must be opposite arm/leg phases, not body bobbing.`
     : (mode === 'single' ? 'Idle contract: exactly one clean idle sprite for the target direction, not a row/stack of variants.' : 'Idle columns: one stable idle frame per direction; no random extra poses.');
@@ -3782,6 +3782,10 @@ async function generateAiAsset() {
     const url = withCacheBust(data.url);
     addGallery(url, data.method || data.model || 'generated');
     const img = await addImageUrl(url, useReference ? `참조 생성 - ${nameOf(referenceObj)}` : 'AI 생성 에셋');
+    if ($('pixelQaSummary') && data.qa) {
+      const dqa = data.qa.direction_qa || {};
+      $('pixelQaSummary').textContent = `QA direction ${dqa.status || 'n/a'} ${dqa.target_direction || ''} slot ${dqa.selected_slot ?? '-'} · alpha ${data.qa.alpha_min}-${data.qa.alpha_max} · corners ${data.qa.corner_alpha?.join('/') || '-'} · green ${data.qa.green_pixels ?? '-'}`;
+    }
     recordPixelAssetResult(url, data.method || data.model || 'generated');
     setStatus(useReference ? `Reference AI generated: ${data.model || ''}` : `AI generated: ${data.model || ''}`);
     return { url, img, data, referenceObj: referenceObj || null };
