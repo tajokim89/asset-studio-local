@@ -3763,15 +3763,19 @@ async function generateAiAsset() {
   setStatus(useReference ? '기준 이미지 기반 AI 에셋 생성 중... 선택 레이어의 캐릭터/스타일을 참조합니다.' : (backgroundMode === 'chroma_green' ? 'AI 에셋 생성 중... 배경은 #00FF00 크로마키로 고정합니다.' : 'AI 배경 이미지 생성 중... 30~90초 정도 걸릴 수 있습니다.'));
   try {
     const endpoint = useReference ? '/api/generate-reference' : '/api/generate';
+    const directionMode = $('pixelDirectionMode')?.value || 'single';
+    const targetDirection = $('pixelTargetDirection')?.value || 'S';
+    const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
+    const animationMode = ($('pixelAnimationPreset')?.value || 'idle').startsWith('walk') ? 'walk' : 'idle';
     const payload = {
       prompt,
       preset,
       aspect_ratio: aspect,
       background_mode: backgroundMode,
-      target_direction: $('pixelTargetDirection')?.value || 'S',
-      reference_direction: $('pixelReferenceDirection')?.value || 'S',
-      direction_mode: $('pixelDirectionMode')?.value || 'single',
-      animation_mode: ($('pixelAnimationPreset')?.value || 'idle').startsWith('walk') ? 'walk' : 'idle',
+      target_direction: targetDirection,
+      reference_direction: referenceDirection,
+      direction_mode: directionMode,
+      animation_mode: animationMode,
       walk_frames: Math.max(3, Math.min(8, +($('pixelWalkFrames')?.value || 4))),
       chroma_mode: $('pixelChromaMode')?.value || 'global'
     };

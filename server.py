@@ -395,6 +395,64 @@ def _crop_single_direction_candidate(img, target_direction: str = "S"):
     return result, {"status": "pass", "reason": "selected_direction_slot", "target_direction": target_direction, "component_count": len(components), "selected_slot": idx, "bbox": [bbox[0] + x0, bbox[1] + y0, bbox[0] + x1, bbox[1] + y1]}
 
 
+def _trim_and_center_sprite(raw: bytes, cell_size: int):
+    from PIL import Image
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    bbox = _alpha_bbox(img)
+    if bbox:
+        img = img.crop(bbox)
+    scale = min(1.0, (cell_size - 16) / max(1, img.width), (cell_size - 16) / max(1, img.height))
+    if scale < 1.0:
+        img = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.Resampling.NEAREST)
+    canvas = Image.new("RGBA", (cell_size, cell_size), (0, 0, 0, 0))
+    canvas.alpha_composite(img, ((cell_size - img.width) // 2, cell_size - img.height - 8))
+    return canvas
+
+
+def build_8dir_mirror_sheet_from_source_pngs(sources: dict, cell_size: int = 420, layout: str = "row") -> tuple[bytes, dict]:
+    """Build canonical 8-direction sheet from 5 generated sources plus exact flips.
+
+    Only S/N/W/SW/NW are accepted as source directions. E/SE/NE must be derived
+    by horizontal mirror so right-facing consistency is deterministic.
+    """
+    from PIL import Image, ImageOps
+    required = ["S", "N", "W", "SW", "NW"]
+    forbidden = ["E", "SE", "NE"]
+    present = {str(k).upper() for k in sources.keys()}
+    bad = [d for d in forbidden if d in present]
+    if bad:
+        raise ValueError(f"right-facing source directions are forbidden; derive by flip only: {', '.join(bad)}")
+    missing = [d for d in required if d not in present]
+    if missing:
+        raise ValueError(f"missing source directions: {', '.join(missing)}")
+
+    sprites = {d: _trim_and_center_sprite(sources[d], cell_size) for d in required}
+    sprites["NE"] = ImageOps.mirror(sprites["NW"])
+    sprites["E"] = ImageOps.mirror(sprites["W"])
+    sprites["SE"] = ImageOps.mirror(sprites["SW"])
+    order = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+    if layout == "atlas_2x4":
+        sheet = Image.new("RGBA", (cell_size * 2, cell_size * 4), (0, 0, 0, 0))
+        for i, d in enumerate(order):
+            sheet.alpha_composite(sprites[d], ((i % 2) * cell_size, (i // 2) * cell_size))
+    else:
+        sheet = Image.new("RGBA", (cell_size * len(order), cell_size), (0, 0, 0, 0))
+        for i, d in enumerate(order):
+            sheet.alpha_composite(sprites[d], (i * cell_size, 0))
+    out = _png_bytes_from_image(sheet)
+    qa = chroma_green_report(out)
+    qa.update({
+        "method": "5-source+mirror",
+        "order": order,
+        "source_directions": required,
+        "mirrored_pairs": {"NW": "NE", "W": "E", "SW": "SE"},
+        "layout": layout,
+        "cell_size": cell_size,
+    })
+    return out, qa
+
+
 def postprocess_pixel_generation_bytes(raw: bytes, background_mode: str = "none", direction_mode: str = "single", target_direction: str = "S", animation_mode: str = "idle", chroma_mode: str = "global") -> tuple[bytes, dict]:
     from PIL import Image
     """Normalize generated pixel assets before the browser sees them.
@@ -823,6 +881,51 @@ def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, neg
     return image_b64, tier_id, meta["quality"]
 
 
+def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, negative: str = "", background_mode: str = "chroma_green", reference_direction: str = "S", chroma_mode: str = "global") -> tuple[bytes, str, str, dict]:
+    """Web/API pipeline for 8-dir sprites: generate only 5 source views, mirror the right side.
+
+    This intentionally never requests E/SE/NE from the model. Those views are exact
+    flips of W/SW/NW, avoiding mixed right-facing source mistakes.
+    """
+    source_dirs = ["S", "N", "W", "SW", "NW"]
+    source_prompt = {
+        "S": "front-facing, looking straight toward camera/front; do not turn left or right",
+        "N": "back-facing, looking away from camera; show back of head/body only, no face",
+        "W": "true side profile facing screen-left only; absolutely not screen-right",
+        "SW": "front-left three-quarter view facing screen-left while retaining front details; absolutely not screen-right",
+        "NW": "back-left three-quarter view facing screen-left/back-left; mostly back/side, no front face; absolutely not screen-right",
+    }
+    source_pngs = {}
+    source_qa = {}
+    model = ""
+    quality = ""
+    for direction in source_dirs:
+        image_b64, model, quality = collect_codex_reference_sprite_b64(
+            reference_data_url,
+            f"{prompt}\n\nGenerate SOURCE DIRECTION {direction} only: {source_prompt[direction]}. Do not generate E, SE, or NE source sprites; right-facing views are created by app-side horizontal flip.",
+            negative,
+            direction_mode="single",
+            reference_direction=reference_direction,
+            target_direction=direction,
+            animation_mode="idle",
+            walk_frames=4,
+        )
+        processed, qa = postprocess_pixel_generation_bytes(
+            base64.b64decode(image_b64),
+            background_mode=background_mode,
+            direction_mode="single",
+            target_direction=direction,
+            animation_mode="idle",
+            chroma_mode=chroma_mode,
+        )
+        source_pngs[direction] = processed
+        source_qa[direction] = qa
+    sheet, qa = build_8dir_mirror_sheet_from_source_pngs(source_pngs, cell_size=420, layout="row")
+    qa["source_qa"] = source_qa
+    qa["direction_qa"] = {"status": "pass", "target_direction": "8dir", "method": "S/N/W/SW/NW sources + E/SE/NE flips"}
+    return sheet, model, quality, qa
+
+
 def image_to_data_url(img) -> str:
     out = io.BytesIO()
     img.save(out, format="PNG")
@@ -1104,24 +1207,42 @@ class Handler(SimpleHTTPRequestHandler):
                     data.get("preset", "pixel"),
                     background_mode,
                 )
+                direction_mode = str(data.get("direction_mode", "single"))
+                reference_direction = str(data.get("reference_direction", "S"))
+                target_direction = str(data.get("target_direction", "S"))
+                animation_mode = str(data.get("animation_mode", "idle"))
+                chroma_mode = str(data.get("chroma_mode", "global"))
+                if direction_mode == "8dir" and animation_mode == "idle":
+                    out, model, quality, qa = generate_reference_8dir_mirror_sheet(
+                        reference_image,
+                        prompt,
+                        data.get("negative", ""),
+                        background_mode=background_mode,
+                        reference_direction=reference_direction,
+                        chroma_mode=chroma_mode,
+                    )
+                    name = f"reference_8dir_mirror_{int(time.time())}.png"
+                    dst = GENERATED / name
+                    dst.write_bytes(out)
+                    return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": model, "quality": quality, "provider": "openai-codex-reference", "background_mode": background_mode, "qa": qa, "method": f"reference-image-8dir-mirror+{qa.get('method', 'postprocess')}"})
                 image_b64, model, quality = collect_codex_reference_sprite_b64(
                     reference_image,
                     prompt,
                     data.get("negative", ""),
-                    direction_mode=str(data.get("direction_mode", "single")),
-                    reference_direction=str(data.get("reference_direction", "S")),
-                    target_direction=str(data.get("target_direction", "S")),
-                    animation_mode=str(data.get("animation_mode", "idle")),
+                    direction_mode=direction_mode,
+                    reference_direction=reference_direction,
+                    target_direction=target_direction,
+                    animation_mode=animation_mode,
                     walk_frames=int(data.get("walk_frames", 4) or 4),
                 )
                 raw = base64.b64decode(image_b64)
                 out, qa = postprocess_pixel_generation_bytes(
                     raw,
                     background_mode=background_mode,
-                    direction_mode=str(data.get("direction_mode", "single")),
-                    target_direction=str(data.get("target_direction", "S")),
-                    animation_mode=str(data.get("animation_mode", "idle")),
-                    chroma_mode=str(data.get("chroma_mode", "global")),
+                    direction_mode=direction_mode,
+                    target_direction=target_direction,
+                    animation_mode=animation_mode,
+                    chroma_mode=chroma_mode,
                 )
                 name = f"reference_generated_{int(time.time())}.png"
                 dst = GENERATED / name
