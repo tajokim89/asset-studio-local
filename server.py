@@ -443,6 +443,23 @@ def _crop_single_direction_candidate(img, target_direction: str = "S"):
     return result, {"status": "pass", "reason": "selected_direction_slot", "target_direction": target_direction, "component_count": len(components), "selected_slot": idx, "bbox": [bbox[0] + x0, bbox[1] + y0, bbox[0] + x1, bbox[1] + y1]}
 
 
+def _normalize_single_direction_candidate(img, target_direction: str = "S"):
+    bbox = _alpha_bbox(img)
+    if not bbox:
+        return img, {"status": "fail", "reason": "no_opaque_pixels", "target_direction": target_direction}
+    cropped = img.crop(bbox)
+    components = _component_bboxes(cropped)
+    if len(components) <= 1:
+        tight = _alpha_bbox(cropped)
+        if tight:
+            cropped = _crop_with_transparent_padding(cropped, tight)
+        return cropped, {"status": "pass", "reason": "single_direction_trim", "target_direction": target_direction, "component_count": len(components), "bbox": list(bbox)}
+    # One-direction generation should not contain direction slots. Preserve the
+    # complete output instead of silently selecting a slot; visual QA can reject
+    # the model for disobeying the one-direction-only contract.
+    return img, {"status": "pass", "reason": "single_direction_trim", "target_direction": target_direction, "component_count": len(components), "bbox": list(bbox), "note": "multiple opaque components preserved; no direction-slot crop performed"}
+
+
 def _trim_and_center_sprite(raw: bytes, cell_size: int):
     from PIL import Image
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
@@ -642,8 +659,8 @@ def postprocess_pixel_generation_bytes(raw: bytes, background_mode: str = "none"
     img = Image.open(io.BytesIO(processed)).convert("RGBA")
     direction_qa = {"status": "skipped", "target_direction": target_direction}
     if str(direction_mode or "single") == "single" and str(animation_mode or "idle") == "idle":
-        img, direction_qa = _crop_single_direction_candidate(img, target_direction)
-        method_steps.append("single-target-crop")
+        img, direction_qa = _normalize_single_direction_candidate(img, target_direction)
+        method_steps.append("single-direction-trim")
     out = _png_bytes_from_image(img)
     qa = chroma_green_report(out)
     qa["direction_qa"] = direction_qa
@@ -998,14 +1015,15 @@ Directional sprite-sheet contract:
 - Side rows must read as true side profiles. Back row must remove front-only face/chest details.""".format(reference_direction=reference_direction)
     else:
         direction_contract = """
-Single-target internal extraction sheet contract:
-- Generate an internal extraction sheet as one horizontal row with separated candidates in exactly this left-to-right order: S, SW, W, NW, N, NE, E, SE.
-- Direction meaning is screen-space: SW means the body turns toward screen-left while still showing front details; W means a true side profile facing screen-left; SE/E face screen-right.
-- The app will crop and return only the requested target direction: target_direction={target_direction}.
-- The supplied reference image direction is reference_direction={reference_direction}; use it for identity/style, then rotate the same character into the canonical candidate order.
-- If target_direction is W or E, the corresponding candidate must be a true side profile, not a 3/4 front view.
-- If target_direction is S, the corresponding candidate must face camera/front.
-- Keep the candidates separated by green background gaps so postprocessing can isolate the selected slot.""".format(reference_direction=reference_direction, target_direction=target_direction)
+Single-target one-direction generation contract:
+- Generate exactly one target direction: target_direction={target_direction}.
+- Do not generate a direction-candidate sheet, contact sheet, multi-direction atlas, or alternate direction candidates.
+- Do not output all 8 directions. The app will request each direction separately.
+- Direction meaning is screen-space: SW/W turn toward screen-left, SE/E turn toward screen-right.
+- The supplied reference image direction is reference_direction={reference_direction}; use it for identity/style, then rotate only into the requested target direction.
+- If target_direction is W or E, the sprite must be a true side profile.
+- If target_direction is S, the sprite must face camera/front.
+- Keep a single centered sprite with transparent/chroma background margin, not a row/stack.""".format(reference_direction=reference_direction, target_direction=target_direction)
     frame_contract = ""
     action_key = (animation_mode or "idle").lower()
     if action_key in SPRITE_ACTION_MATRIX:

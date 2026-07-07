@@ -111,7 +111,7 @@ function buildDirectionalSpriteSheetContract(anim = $('pixelAnimationPreset')?.v
   const isWalk = anim.startsWith('walk');
   const directionLine = mode === '8dir'
     ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
-    : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single target via internal extraction sheet. Generate one horizontal row of separated candidates in exactly this left-to-right order: S, SW, W, NW, N, NE, E, SE. Screen-space directions: SW/W turn toward screen-left, SE/E turn toward screen-right. The app will crop and return only the requested target direction: ${directionLabel(targetDir)}.`);
+    : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single target via one-direction generation. Generate exactly one target direction: ${directionLabel(targetDir)}. Do not generate a direction-candidate sheet, contact sheet, multi-direction atlas, or alternate direction candidates. Do not output all 8 directions; the app requests each direction separately. Screen-space directions: SW/W turn toward screen-left, SE/E turn toward screen-right.`);
   const frameLine = isWalk
     ? `Walk columns: idle -> stepA -> idle -> stepB. Use ${walkFrames} frames per requested direction; stepA and stepB must be opposite arm/leg phases, not body bobbing.`
     : (mode === 'single' ? 'Idle contract: exactly one clean idle sprite for the target direction, not a row/stack of variants.' : 'Idle columns: one stable idle frame per direction; no random extra poses.');

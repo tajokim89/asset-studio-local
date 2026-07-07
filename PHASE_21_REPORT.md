@@ -57,6 +57,7 @@ This keeps mirror pairs mechanically identical and reduces final sprite-set QA f
   - Added regression tests for direction source policy, action matrix, action prompt, and UI payload shape.
 
 - Direction/action generation contract tightened after user correction: **directions are generated one-by-one only**. Walk/attack/idle/etc. may have multiple frames, but only for one selected direction per request. Templates explicitly forbid all-8-direction sheets/contact sheets for direction source generation and action generation.
+- Follow-up correction: the old `single` path still asked for an internal multi-candidate extraction sheet and cropped a selected slot. That is now removed. `single` mode requests exactly one target direction, and postprocess trims/preserves the result without slot-picking.
 
 ## Verification
 
