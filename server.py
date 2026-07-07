@@ -881,6 +881,121 @@ def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, neg
     return image_b64, tier_id, meta["quality"]
 
 
+def _extract_response_text(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        chunks = []
+        for key in ("text", "output_text", "content"):
+            if key in value:
+                chunks.append(_extract_response_text(value[key]))
+        if chunks:
+            return "\n".join(c for c in chunks if c)
+        return "\n".join(_extract_response_text(v) for v in value.values() if isinstance(v, (dict, list)))
+    if isinstance(value, list):
+        return "\n".join(_extract_response_text(v) for v in value)
+    return ""
+
+
+def _json_from_text(text: str) -> dict:
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    decoder = json.JSONDecoder()
+    objects = []
+    idx = 0
+    while idx < len(text):
+        start = text.find("{", idx)
+        if start < 0:
+            break
+        try:
+            obj, end = decoder.raw_decode(text[start:])
+            if isinstance(obj, dict):
+                objects.append(obj)
+            idx = start + max(end, 1)
+        except json.JSONDecodeError:
+            idx = start + 1
+    if objects:
+        for obj in reversed(objects):
+            if "pass" in obj and "observed" in obj:
+                return obj
+        return objects[-1]
+    raise ValueError(f"No JSON object in response: {text[:300]}")
+
+
+def classify_direction_candidate_with_codex_vision(raw_png: bytes, expected_direction: str) -> dict:
+    """Direction QA contract: fail closed unless vision says the candidate matches."""
+    import httpx
+    from agent.auxiliary_client import _codex_cloudflare_headers
+
+    expected_direction = (expected_direction or "S").upper()
+    if expected_direction in {"E", "SE", "NE"}:
+        return {"pass": False, "observed": expected_direction, "reason": "right-facing source is forbidden; derive by flip only"}
+
+    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex_direction_qa", PROVIDER_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load openai-codex provider for direction QA")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    token = mod._read_codex_access_token()
+    if not token:
+        raise RuntimeError("No Codex/ChatGPT OAuth credentials available for direction QA")
+
+    headers = _codex_cloudflare_headers(token)
+    headers.update({"Accept": "text/event-stream", "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    prompt = f"""Direction QA contract for a transparent pixel-art sprite.
+Expected direction: {expected_direction}
+Screen-space rules:
+- W means true side profile facing screen-left.
+- SW means front-left 3/4, face/body turned screen-left while front details remain visible.
+- NW means back-left 3/4, mostly back/side turned screen-left, not screen-right.
+- S means front-facing camera.
+- N means back-facing away from camera.
+Reject if ambiguous, if facing screen-right, if it is an E/SE/NE source, or if the view does not match.
+Return only compact JSON: {{"pass": true/false, "observed": "S|N|W|SW|NW|E|SE|NE|ambiguous", "reason": "..."}}"""
+    image_url = "data:image/png;base64," + base64.b64encode(raw_png).decode("ascii")
+    payload = {
+        "model": mod._CODEX_CHAT_MODEL,
+        "store": False,
+        "input": [{"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": prompt},
+            {"type": "input_image", "image_url": image_url},
+        ]}],
+        "stream": True,
+    }
+    timeout = httpx.Timeout(120.0, connect=30.0, read=120.0, write=30.0, pool=30.0)
+    texts = []
+    with httpx.Client(timeout=timeout, headers=headers) as http:
+        with http.stream("POST", f"{mod._CODEX_BASE_URL}/responses", json=payload) as response:
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                exc.response.read()
+                raise RuntimeError(f"Direction QA API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
+            for event in mod._iter_sse_json(response):
+                text = _extract_response_text(event)
+                if text:
+                    texts.append(text)
+    parsed = _json_from_text("\n".join(texts))
+    passed = bool(parsed.get("pass")) and str(parsed.get("observed", "")).upper() == expected_direction
+    return {"pass": passed, "observed": str(parsed.get("observed", "ambiguous")).upper(), "reason": str(parsed.get("reason", "")), "raw": parsed}
+
+
+def select_valid_direction_candidate(direction: str, max_source_attempts: int, generate_fn, validate_fn) -> tuple[bytes, dict]:
+    """Generate/validate candidates; fail closed if no direction-valid candidate passes."""
+    attempts = []
+    for attempt in range(1, max(1, int(max_source_attempts)) + 1):
+        raw, generation_qa = generate_fn(direction, attempt)
+        visual_qa = validate_fn(raw, direction)
+        item = {"attempt": attempt, "generation_qa": generation_qa, "visual_direction_qa": visual_qa}
+        attempts.append(item)
+        if visual_qa.get("pass") is True:
+            item["accepted"] = True
+            return raw, {"accepted_attempt": attempt, "attempts": attempts, "visual_direction_qa": visual_qa}
+    raise RuntimeError(f"No direction-valid candidate for {direction} after {max_source_attempts} attempts; fail closed")
+
+
 def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, negative: str = "", background_mode: str = "chroma_green", reference_direction: str = "S", chroma_mode: str = "global") -> tuple[bytes, str, str, dict]:
     """Web/API pipeline for 8-dir sprites: generate only 5 source views, mirror the right side.
 
@@ -899,10 +1014,14 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
     source_qa = {}
     model = ""
     quality = ""
-    for direction in source_dirs:
+    max_source_attempts = int(os.environ.get("ASSET_STUDIO_DIRECTION_QA_ATTEMPTS", "3"))
+
+    def make_candidate(direction: str, attempt: int):
+        nonlocal model, quality
+        attempt_hint = f"Attempt {attempt}/{max_source_attempts}: be stricter than prior attempts. " if attempt > 1 else ""
         image_b64, model, quality = collect_codex_reference_sprite_b64(
             reference_data_url,
-            f"{prompt}\n\nGenerate SOURCE DIRECTION {direction} only: {source_prompt[direction]}. Do not generate E, SE, or NE source sprites; right-facing views are created by app-side horizontal flip.",
+            f"{prompt}\n\n{attempt_hint}Generate SOURCE DIRECTION {direction} only: {source_prompt[direction]}. Do not generate E, SE, or NE source sprites; right-facing views are created by app-side horizontal flip.",
             negative,
             direction_mode="single",
             reference_direction=reference_direction,
@@ -917,6 +1036,15 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
             target_direction=direction,
             animation_mode="idle",
             chroma_mode=chroma_mode,
+        )
+        return processed, qa
+
+    for direction in source_dirs:
+        processed, qa = select_valid_direction_candidate(
+            direction,
+            max_source_attempts,
+            make_candidate,
+            classify_direction_candidate_with_codex_vision,
         )
         source_pngs[direction] = processed
         source_qa[direction] = qa
