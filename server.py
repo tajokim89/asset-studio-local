@@ -409,6 +409,88 @@ def _trim_and_center_sprite(raw: bytes, cell_size: int):
     return canvas
 
 
+def sprite_alpha_bbox_stats(raw: bytes) -> dict:
+    """Measure the actual transparent sprite silhouette before accepting it as game-ready."""
+    from PIL import Image
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    bbox = _alpha_bbox(img)
+    if not bbox:
+        return {"bbox": None, "width": 0, "height": 0, "area": 0, "image_size": [img.width, img.height], "touches_edge": False}
+    x0, y0, x1, y1 = bbox
+    width = x1 - x0
+    height = y1 - y0
+    touches_edge = x0 <= 0 or y0 <= 0 or x1 >= img.width or y1 >= img.height
+    return {
+        "bbox": [x0, y0, x1, y1],
+        "width": width,
+        "height": height,
+        "area": width * height,
+        "image_size": [img.width, img.height],
+        "touches_edge": touches_edge,
+    }
+
+
+def evaluate_sprite_source_geometry_quality(
+    sources: dict,
+    *,
+    required_directions=("S", "N", "W", "SW", "NW"),
+    min_height_ratio: float = 0.82,
+    min_width_ratio: float = 0.55,
+    min_area_ratio: float = 0.55,
+    reject_edge_touch: bool = True,
+) -> dict:
+    """Fail closed when generated directions are not the same character scale.
+
+    Direction classifiers can say "SW" while the model actually returned a tiny or
+    cropped character. This gate catches the Phase 20 failure mode before any
+    sheet/atlas is presented as usable.
+    """
+    present = {str(k).upper(): v for k, v in sources.items()}
+    missing = [d for d in required_directions if d not in present]
+    if missing:
+        return {"pass": False, "reason": "missing_sources", "missing": missing, "failed_directions": missing, "stats": {}}
+
+    stats = {d: sprite_alpha_bbox_stats(present[d]) for d in required_directions}
+    non_empty = [s for s in stats.values() if s["height"] > 0 and s["width"] > 0]
+    if len(non_empty) != len(required_directions):
+        failed = [d for d, s in stats.items() if s["height"] <= 0 or s["width"] <= 0]
+        return {"pass": False, "reason": "empty_sprite", "failed_directions": failed, "stats": stats}
+
+    max_height = max(s["height"] for s in stats.values())
+    max_width = max(s["width"] for s in stats.values())
+    max_area = max(s["area"] for s in stats.values())
+    failed = []
+    for d, s in stats.items():
+        s["height_ratio"] = round(s["height"] / max(1, max_height), 4)
+        s["width_ratio"] = round(s["width"] / max(1, max_width), 4)
+        s["area_ratio"] = round(s["area"] / max(1, max_area), 4)
+        reasons = []
+        if s["height_ratio"] < min_height_ratio:
+            reasons.append("height_outlier")
+        if s["width_ratio"] < min_width_ratio:
+            reasons.append("width_outlier")
+        if s["area_ratio"] < min_area_ratio:
+            reasons.append("area_outlier")
+        if reject_edge_touch and s["touches_edge"]:
+            reasons.append("touches_canvas_edge")
+        s["quality_failures"] = reasons
+        if reasons:
+            failed.append(d)
+
+    return {
+        "pass": not failed,
+        "reason": "pass" if not failed else "inconsistent_source_geometry",
+        "failed_directions": failed,
+        "thresholds": {
+            "min_height_ratio": min_height_ratio,
+            "min_width_ratio": min_width_ratio,
+            "min_area_ratio": min_area_ratio,
+            "reject_edge_touch": reject_edge_touch,
+        },
+        "stats": stats,
+    }
+
+
 def build_8dir_mirror_sheet_from_source_pngs(sources: dict, cell_size: int = 420, layout: str = "row") -> tuple[bytes, dict]:
     """Build canonical 8-direction sheet from 5 generated sources plus exact flips.
 
@@ -425,6 +507,10 @@ def build_8dir_mirror_sheet_from_source_pngs(sources: dict, cell_size: int = 420
     missing = [d for d in required if d not in present]
     if missing:
         raise ValueError(f"missing source directions: {', '.join(missing)}")
+
+    geometry_qa = evaluate_sprite_source_geometry_quality({d: sources[d] for d in required})
+    if geometry_qa.get("pass") is not True:
+        raise ValueError(f"sprite source geometry QA failed: {geometry_qa}")
 
     sprites = {d: _trim_and_center_sprite(sources[d], cell_size) for d in required}
     sprites["NE"] = ImageOps.mirror(sprites["NW"])
@@ -449,6 +535,7 @@ def build_8dir_mirror_sheet_from_source_pngs(sources: dict, cell_size: int = 420
         "mirrored_pairs": {"NW": "NE", "W": "E", "SW": "SE"},
         "layout": layout,
         "cell_size": cell_size,
+        "geometry_qa": geometry_qa,
     })
     return out, qa
 
@@ -982,6 +1069,61 @@ Return only compact JSON: {{"pass": true/false, "observed": "S|N|W|SW|NW|E|SE|NE
     return {"pass": passed, "observed": str(parsed.get("observed", "ambiguous")).upper(), "reason": str(parsed.get("reason", "")), "raw": parsed}
 
 
+def classify_sprite_sheet_consistency_with_codex_vision(sheet_png: bytes) -> dict:
+    """Holistic sprite-set QA: fail closed on identity/equipment/proportion/crop mismatches."""
+    import httpx
+    from agent.auxiliary_client import _codex_cloudflare_headers
+
+    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex_sprite_set_qa", PROVIDER_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load openai-codex provider for sprite-set QA")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    token = mod._read_codex_access_token()
+    if not token:
+        raise RuntimeError("No Codex/ChatGPT OAuth credentials available for sprite-set QA")
+
+    headers = _codex_cloudflare_headers(token)
+    headers.update({"Accept": "text/event-stream", "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    prompt = """Sprite-set production QA contract for a top-down pixel-art game asset.
+The sheet order is N, NE, E, SE, S, SW, W, NW.
+Reject unless this looks like the SAME character rotated, not eight unrelated cuts.
+Fail if any of these are visible:
+- diagonal/front/back directions have noticeably different scale or body proportions
+- backpack, weapon, hat, armor, colors, or silhouette change between directions
+- equipment/backpack is clipped/cropped by the cell edge
+- a direction looks like a different character, different camera angle, or painterly illustration
+- feet/pivot alignment is unusable for a game sprite
+- right-facing sprites are not clean mirrors of left-facing sprites
+Return only compact JSON: {"pass": true/false, "reason": "...", "failures": ["..."]}"""
+    image_url = "data:image/png;base64," + base64.b64encode(sheet_png).decode("ascii")
+    payload = {
+        "model": mod._CODEX_CHAT_MODEL,
+        "store": False,
+        "input": [{"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": prompt},
+            {"type": "input_image", "image_url": image_url},
+        ]}],
+        "stream": True,
+    }
+    timeout = httpx.Timeout(120.0, connect=30.0, read=120.0, write=30.0, pool=30.0)
+    texts = []
+    with httpx.Client(timeout=timeout, headers=headers) as http:
+        with http.stream("POST", f"{mod._CODEX_BASE_URL}/responses", json=payload) as response:
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                exc.response.read()
+                raise RuntimeError(f"Sprite-set QA API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
+            for event in mod._iter_sse_json(response):
+                text = _extract_response_text(event)
+                if text:
+                    texts.append(text)
+    parsed = _json_from_text("\n".join(texts))
+    return {"pass": bool(parsed.get("pass")), "reason": str(parsed.get("reason", "")), "failures": parsed.get("failures", []), "raw": parsed}
+
+
+
 def select_valid_direction_candidate(direction: str, max_source_attempts: int, generate_fn, validate_fn) -> tuple[bytes, dict]:
     """Generate/validate candidates; fail closed if no direction-valid candidate passes."""
     attempts = []
@@ -1049,7 +1191,13 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
         source_pngs[direction] = processed
         source_qa[direction] = qa
     sheet, qa = build_8dir_mirror_sheet_from_source_pngs(source_pngs, cell_size=420, layout="row")
+    sprite_set_qa = {"status": "skipped", "reason": "ASSET_STUDIO_SPRITE_SET_VISION_QA=0"}
+    if os.environ.get("ASSET_STUDIO_SPRITE_SET_VISION_QA", "1") != "0":
+        sprite_set_qa = classify_sprite_sheet_consistency_with_codex_vision(sheet)
+        if sprite_set_qa.get("pass") is not True:
+            raise RuntimeError(f"sprite-set visual QA failed; fail closed: {sprite_set_qa}")
     qa["source_qa"] = source_qa
+    qa["sprite_set_visual_qa"] = sprite_set_qa
     qa["direction_qa"] = {"status": "pass", "target_direction": "8dir", "method": "S/N/W/SW/NW sources + E/SE/NE flips"}
     return sheet, model, quality, qa
 
