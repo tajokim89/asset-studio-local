@@ -92,6 +92,27 @@ function setStatus(msg) {
   $('status').textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
 }
 
+function directionLabelsForMode(mode = $('pixelDirectionMode')?.value || 'single') {
+  if (mode === '8dir') return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  if (mode === '4dir') return ['S', 'W', 'E', 'N'];
+  return [($('pixelReferenceDirection')?.value || 'S')];
+}
+
+function buildDirectionalSpriteSheetContract(anim = $('pixelAnimationPreset')?.value || 'idle') {
+  const mode = $('pixelDirectionMode')?.value || 'single';
+  const dirs = directionLabelsForMode(mode);
+  const refDir = $('pixelReferenceDirection')?.value || 'S';
+  const walkFrames = Math.max(3, Math.min(8, +($('pixelWalkFrames')?.value || 4)));
+  const isWalk = anim.startsWith('walk');
+  const directionLine = mode === '8dir'
+    ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
+    : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single direction sprite. Direction: ${refDir}.`);
+  const frameLine = isWalk
+    ? `Walk columns: idle -> stepA -> idle -> stepB. Use ${walkFrames} frames per direction; stepA and stepB must be opposite arm/leg phases, not body bobbing.`
+    : 'Idle columns: one stable idle frame per direction; no random extra poses.';
+  return `${directionLine}\nReference image direction: ${refDir}. Preserve that view most closely and rotate the same character consistently into other requested directions.\n${frameLine}\nSheet grid: ${dirs.length} rows x ${isWalk ? walkFrames : 1} columns, evenly spaced cells, same scale and pivot in every cell.`;
+}
+
 function buildPixelAssetPrompt() {
   const type = $('pixelAssetType')?.value || 'character';
   const anim = $('pixelAnimationPreset')?.value || 'idle';
@@ -109,7 +130,8 @@ function buildPixelAssetPrompt() {
     ui_static: 'UI static single asset, no animation frames, crisp reusable interface element',
   }[anim] || 'idle animation frames';
   const styleLine = `${style.replaceAll('_', ' ')}, refined pixel art, not chunky NES, clean silhouette, game-ready production quality`;
-  return `${subject}\n${typeLine}\n${animLine}\nDirection: ${direction}\nPalette: ${palette}\nStyle: ${styleLine}\nOutput: pixel-art sprite sheet when animated, transparent background, isolated asset, centered, consistent scale, clean alpha edges, no text, no watermark, no logo, no mockup frame.`;
+  const directionalContract = buildDirectionalSpriteSheetContract(anim);
+  return `${subject}\n${typeLine}\n${animLine}\n${directionalContract}\nDirection hint: ${direction}\nPalette: ${palette}\nStyle: ${styleLine}\nOutput: pixel-art sprite sheet when animated, transparent background, isolated asset, centered, consistent scale, clean alpha edges, no text, no watermark, no logo, no mockup frame.`;
 }
 
 function syncPixelAssetPrompt() {
@@ -124,8 +146,9 @@ function syncPixelAssetPrompt() {
 
 function pixelPresetFrameCount() {
   const anim = $('pixelAnimationPreset')?.value || 'idle';
-  if (anim === 'walk6') return 6;
+  if (anim.startsWith('walk')) return Math.max(3, Math.min(8, +($('pixelWalkFrames')?.value || 4)));
   if (anim === 'ui_static') return 1;
+  if (($('pixelDirectionMode')?.value || 'single') !== 'single' && anim === 'idle') return 1;
   return 4;
 }
 
@@ -133,8 +156,9 @@ function applyPixelWorkflowGridDefaults() {
   const frames = pixelPresetFrameCount();
   const frameW = Math.max(1, +($('pixelFrameW')?.value || 32));
   const frameH = Math.max(1, +($('pixelFrameH')?.value || 32));
+  const dirs = directionLabelsForMode();
   if ($('gridCols')) $('gridCols').value = String(frames);
-  if ($('gridRows')) $('gridRows').value = '1';
+  if ($('gridRows')) $('gridRows').value = String(dirs.length);
   if ($('gridCellW')) $('gridCellW').value = String(frameW);
   if ($('gridCellH')) $('gridCellH').value = String(frameH);
   if ($('gridGapX')) $('gridGapX').value = '0';
@@ -2594,7 +2618,7 @@ function imageObjectToDataUrl(obj) {
   return temp.toDataURL('image/png');
 }
 
-async function removeBgSelected(mode='ai') {
+async function removeBgSelected(mode='ai', chromaMode = $('pixelChromaMode')?.value || 'global') {
   const obj = selectedLayerObject();
   if (!obj || obj.type !== 'image') {
     const label = obj ? `${nameOf(obj)} (${obj.isDrawingLayer ? 'drawing layer' : obj.type})` : '없음';
@@ -2610,7 +2634,7 @@ async function removeBgSelected(mode='ai') {
     const res = await fetch('/api/remove-bg', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ image, tolerance: +$('tolerance').value || (mode === 'sheet' ? 24 : 36), mode })
+      body: JSON.stringify({ image, tolerance: +$('tolerance').value || (mode === 'sheet' ? 24 : 36), mode, chroma_mode: chromaMode })
     });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'remove-bg failed');
@@ -2636,6 +2660,7 @@ async function removeBgSelected(mode='ai') {
     canvas.renderAll();
     saveHistory(); syncProps(); renderLayers();
     addGallery(url, 'cutout');
+    if ($('pixelQaSummary') && data.qa) $('pixelQaSummary').textContent = `QA alpha ${data.qa.alpha_min}-${data.qa.alpha_max} · corners ${data.qa.corner_alpha.join('/')} · green ${data.qa.green_pixels}`;
     setStatus(`${mode === 'sheet' ? 'Asset Sheet BG' : 'AI Cutout'} complete (${data.method}). 선택한 이미지 레이어에만 적용했습니다. 원본은 숨김 처리했고 Cutout 레이어를 새로 만들었습니다.`);
     return { url, cutout, data };
   } catch (err) {
@@ -3627,10 +3652,13 @@ if ($('buildPixelPrompt')) $('buildPixelPrompt').onclick = syncPixelAssetPrompt;
 if ($('generatePixelAsset')) $('generatePixelAsset').onclick = () => { syncPixelAssetPrompt(); $('generateBtn')?.click(); };
 if ($('runPixelWorkflow')) $('runPixelWorkflow').onclick = () => runPixelWorkflow().catch(err => { console.error(err); alert(`도트 워크플로우 실패: ${err.message}`); setStatus(`도트 워크플로우 실패: ${err.message}`); });
 if ($('runPixelSamplePack')) $('runPixelSamplePack').onclick = () => runPixelSamplePack().catch(err => { console.error(err); alert(`샘플팩 생성 실패: ${err.message}`); setStatus(`샘플팩 생성 실패: ${err.message}`); });
-['pixelFrameW','pixelFrameH','pixelAnimationPreset'].forEach(id => {
+if ($('generate8DirIdle')) $('generate8DirIdle').onclick = () => runDirectionalPixelWorkflow('idle').catch(err => { console.error(err); alert(`8방향 idle 생성 실패: ${err.message}`); setStatus(`8방향 idle 생성 실패: ${err.message}`); });
+if ($('generate8DirWalk')) $('generate8DirWalk').onclick = () => runDirectionalPixelWorkflow('walk').catch(err => { console.error(err); alert(`8방향 walk 생성 실패: ${err.message}`); setStatus(`8방향 walk 생성 실패: ${err.message}`); });
+if ($('runDirectionalPixelPack')) $('runDirectionalPixelPack').onclick = () => runDirectionalPixelPack().catch(err => { console.error(err); alert(`8방향 통합 생성 실패: ${err.message}`); setStatus(`8방향 통합 생성 실패: ${err.message}`); });
+['pixelFrameW','pixelFrameH','pixelAnimationPreset','pixelDirectionMode','pixelWalkFrames'].forEach(id => {
   if ($(id)) $(id).addEventListener('change', () => applyPixelWorkflowGridDefaults());
 });
-['pixelAssetType','pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelPalette','pixelSubject'].forEach(id => {
+['pixelAssetType','pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelDirectionMode','pixelReferenceDirection','pixelWalkFrames','pixelChromaMode','pixelPalette','pixelSubject'].forEach(id => {
   if ($(id)) $(id).addEventListener(id === 'pixelSubject' || id === 'pixelPalette' ? 'input' : 'change', () => syncPixelAssetPrompt());
 });
 if ($('runInpaint')) $('runInpaint').onclick = runSelectedAreaAiEdit;
@@ -3724,7 +3752,17 @@ async function generateAiAsset() {
   $('generateBtn').disabled = true; setStatus(useReference ? '기준 이미지 기반 AI 에셋 생성 중... 선택 레이어의 캐릭터/스타일을 참조합니다.' : (backgroundMode === 'chroma_green' ? 'AI 에셋 생성 중... 배경은 #00FF00 크로마키로 고정합니다.' : 'AI 배경 이미지 생성 중... 30~90초 정도 걸릴 수 있습니다.'));
   try {
     const endpoint = useReference ? '/api/generate-reference' : '/api/generate';
-    const payload = { prompt, preset, aspect_ratio:$('aiAspect').value, background_mode: backgroundMode };
+    const payload = {
+      prompt,
+      preset,
+      aspect_ratio:$('aiAspect').value,
+      background_mode: backgroundMode,
+      reference_direction: $('pixelReferenceDirection')?.value || 'S',
+      direction_mode: $('pixelDirectionMode')?.value || 'single',
+      animation_mode: ($('pixelAnimationPreset')?.value || 'idle').startsWith('walk') ? 'walk' : 'idle',
+      walk_frames: Math.max(3, Math.min(8, +($('pixelWalkFrames')?.value || 4))),
+      chroma_mode: $('pixelChromaMode')?.value || 'global'
+    };
     if (useReference) payload.reference_image = imageObjectToDataUrl(referenceObj);
     const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const data = await res.json();
@@ -3750,7 +3788,7 @@ async function runPixelWorkflow() {
   let finalUrl = result.url;
   let finalImg = result.img;
   if ($('pixelWorkflowCleanBg')?.checked) {
-    const cleaned = await removeBgSelected('sheet');
+    const cleaned = await removeBgSelected('chroma_green', $('pixelChromaMode')?.value || 'global');
     if (cleaned?.cutout) {
       finalUrl = cleaned.url;
       finalImg = cleaned.cutout;
@@ -3764,6 +3802,34 @@ async function runPixelWorkflow() {
   if ($('pixelWorkflowPreview')?.checked) await buildAnimationPreview();
   setStatus(`도트 워크플로우 완료 · ${pixelPresetFrameCount()} frames`);
   return { ...result, finalUrl, finalImg };
+}
+
+async function runDirectionalPixelWorkflow(animationMode = 'idle') {
+  if ($('pixelAssetType')) $('pixelAssetType').value = 'character';
+  if ($('pixelDirectionMode')) $('pixelDirectionMode').value = '8dir';
+  if ($('pixelAnimationPreset')) $('pixelAnimationPreset').value = animationMode === 'walk' ? 'walk4' : 'idle';
+  if ($('pixelDirection')) $('pixelDirection').value = '8dir';
+  syncPixelAssetPrompt();
+  return runPixelWorkflow();
+}
+
+async function runDirectionalPixelPack() {
+  const baseReference = $('pixelUseReference')?.checked ? selectedLayerObject() : null;
+  if ($('pixelUseReference')?.checked && (!baseReference || baseReference.type !== 'image')) {
+    const label = baseReference ? `${nameOf(baseReference)} (${baseReference.type})` : '없음';
+    throw new Error(`8방향 통합 생성은 기준 이미지 레이어를 먼저 선택해야 합니다. 현재 선택: ${label}`);
+  }
+  const results = [];
+  for (const mode of ['idle', 'walk']) {
+    if (baseReference) {
+      canvas.setActiveObject(baseReference);
+      rememberSelectedLayer(baseReference);
+    }
+    const result = await runDirectionalPixelWorkflow(mode);
+    if (result) results.push(result);
+  }
+  setStatus(`8방향 Idle+Walk 통합 생성 완료 · ${results.length}/2`);
+  return results;
 }
 
 async function runPixelSamplePack() {

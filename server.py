@@ -198,15 +198,44 @@ def force_chroma_green_background(raw: bytes, tolerance: int = 44) -> bytes:
     return out.getvalue()
 
 
-def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18) -> bytes:
-    """Remove #00FF00 chroma backdrop plus subtle green spill/halo.
+def _is_chroma_green_pixel(r: int, g: int, b: int, a: int, tolerance: int = 18) -> bool:
+    if a == 0:
+        return True
+    green_dom = g - max(r, b)
+    green_ratio = g / max(1, (r + b) / 2)
+    return (
+        (r <= tolerance and g >= 255 - tolerance and b <= tolerance)
+        or (g > 80 and green_dom > max(22, tolerance) and green_ratio > 1.25 and b < 150)
+        or (g > 55 and green_dom > max(18, tolerance - 4) and green_ratio > 1.18 and b < 130)
+    )
 
-    Generated objects often come back with exact green at the border and darker
-    yellow-green residue around edges. A strict chroma key leaves that halo, so
-    this uses three passes:
-    1) flood-remove border-connected green backdrop,
-    2) remove/neutralize green spill on remaining opaque pixels,
-    3) delete edge speckles surrounded by transparency.
+
+def chroma_green_report(raw: bytes, tolerance: int = 18) -> dict:
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    green_pixels = 0
+    alpha_min = 255
+    alpha_max = 0
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            alpha_min = min(alpha_min, a)
+            alpha_max = max(alpha_max, a)
+            if a > 0 and _is_chroma_green_pixel(r, g, b, a, tolerance):
+                green_pixels += 1
+    corners = [list(px[0, 0]), list(px[w - 1, 0]), list(px[0, h - 1]), list(px[w - 1, h - 1])]
+    return {"width": w, "height": h, "alpha_min": alpha_min, "alpha_max": alpha_max, "corner_alpha": [c[3] for c in corners], "green_pixels": green_pixels}
+
+
+def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18, mode: str = "global") -> bytes:
+    """Remove #00FF00 chroma backdrop plus internal green holes and subtle green spill/halo.
+
+    mode='outer' keeps legacy border-connected behavior. mode='global' removes
+    all chroma-green pixels anywhere in the sheet, including negative-space holes
+    between legs/arms/equipment, which is required for generated sprite sheets.
     """
     from collections import deque
     from PIL import Image
@@ -214,37 +243,35 @@ def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18) -> bytes:
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
     px = img.load()
     w, h = img.size
-    q = deque()
-    for x in range(w):
-        q.append((x, 0)); q.append((x, h - 1))
-    for y in range(h):
-        q.append((0, y)); q.append((w - 1, y))
 
     def green_like(x, y):
         r, g, b, a = px[x, y]
-        if a == 0:
-            return True
-        # Exact/near chroma green and compressed dark green backdrop variants.
-        green_dom = g - max(r, b)
-        green_ratio = g / max(1, (r + b) / 2)
-        return (
-            (r <= tolerance and g >= 255 - tolerance and b <= tolerance)
-            or (g > 80 and green_dom > max(22, tolerance) and green_ratio > 1.25 and b < 140)
-        )
+        return _is_chroma_green_pixel(r, g, b, a, tolerance)
 
-    seen = set()
-    while q:
-        x, y = q.popleft()
-        if x < 0 or y < 0 or x >= w or y >= h or (x, y) in seen or not green_like(x, y):
-            continue
-        seen.add((x, y))
-        r, g, b, a = px[x, y]
-        px[x, y] = (r, g, b, 0)
-        q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+    if mode in {"outer", "border", "flood"}:
+        q = deque()
+        for x in range(w):
+            q.append((x, 0)); q.append((x, h - 1))
+        for y in range(h):
+            q.append((0, y)); q.append((w - 1, y))
+        seen = set()
+        while q:
+            x, y = q.popleft()
+            if x < 0 or y < 0 or x >= w or y >= h or (x, y) in seen or not green_like(x, y):
+                continue
+            seen.add((x, y))
+            r, g, b, a = px[x, y]
+            px[x, y] = (r, g, b, 0)
+            q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+    else:
+        # Global chroma key: delete green anywhere, not just border-connected areas.
+        for y in range(h):
+            for x in range(w):
+                r, g, b, a = px[x, y]
+                if a > 0 and green_like(x, y):
+                    px[x, y] = (r, g, b, 0)
 
-    # Cleanup spill left on the object edge. Strong green/yellow-green residue is
-    # usually not valid object material for generated wooden/metal game assets;
-    # remove it. We keep this mode explicit to chroma_green only, not generic BG removal.
+    # Remove green spill/matte remnants around newly transparent pixels.
     for y in range(h):
         for x in range(w):
             r, g, b, a = px[x, y]
@@ -252,28 +279,19 @@ def remove_chroma_green_bytes(raw: bytes, tolerance: int = 18) -> bytes:
                 continue
             green_dom = g - max(r, b)
             green_ratio = g / max(1, (r + b) / 2)
-            if g > 55 and green_dom > 18 and green_ratio > 1.22 and b < 120:
-                px[x, y] = (r, g, b, 0)
-            elif g > 45 and green_dom > 8 and green_ratio > 1.10 and b < 100:
+            if g > 45 and green_dom > 8 and green_ratio > 1.10 and b < 120:
                 base = int((r + b) / 2)
                 nr = max(r, base + 8)
                 ng = min(base, g)
                 nb = min(b, base)
                 px[x, y] = (nr, ng, nb, int(a * 0.55))
 
-    # Remove tiny greenish edge speckles touching mostly-transparent neighborhood.
     for y in range(1, h - 1):
         for x in range(1, w - 1):
             r, g, b, a = px[x, y]
             if a <= 0:
                 continue
-            transparent_neighbors = 0
-            for yy in (y - 1, y, y + 1):
-                for xx in (x - 1, x, x + 1):
-                    if xx == x and yy == y:
-                        continue
-                    if px[xx, yy][3] == 0:
-                        transparent_neighbors += 1
+            transparent_neighbors = sum(1 for yy in (y - 1, y, y + 1) for xx in (x - 1, x, x + 1) if not (xx == x and yy == y) and px[xx, yy][3] == 0)
             if transparent_neighbors >= 5 and g > max(r, b) + 6 and g > 35:
                 px[x, y] = (r, g, b, 0)
 
@@ -401,18 +419,19 @@ def edge_aware_sheet_remove(raw: bytes, tolerance: int = 24, edge_threshold: int
     img.save(out, format="PNG")
     return out.getvalue()
 
-def remove_background_bytes(raw: bytes, tolerance: int = 36, mode: str = "ai") -> tuple[bytes, str]:
+def remove_background_bytes(raw: bytes, tolerance: int = 36, mode: str = "ai", chroma_mode: str = "global") -> tuple[bytes, str, dict | None]:
     # AI segmentation is good for one subject, but it often drops most sprites in an asset sheet.
     # Sheet mode uses edge-aware border flood so all separated objects are preserved.
     if mode in {"chroma_green", "green", "key"}:
-        return remove_chroma_green_bytes(raw, tolerance=tolerance or 18), "chroma-green-key"
+        out = remove_chroma_green_bytes(raw, tolerance=tolerance or 18, mode=chroma_mode or "global")
+        return out, f"chroma-green-key-{chroma_mode or 'global'}", chroma_green_report(out, tolerance=tolerance or 18)
     if mode in {"sheet", "flood", "border"}:
-        return edge_aware_sheet_remove(raw, tolerance=tolerance or 24), "preserve-mask-sheet"
+        return edge_aware_sheet_remove(raw, tolerance=tolerance or 24), "preserve-mask-sheet", None
     try:
         from rembg import remove
-        return remove(raw), "rembg"
+        return remove(raw), "rembg", None
     except Exception as e:
-        return fallback_corner_remove(raw, tolerance=tolerance), f"fallback:{type(e).__name__}"
+        return fallback_corner_remove(raw, tolerance=tolerance), f"fallback:{type(e).__name__}", None
 
 
 def data_url_to_png_data_url(data_url: str) -> str:
@@ -557,8 +576,37 @@ def collect_codex_replacement_b64(image_data_url: str, mask_data_url: str, promp
     return collect_codex_edit_b64(image_data_url, mask_data_url, build_replace_object_prompt(prompt, negative), "", prompt_is_final=True)
 
 
-def build_reference_sprite_prompt(prompt: str, negative: str = "") -> str:
+def build_reference_sprite_prompt(prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> str:
     neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
+    direction_contract = ""
+    if direction_mode == "8dir":
+        direction_contract = """
+Directional sprite-sheet contract:
+- 8-direction output. Direction row order must be exactly: N, NE, E, SE, S, SW, W, NW.
+- The supplied reference image direction is reference_direction={reference_direction}. Preserve that view most closely, then rotate the same character design into the other seven directions.
+- Side rows must read as true side profiles. Back rows must remove front-only face/chest details.
+- Keep identical scale, pivot, costume, outline thickness, palette, and lighting across all rows.""".format(reference_direction=reference_direction)
+    elif direction_mode == "4dir":
+        direction_contract = """
+Directional sprite-sheet contract:
+- 4-direction output. Direction row order must be exactly: S, W, E, N.
+- The supplied reference image direction is reference_direction={reference_direction}. Preserve that view most closely, then rotate the same character design into the other directions.
+- Side rows must read as true side profiles. Back row must remove front-only face/chest details.""".format(reference_direction=reference_direction)
+    frame_contract = ""
+    if animation_mode == "walk":
+        frame_contract = f"""
+Walk-cycle contract:
+- Column order must be exactly: idle -> stepA -> idle -> stepB for 4-frame walk cycles.
+- The column order must be preserved in every direction row.
+- column order must be checked before accepting the sheet.
+- Use {walk_frames} walk frames per direction.
+- stepA and stepB must show opposite arm/leg phases, not just body bobbing.
+- Feet positions must visibly alternate in every direction."""
+    elif animation_mode == "idle":
+        frame_contract = """
+Idle contract:
+- One readable idle frame per direction unless the user explicitly asks for breathing frames.
+- Do not invent extra unrelated poses."""
     return f"""Create a new pixel-art game asset sprite sheet from the supplied reference image.
 
 Reference contract:
@@ -567,12 +615,14 @@ Reference contract:
 - Use evenly spaced sprite-sheet cells when animation frames are requested.
 - Use a flat exact RGB(0,255,0) / #00FF00 chroma-key background edge-to-edge so the app can remove it after generation.
 - No text, no numbers, no watermark, no mockup frame.
+{direction_contract}
+{frame_contract}
 
 User request: {prompt.strip()}
 {neg}""".strip()
 
 
-def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, negative: str = "") -> tuple[str, str, str]:
+def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> tuple[str, str, str]:
     """Generate a new sprite/asset sheet while using the selected image as style/identity reference."""
     import httpx
     from agent.auxiliary_client import _codex_cloudflare_headers
@@ -602,7 +652,7 @@ def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, neg
             "type": "message",
             "role": "user",
             "content": [
-                {"type": "input_text", "text": build_reference_sprite_prompt(prompt, negative)},
+                {"type": "input_text", "text": build_reference_sprite_prompt(prompt, negative, direction_mode=direction_mode, reference_direction=reference_direction, animation_mode=animation_mode, walk_frames=walk_frames)},
                 {"type": "input_text", "text": "Reference image to preserve identity/style:"},
                 {"type": "input_image", "image_url": data_url_to_png_data_url(reference_data_url)},
             ],
@@ -842,7 +892,8 @@ class Handler(SimpleHTTPRequestHandler):
                 raw, _ext = data_url_to_bytes(data.get("image", ""))
                 tolerance = int(data.get("tolerance", 36))
                 mode = str(data.get("mode", "ai"))
-                out, method = remove_background_bytes(raw, tolerance=tolerance, mode=mode)
+                chroma_mode = str(data.get("chroma_mode", "global"))
+                out, method, qa = remove_background_bytes(raw, tolerance=tolerance, mode=mode, chroma_mode=chroma_mode)
                 name = f"cutout_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
                 dst = PROCESSED / name
                 dst.write_bytes(out)
@@ -851,6 +902,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "url": f"/assets/processed/{name}",
                     "path": str(dst),
                     "method": method,
+                    "qa": qa,
+                    "chroma_mode": chroma_mode,
                 })
             if path == "/api/inpaint":
                 prompt = str(data.get("prompt", "")).strip()
@@ -924,6 +977,10 @@ class Handler(SimpleHTTPRequestHandler):
                     reference_image,
                     prompt,
                     data.get("negative", ""),
+                    direction_mode=str(data.get("direction_mode", "single")),
+                    reference_direction=str(data.get("reference_direction", "S")),
+                    animation_mode=str(data.get("animation_mode", "idle")),
+                    walk_frames=int(data.get("walk_frames", 4) or 4),
                 )
                 raw = base64.b64decode(image_b64)
                 name = f"reference_generated_{int(time.time())}.png"

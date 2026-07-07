@@ -27,7 +27,7 @@ def test_phase15_pixel_workflow_logic_exists():
         "async function generateAiAsset",
         "async function runPixelWorkflow",
         "await generateAiAsset()",
-        "await removeBgSelected('sheet')",
+        "await removeBgSelected('chroma_green'",
         "await buildAnimationPreview()",
         "pixelWorkflowCleanBg",
         "pixelWorkflowPreview",

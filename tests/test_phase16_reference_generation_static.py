@@ -9,7 +9,7 @@ SERVER = (ROOT / "server.py").read_text(encoding="utf-8")
 def test_phase16_reference_ui_exists():
     required = [
         "pixelUseReference",
-        "선택 이미지/레이어를 기준 이미지로 사용",
+        "선택한 이미지 레이어를 기준 이미지로 사용",
         "기준 이미지 레이어를 보고",
     ]
     for token in required:
