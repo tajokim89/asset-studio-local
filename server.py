@@ -67,6 +67,54 @@ PRESET_SUFFIX = {
     "thumbnail": "Thumbnail element, high contrast, clean cutout-friendly subject. No watermark.",
 }
 
+CANONICAL_8DIR_ORDER = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+MIRRORED_8DIR_SOURCE_DIRECTIONS = ["S", "N", "W", "SW", "NW"]
+SPRITE_MIRROR_MAP = {"E": "W", "SE": "SW", "NE": "NW"}
+
+DIRECTION_PROMPT_CONTRACTS = {
+    "S": "front-facing, looking straight toward camera/front; do not turn left or right",
+    "N": "back-facing, looking away from camera; show back of head/body only, no face",
+    "W": "true side profile facing screen-left only; absolutely not screen-right",
+    "SW": "front-left three-quarter view facing screen-left while retaining front details; absolutely not screen-right",
+    "NW": "back-left three-quarter view facing screen-left/back-left; mostly back/side, no front face; absolutely not screen-right",
+    "E": "derived only by app-side horizontal flip from W; never generated directly",
+    "SE": "derived only by app-side horizontal flip from SW; never generated directly",
+    "NE": "derived only by app-side horizontal flip from NW; never generated directly",
+}
+
+SPRITE_ACTION_MATRIX = {
+    "idle": {
+        "frames": 1,
+        "columns": ["idle"],
+        "terminal": False,
+        "contract": "single stable stance frame; no breathing smear, no pose drift",
+    },
+    "walk": {
+        "frames": 4,
+        "columns": ["idle", "stepA", "idle", "stepB"],
+        "terminal": False,
+        "contract": "opposite arm/leg phases; visible alternating feet; same pivot in every frame",
+    },
+    "attack": {
+        "frames": 4,
+        "columns": ["ready", "windup", "strike", "recover"],
+        "terminal": False,
+        "contract": "one clean readable attack arc; weapon/equipment stays attached and same size",
+    },
+    "hit": {
+        "frames": 2,
+        "columns": ["normal", "recoil"],
+        "terminal": False,
+        "contract": "small recoil only; do not redraw as a different character or turn direction",
+    },
+    "death": {
+        "frames": 6,
+        "columns": ["alive", "collapse1", "collapse2", "down", "settle", "dead"],
+        "terminal": True,
+        "contract": "direction-preserving collapse ending in a stable corpse/downed frame",
+    },
+}
+
 
 def load_provider():
     spec = importlib.util.spec_from_file_location("asset_studio_openai_codex", PROVIDER_PATH)
@@ -879,6 +927,55 @@ def collect_codex_replacement_b64(image_data_url: str, mask_data_url: str, promp
     return collect_codex_edit_b64(image_data_url, mask_data_url, build_replace_object_prompt(prompt, negative), "", prompt_is_final=True)
 
 
+def sprite_action_matrix_for_ui() -> dict:
+    return {
+        "directions": list(CANONICAL_8DIR_ORDER),
+        "source_directions": list(MIRRORED_8DIR_SOURCE_DIRECTIONS),
+        "mirror_map": dict(SPRITE_MIRROR_MAP),
+        "actions": {name: dict(spec) for name, spec in SPRITE_ACTION_MATRIX.items()},
+    }
+
+
+def build_static_direction_reference_prompt(prompt: str, direction: str, negative: str = "") -> str:
+    direction = (direction or "S").upper()
+    if direction not in MIRRORED_8DIR_SOURCE_DIRECTIONS:
+        raise ValueError(f"source direction must be one of {', '.join(MIRRORED_8DIR_SOURCE_DIRECTIONS)}; right-facing directions are flip-derived")
+    neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
+    return f"""Static direction reference generation contract.
+Generate SOURCE DIRECTION {direction} only: {DIRECTION_PROMPT_CONTRACTS[direction]}.
+Do not generate E, SE, or NE source sprites; right-facing views are created by app-side horizontal flip.
+Preserve one stable character identity, outfit, equipment, palette, outline thickness, pixel scale, pivot, and feet baseline.
+Use a flat exact RGB(0,255,0) / #00FF00 chroma-key background edge-to-edge.
+No text, no numbers, no watermark, no mockup frame.
+User request: {prompt.strip()}
+{neg}""".strip()
+
+
+def build_sprite_action_prompt(prompt: str, action: str = "idle", direction: str = "S", source_reference_note: str = "") -> str:
+    action = (action or "idle").lower()
+    direction = (direction or "S").upper()
+    if action not in SPRITE_ACTION_MATRIX:
+        raise ValueError(f"action must be one of {', '.join(SPRITE_ACTION_MATRIX)}")
+    if direction not in CANONICAL_8DIR_ORDER:
+        raise ValueError(f"direction must be one of {', '.join(CANONICAL_8DIR_ORDER)}")
+    spec = SPRITE_ACTION_MATRIX[action]
+    direction_contract = DIRECTION_PROMPT_CONTRACTS.get(direction, "")
+    if direction in SPRITE_MIRROR_MAP:
+        direction_contract = f"{direction_contract}; normally derive this from {SPRITE_MIRROR_MAP[direction]} by app-side flip unless explicitly animating the mirrored sheet"
+    note = f"\nSource reference note: {source_reference_note.strip()}" if source_reference_note and source_reference_note.strip() else ""
+    return f"""Sprite Action Matrix production prompt.
+ACTION {action}
+DIRECTION {direction}: {direction_contract}
+Frame count: {spec['frames']}
+Column order must be exactly: {', '.join(spec['columns'])}
+Action contract: {spec['contract']}
+Do not change identity, equipment, palette, proportions, pivot, or feet baseline between frames.
+Keep all frames in evenly spaced cells on one horizontal row for this direction.
+Use a flat exact RGB(0,255,0) / #00FF00 chroma-key background edge-to-edge.
+No text, no numbers, no watermark, no mockup frame.{note}
+User request: {prompt.strip()}""".strip()
+
+
 def build_reference_sprite_prompt(prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> str:
     neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
     direction_contract = ""
@@ -906,20 +1003,17 @@ Single-target internal extraction sheet contract:
 - If target_direction is S, the corresponding candidate must face camera/front.
 - Keep the candidates separated by green background gaps so postprocessing can isolate the selected slot.""".format(reference_direction=reference_direction, target_direction=target_direction)
     frame_contract = ""
-    if animation_mode == "walk":
+    action_key = (animation_mode or "idle").lower()
+    if action_key in SPRITE_ACTION_MATRIX:
+        spec = SPRITE_ACTION_MATRIX[action_key]
         frame_contract = f"""
-Walk-cycle contract:
-- Column order must be exactly: idle -> stepA -> idle -> stepB for 4-frame walk cycles.
-- The column order must be preserved in every direction row.
-- column order must be checked before accepting the sheet.
-- Use {walk_frames} walk frames per direction.
-- stepA and stepB must show opposite arm/leg phases, not just body bobbing.
-- Feet positions must visibly alternate in every direction."""
-    elif animation_mode == "idle":
-        frame_contract = """
-Idle contract:
-- One readable idle frame per direction unless the user explicitly asks for breathing frames.
-- Do not invent extra unrelated poses."""
+{action_key.capitalize()} action contract:
+- Frame count: {spec['frames']}.
+- column order must be exactly: {', '.join(spec['columns'])}.
+- {spec['contract']}.
+- Do not change identity, equipment, palette, proportions, pivot, or feet baseline between frames."""
+        if action_key == "walk":
+            frame_contract += f"\n- Use {walk_frames} walk frames per direction."
     return f"""Create a new pixel-art game asset sprite sheet from the supplied reference image.
 
 Reference contract:
@@ -1181,14 +1275,7 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
     This intentionally never requests E/SE/NE from the model. Those views are exact
     flips of W/SW/NW, avoiding mixed right-facing source mistakes.
     """
-    source_dirs = ["S", "N", "W", "SW", "NW"]
-    source_prompt = {
-        "S": "front-facing, looking straight toward camera/front; do not turn left or right",
-        "N": "back-facing, looking away from camera; show back of head/body only, no face",
-        "W": "true side profile facing screen-left only; absolutely not screen-right",
-        "SW": "front-left three-quarter view facing screen-left while retaining front details; absolutely not screen-right",
-        "NW": "back-left three-quarter view facing screen-left/back-left; mostly back/side, no front face; absolutely not screen-right",
-    }
+    source_dirs = list(MIRRORED_8DIR_SOURCE_DIRECTIONS)
     source_pngs = {}
     source_qa = {}
     model = ""
@@ -1199,9 +1286,12 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
     def make_candidate(direction: str, attempt: int):
         nonlocal model, quality
         attempt_hint = f"Attempt {attempt}/{max_source_attempts}: be stricter than prior attempts. " if attempt > 1 else ""
+        source_request = build_static_direction_reference_prompt(prompt, direction, negative=negative)
+        if attempt_hint:
+            source_request += f"\n\n{attempt_hint}"
         image_b64, model, quality = collect_codex_reference_sprite_b64(
             reference_data_url,
-            f"{prompt}\n\n{attempt_hint}Generate SOURCE DIRECTION {direction} only: {source_prompt[direction]}. Do not generate E, SE, or NE source sprites; right-facing views are created by app-side horizontal flip.",
+            source_request,
             negative,
             direction_mode="single",
             reference_direction=reference_direction,
