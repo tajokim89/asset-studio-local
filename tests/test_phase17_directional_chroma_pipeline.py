@@ -45,6 +45,16 @@ def test_phase17_directional_prompt_and_payload_are_explicit():
         assert token in JS
 
 
+def test_phase17_pixel_generate_button_calls_generation_without_legacy_hidden_button():
+    handler = JS.split("if ($('generatePixelAsset'))", 1)[1].split("if ($('runPixelWorkflow'))", 1)[0]
+    assert "generateAiAsset().catch" in handler
+    assert "$('generateBtn')?.click()" not in handler
+    assert "if ($('generateBtn')) $('generateBtn').onclick" in JS
+    assert "let prompt = ($('aiPrompt')?.value || '').trim();" in JS
+    assert "if (!prompt) prompt = buildPixelAssetPrompt().trim();" in JS
+    assert "const generateBtn = $('generateBtn') || $('generatePixelAsset');" in JS
+
+
 def test_phase17_server_reference_prompt_includes_direction_contract():
     for token in [
         "direction_mode",

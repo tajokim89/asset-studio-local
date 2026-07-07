@@ -39,4 +39,4 @@ def test_phase15_pixel_workflow_logic_exists():
 def test_phase15_buttons_are_wired():
     assert "$('runPixelWorkflow').onclick" in JS
     assert "applyPixelWorkflowGridDefaults()" in JS
-    assert "$('generateBtn').onclick = () => generateAiAsset()" in JS
+    assert "if ($('generateBtn')) $('generateBtn').onclick = () => generateAiAsset()" in JS
