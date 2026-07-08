@@ -8,7 +8,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 def test_phase12_sprite_extract_ui_exists():
     for token in [
         "phase15-pixel-workflow",
-        "스프라이트 시트 추출",
+        "스프라이트 도구",
         'id="spriteMinArea"',
         'id="detectSprites"',
         'id="clearSprites"',
@@ -24,7 +24,8 @@ def test_phase12_connected_component_detector_exists():
         "let spriteSlices = []",
         "let selectedSpriteSliceId = null",
         "function extractImageDataComponents",
-        "alphaAt(x, y) > 12",
+        "alphaAt(x, y) <= 12",
+        "backgroundColors",
         "new Uint8Array(width * height)",
         "area >= minArea",
         "return slices.sort",
@@ -51,7 +52,8 @@ def test_phase12_extract_layer_and_png_hooks_exist():
         "async function spriteSliceDataUrl",
         "async function extractSpriteSliceToLayer()",
         "async function exportSpriteSlicePng()",
-        "addPatchImageUrl(url, { x: slice.x, y: slice.y",
+        "spriteSliceCanvasBox(slice)",
+        "addPatchImageUrl(url, { x: box?.x ?? slice.x, y: box?.y ?? slice.y",
         "downloadDataUrl(url, `sprite-slice-",
         "$('detectSprites').onclick",
         "$('extractSpriteLayer').onclick",
@@ -85,7 +87,7 @@ def test_phase12b_batch_zip_export_logic_exists():
 def test_phase12c_grid_slice_ui_exists():
     for token in [
         "phase15-pixel-workflow",
-        "그리드 슬라이스",
+        "고정 그리드 자르기",
         'id="gridCols"',
         'id="gridRows"',
         'id="gridCellW"',
@@ -101,6 +103,7 @@ def test_phase12c_grid_slice_ui_exists():
 def test_phase12c_grid_slice_logic_exists():
     for token in [
         "function buildGridSpriteSlices()",
+        "function spriteSliceCanvasBox(slice)",
         "async function detectGridSpriteSlices()",
         "async function exportGridSpriteSlicesZip()",
         "grid-sprite-001.png",
@@ -110,3 +113,29 @@ def test_phase12c_grid_slice_logic_exists():
         "$('exportGridSpritesZip').onclick",
     ]:
         assert token in JS
+
+
+def test_phase12d_sprite_auto_detect_uses_layer_relative_coords_and_grid_fallback():
+    detect_fn = JS.split("async function detectSpriteSlices()", 1)[1].split("function updateSpriteGuideStyles()", 1)[0]
+    for token in [
+        "const bounds = imageCanvasBounds(target)",
+        "const dataUrl = await imageObjectDataUrl(target)",
+        "el.width = bounds.w; el.height = bounds.h",
+        "x=0,y=0 is always the image layer's own top-left",
+        "프레임 수 불일치 감지",
+        "큰 배경 덩어리 감지",
+        "fallbackToGrid",
+        "현재 그리드",
+    ]:
+        assert token in detect_fn
+
+
+def test_phase12d_guides_render_from_layer_origin_but_store_relative_coords():
+    render_fn = JS.split("function renderSpriteGuides()", 1)[1].split("function selectedSpriteSlice()", 1)[0]
+    sync_fn = JS.split("function syncSpriteSliceFromGuide(guide)", 1)[1].split("function renderSpriteGuides()", 1)[0]
+    crop_fn = JS.split("async function spriteSliceDataUrl", 1)[1].split("async function extractSpriteSliceToLayer", 1)[0]
+    assert "left: origin.left + slice.x" in render_fn
+    assert "top: origin.top + slice.y" in render_fn
+    assert "slice.x = Math.round((guide.left || 0) - origin.left)" in sync_fn
+    assert "slice.y = Math.round((guide.top || 0) - origin.top)" in sync_fn
+    assert "ctx.drawImage(img, box.x, box.y" in crop_fn

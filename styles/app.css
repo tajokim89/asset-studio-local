@@ -150,7 +150,35 @@ label {
 .hint { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 7px 0; }
 .small { color: #c9d2e3; font-size: 12px; line-height: 1.45; }
 .panel-sep { border: 0; border-top: 1px solid var(--line-soft); margin: 12px 0; }
+.tool-section {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: rgba(255,255,255,.035);
+}
+.section-title {
+  font-size: 12px;
+  font-weight: 820;
+  letter-spacing: .02em;
+  color: #eef2ff;
+}
 details summary { cursor: pointer; color: #d7def0; font-size: 12px; font-weight: 760; }
+.advanced-box {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: rgba(255,255,255,.03);
+}
+.advanced-box button { width: 100%; }
+.readonly-metric:disabled {
+  cursor: default;
+  opacity: .78;
+  color: #d7def0;
+  border-style: dashed;
+  background: rgba(148, 163, 184, .08);
+}
 .inpaint-preview {
   margin: 10px 0;
   padding: 10px;
@@ -237,6 +265,11 @@ details summary { cursor: pointer; color: #d7def0; font-size: 12px; font-weight:
 .animation-preview-stage span { font-size: 11px; color: #d7def0; }
 .animation-frame-strip { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .animation-frame-strip img { width: 42px; height: 42px; object-fit: contain; image-rendering: pixelated; border: 1px solid var(--line-soft); border-radius: 8px; background: #10131a; }
+.workflow-preview-box { margin-top: 10px; padding: 10px; border: 1px solid rgba(96, 165, 250, .35); border-radius: 14px; background: rgba(15, 23, 42, .72); }
+.workflow-preview-box.active { border-color: rgba(34, 197, 94, .65); box-shadow: 0 0 0 1px rgba(34, 197, 94, .18), 0 14px 28px rgba(0,0,0,.22); }
+.workflow-preview-title { font-size: 12px; font-weight: 780; color: #bfdbfe; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+.workflow-preview-box .animation-preview-stage { min-height: 132px; }
+.workflow-preview-box .animation-preview-stage img { max-width: 120px; max-height: 120px; }
 
 .pixel-result-slots {
   display: grid;

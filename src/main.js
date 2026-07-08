@@ -36,6 +36,7 @@ let regionClipboard = null;
 let regionPasteCount = 0;
 let spriteSlices = [];
 let selectedSpriteSliceId = null;
+let spriteSourceLayerId = null;
 let animationPreviewTimer = null;
 let animationPreviewFrames = [];
 const $ = (id) => document.getElementById(id);
@@ -102,23 +103,31 @@ function directionLabel(code) {
   return ({ S:'S/front, face camera', SW:'SW/front-left, body turned toward screen-left', W:'W/left true side profile, face screen-left', NW:'NW/back-left, back turned toward screen-left', N:'N/back', NE:'NE/back-right, back turned toward screen-right', E:'E/right true side profile, face screen-right', SE:'SE/front-right, body turned toward screen-right' })[code] || code;
 }
 
+function requestedPixelFrameCount() {
+  return Math.max(1, Math.min(8, +($('pixelWalkFrames')?.value || 4)));
+}
+
 function buildDirectionalSpriteSheetContract(anim = $('pixelAnimationPreset')?.value || 'idle') {
   const mode = $('pixelDirectionMode')?.value || 'single';
   const dirs = directionLabelsForMode(mode);
   const refDir = $('pixelReferenceDirection')?.value || 'S';
   const targetDir = $('pixelTargetDirection')?.value || 'S';
-  const walkFrames = Math.max(3, Math.min(8, +($('pixelWalkFrames')?.value || 4)));
-  const isWalk = anim.startsWith('walk');
+  const frameCount = anim === 'ui_static' ? 1 : requestedPixelFrameCount();
+  const columns = frameCount;
   const directionLine = mode === '8dir'
     ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
     : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single target via one-direction generation. Generate exactly one target direction: ${directionLabel(targetDir)}. Do not generate a direction-candidate sheet, contact sheet, multi-direction atlas, or alternate direction candidates. Do not output all 8 directions; the app requests each direction separately. Screen-space directions: SW/W turn toward screen-left, SE/E turn toward screen-right.`);
-  const frameLine = isWalk
-    ? `Walk columns: idle -> stepA -> idle -> stepB. Use ${walkFrames} frames per requested direction; stepA and stepB must be opposite arm/leg phases, not body bobbing.`
-    : (mode === 'single' ? 'Idle contract: exactly one clean idle sprite for the target direction, not a row/stack of variants.' : 'Idle columns: one stable idle frame per direction; no random extra poses.');
+  const actionLabel = ({ idle:'idle/breathing', walk4:'walk cycle', walk6:'walk cycle', attack:'attack', jump:'jump', cast:'cast', hurt:'hurt reaction', death:'death/collapse', ui_static:'static asset' })[anim] || anim;
+  const frameLine = anim === 'ui_static'
+    ? 'Static contract: exactly one clean isolated asset frame.'
+    : `${actionLabel} columns: exactly ${frameCount} frames per requested direction, evenly spaced in one horizontal row; keep identity, scale, pivot, baseline, and palette consistent across every frame.`;
   const gridLine = mode === 'single'
-    ? `Sheet grid: 1 row x 1 column for idle, or 1 row x ${isWalk ? walkFrames : 1} columns for walk. The visible character must face ${directionLabel(targetDir)}.`
-    : `Sheet grid: ${dirs.length} rows x ${isWalk ? walkFrames : 1} columns, evenly spaced cells, same scale and pivot in every cell.`;
-  return `${directionLine}\nReference image direction: ${directionLabel(refDir)}. Use it only as the source view/style identity. Target direction is ${directionLabel(targetDir)}.\n${frameLine}\n${gridLine}`;
+    ? `Sheet grid: 1 row x ${columns} columns. The visible character must face ${directionLabel(targetDir)} in every cell.`
+    : `Sheet grid: ${dirs.length} rows x ${columns} columns, evenly spaced cells, same scale and pivot in every cell.`;
+  const cellSafetyLine = anim === 'ui_static'
+    ? 'Cell safety: keep the single asset fully inside the canvas with clear empty margin on all sides.'
+    : `Cell safety: treat each animation frame as a separate boxed cell. Put a wide empty transparent/chroma gutter between cells. Every body part, weapon, motion smear, slash arc, VFX, shadow, and silhouette must stay fully inside its own cell with at least 15% empty side margin. Nothing may touch or cross a cell boundary; if the motion would cross, shrink the pose/arc rather than spilling into the next frame.`;
+  return `${directionLine}\nReference image direction: ${directionLabel(refDir)}. Use it only as the source view/style identity. Target direction is ${directionLabel(targetDir)}.\n${frameLine}\n${gridLine}\n${cellSafetyLine}`;
 }
 
 function buildPixelAssetPrompt() {
@@ -130,14 +139,18 @@ function buildPixelAssetPrompt() {
   const palette = ($('pixelPalette')?.value || 'limited dark game palette').trim();
   const subject = ($('pixelSubject')?.value || 'game character').trim();
   const typeLine = type === 'ui_panel' ? 'UI game asset, clean panel parts, reusable game UI component' : `${type} game asset`;
+  const frameCount = anim === 'ui_static' ? 1 : requestedPixelFrameCount();
   const animLine = {
-    idle: singleMode ? 'single-frame idle sprite, no sheet stack, no extra variants' : 'idle animation frames, one readable idle pose per requested direction, evenly spaced sprite sheet cells',
-    walk4: 'walk cycle frames, 4-frame walking animation, real alternating legs and arms, evenly spaced sprite sheet cells',
-    walk6: 'walk cycle frames, 6-frame walking animation, real alternating legs and arms, evenly spaced sprite sheet cells',
-    attack: 'attack animation frames, anticipation, swing, follow-through, evenly spaced sprite sheet cells',
-    hurt: 'hurt animation frames, impact recoil and recovery, evenly spaced sprite sheet cells',
+    idle: `idle animation, ${frameCount}-frame subtle breathing loop, evenly spaced sprite sheet cells`,
+    walk4: `walk cycle, ${frameCount}-frame walking animation, idle -> stepA -> idle -> stepB, real alternating legs and arms, evenly spaced sprite sheet cells`,
+    walk6: `walk cycle, ${frameCount}-frame walking animation, idle -> stepA -> idle -> stepB, real alternating legs and arms, evenly spaced sprite sheet cells`,
+    attack: `attack animation, ${frameCount} frames, readable anticipation/impact/recovery, evenly spaced sprite sheet cells`,
+    jump: `jump animation, ${frameCount} frames, readable crouch/takeoff/air/landing beats, evenly spaced sprite sheet cells`,
+    cast: `cast animation, ${frameCount} frames, gather/release/recovery beats, evenly spaced sprite sheet cells`,
+    hurt: `hurt animation, ${frameCount} frames, impact recoil and recovery, evenly spaced sprite sheet cells`,
+    death: `death animation, ${frameCount} frames, collapse/down/still beats, evenly spaced sprite sheet cells`,
     ui_static: 'UI static single asset, no animation frames, crisp reusable interface element',
-  }[anim] || 'idle animation frames';
+  }[anim] || `${frameCount}-frame animation frames`;
   const styleLine = `${style.replaceAll('_', ' ')}, refined pixel art, not chunky NES, clean silhouette, game-ready production quality`;
   const directionalContract = buildDirectionalSpriteSheetContract(anim);
   return `${subject}\n${typeLine}\n${animLine}\n${directionalContract}\nDirection hint: ${direction}\nPalette: ${palette}\nStyle: ${styleLine}\nOutput: pixel-art sprite sheet when animated, transparent background, isolated asset, centered, consistent scale, clean alpha edges, no text, no watermark, no logo, no mockup frame.`;
@@ -155,26 +168,74 @@ function syncPixelAssetPrompt() {
 
 function pixelPresetFrameCount() {
   const anim = $('pixelAnimationPreset')?.value || 'idle';
-  if (anim.startsWith('walk')) return Math.max(3, Math.min(8, +($('pixelWalkFrames')?.value || 4)));
   if (anim === 'ui_static') return 1;
-  if (($('pixelDirectionMode')?.value || 'single') !== 'single' && anim === 'idle') return 1;
-  return 4;
+  return requestedPixelFrameCount();
 }
 
-function applyPixelWorkflowGridDefaults() {
+function imageCanvasBounds(img) {
+  if (!img) return null;
+  const rect = img.getBoundingRect ? img.getBoundingRect(true, true) : null;
+  if (rect && Number.isFinite(rect.width) && Number.isFinite(rect.height)) {
+    return {
+      left: Math.round(rect.left || 0),
+      top: Math.round(rect.top || 0),
+      w: Math.max(1, Math.round(rect.width)),
+      h: Math.max(1, Math.round(rect.height)),
+    };
+  }
+  return {
+    left: Math.round(img.left || 0),
+    top: Math.round(img.top || 0),
+    w: Math.max(1, Math.round(img.getScaledWidth ? img.getScaledWidth() : ((img.width || 0) * (img.scaleX || 1)))),
+    h: Math.max(1, Math.round(img.getScaledHeight ? img.getScaledHeight() : ((img.height || 0) * (img.scaleY || 1)))),
+  };
+}
+
+function imageDisplayedSize(img) {
+  const bounds = imageCanvasBounds(img);
+  return bounds ? { w: bounds.w, h: bounds.h } : null;
+}
+
+function updateGridCellSizeFromSelectedLayer({ renderExisting = false } = {}) {
+  const target = activeSpriteTarget();
+  const bounds = imageCanvasBounds(target);
+  if (!target || !bounds) return null;
+  const cols = Math.max(1, +($('gridCols')?.value || 1));
+  const rows = Math.max(1, +($('gridRows')?.value || 1));
+  const cellW = Math.max(1, Math.floor(bounds.w / cols));
+  const cellH = Math.max(1, Math.floor(bounds.h / rows));
+  if ($('gridCellW')) $('gridCellW').value = String(cellW);
+  if ($('gridCellH')) $('gridCellH').value = String(cellH);
+  if ($('gridGapX')) $('gridGapX').value = '0';
+  if ($('gridGapY')) $('gridGapY').value = '0';
+  if (renderExisting && spriteSlices.some(s => s.grid)) {
+    spriteSlices = buildGridSpriteSlices();
+    selectedSpriteSliceId = spriteSlices[0]?.id || null;
+    renderSpriteGuides();
+  }
+  spriteSummary(`그리드 셀 자동 계산 · 이미지 ${bounds.w}×${bounds.h} / ${cols}×${rows} → 셀 ${cellW}×${cellH}`);
+  return { cols, rows, cellW, cellH, bounds };
+}
+
+function applyPixelWorkflowGridDefaults(targetImg = null) {
   const frames = pixelPresetFrameCount();
-  const frameW = Math.max(1, +($('pixelFrameW')?.value || 32));
-  const frameH = Math.max(1, +($('pixelFrameH')?.value || 32));
   const dirs = directionLabelsForMode();
+  const rows = Math.max(1, dirs.length);
+  const img = targetImg || activeSpriteTarget() || selectedLayerObject();
+  const size = img?.type === 'image' ? imageDisplayedSize(img) : null;
+  const frameW = size ? Math.max(1, Math.round(size.w / frames)) : Math.max(1, +($('pixelFrameW')?.value || 32));
+  const frameH = size ? Math.max(1, Math.round(size.h / rows)) : Math.max(1, +($('pixelFrameH')?.value || 32));
   if ($('gridCols')) $('gridCols').value = String(frames);
-  if ($('gridRows')) $('gridRows').value = String(dirs.length);
+  if ($('gridRows')) $('gridRows').value = String(rows);
   if ($('gridCellW')) $('gridCellW').value = String(frameW);
   if ($('gridCellH')) $('gridCellH').value = String(frameH);
+  if ($('pixelFrameW')) $('pixelFrameW').value = String(frameW);
+  if ($('pixelFrameH')) $('pixelFrameH').value = String(frameH);
   if ($('gridGapX')) $('gridGapX').value = '0';
   if ($('gridGapY')) $('gridGapY').value = '0';
   if ($('animFrameCount')) $('animFrameCount').value = String(frames);
   if ($('animFps')) $('animFps').value = $('pixelAnimationPreset')?.value?.startsWith('walk') ? '10' : '8';
-  return { frames, frameW, frameH };
+  return { frames, rows, frameW, frameH, autoSized: !!size };
 }
 
 function recordPixelAssetResult(url, label = 'generated') {
@@ -815,26 +876,45 @@ function spriteSummary(msg) {
   if ($('spriteExtractSummary')) $('spriteExtractSummary').textContent = msg;
 }
 
-function clearSpriteGuides() {
+function removeSpriteGuideObjects() {
   canvas.getObjects().filter(o => o.maskRole === 'sprite-guide').forEach(o => canvas.remove(o));
+  canvas.renderAll();
+}
+
+function clearSpriteGuides() {
+  removeSpriteGuideObjects();
   spriteSlices = [];
   selectedSpriteSliceId = null;
+  spriteSourceLayerId = null;
   spriteSummary('탐지 박스 없음');
   canvas.renderAll();
 }
 
 function activeSpriteTarget() {
   const target = selectedLayerObject();
-  if (!target || target.type !== 'image' || target.isDrawingLayer || target.excludeFromLayers) return null;
-  return target;
+  if (target && target.type === 'image' && !target.isDrawingLayer && !target.excludeFromLayers) return target;
+  const source = objectByLayerId(spriteSourceLayerId);
+  if (source && source.type === 'image' && !source.isDrawingLayer && !source.excludeFromLayers) return source;
+  return null;
 }
 
-function extractImageDataComponents(imgData, minArea = 48) {
+function extractImageDataComponents(imgData, minArea = 48, options = {}) {
   const { width, height, data } = imgData;
   const seen = new Uint8Array(width * height);
   const slices = [];
-  const alphaAt = (x, y) => data[(y * width + x) * 4 + 3];
-  const isSolid = (x, y) => alphaAt(x, y) > 12;
+  const bgColors = options.backgroundColors || [];
+  const bgTolerance = Math.max(0, options.backgroundTolerance ?? 34);
+  const pxOffset = (x, y) => (y * width + x) * 4;
+  const alphaAt = (x, y) => data[pxOffset(x, y) + 3];
+  const colorNear = (x, y, c) => {
+    const i = pxOffset(x, y);
+    return Math.abs(data[i] - c.r) <= bgTolerance
+      && Math.abs(data[i + 1] - c.g) <= bgTolerance
+      && Math.abs(data[i + 2] - c.b) <= bgTolerance
+      && Math.abs(data[i + 3] - c.a) <= Math.max(bgTolerance, 48);
+  };
+  const isBackground = (x, y) => alphaAt(x, y) <= 12 || bgColors.some(c => c.a > 12 && colorNear(x, y, c));
+  const isSolid = (x, y) => !isBackground(x, y);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const start = y * width + x;
@@ -868,16 +948,65 @@ function extractImageDataComponents(imgData, minArea = 48) {
 async function detectSpriteSlices() {
   const target = activeSpriteTarget();
   if (!target) { spriteSummary('이미지 레이어를 선택해야 합니다.'); setStatus('스프라이트 추출: 이미지 레이어 선택 필요'); return []; }
+  spriteSourceLayerId = layerKey(target);
   clearSpriteGuides();
-  const dataUrl = await canvasWithOnlyObjectDataUrl(target);
+  spriteSourceLayerId = layerKey(target);
+  const bounds = imageCanvasBounds(target);
+  if (!bounds) { spriteSummary('이미지 레이어 크기 확인 실패'); setStatus('스프라이트 추출: 이미지 레이어 크기 확인 실패'); return []; }
+
+  // Root cause: full-canvas detection let the selected image's canvas position and faint
+  // residual backgrounds become part of the slice model. Detect in selected-layer-local
+  // pixels only: x=0,y=0 is always the image layer's own top-left.
+  const dataUrl = await imageObjectDataUrl(target);
   const img = await loadHtmlImage(dataUrl);
   const el = document.createElement('canvas');
-  el.width = canvas.width; el.height = canvas.height;
+  el.width = bounds.w; el.height = bounds.h;
   const ctx = el.getContext('2d', { willReadFrequently: true });
   ctx.clearRect(0, 0, el.width, el.height);
-  ctx.drawImage(img, 0, 0);
+  ctx.drawImage(img, 0, 0, el.width, el.height);
   const minArea = Math.max(1, +($('spriteMinArea')?.value || 48));
-  spriteSlices = extractImageDataComponents(ctx.getImageData(0, 0, el.width, el.height), minArea);
+  const imageData = ctx.getImageData(0, 0, el.width, el.height);
+  const sampleColor = (x, y) => {
+    const sx = clamp(Math.round(x), 0, el.width - 1);
+    const sy = clamp(Math.round(y), 0, el.height - 1);
+    const i = (sy * el.width + sx) * 4;
+    const d = imageData.data;
+    return { r: d[i], g: d[i + 1], b: d[i + 2], a: d[i + 3] };
+  };
+  const inset = Math.min(2, Math.floor(Math.min(el.width, el.height) / 8));
+  const bgColors = [
+    sampleColor(inset, inset),
+    sampleColor(el.width - 1 - inset, inset),
+    sampleColor(inset, el.height - 1 - inset),
+    sampleColor(el.width - 1 - inset, el.height - 1 - inset),
+  ];
+  spriteSlices = extractImageDataComponents(imageData, minArea, { backgroundColors: bgColors, backgroundTolerance: 42 })
+    .map(slice => ({ ...slice, x: Math.round(slice.x), y: Math.round(slice.y) }))
+    .filter(slice => slice.x + slice.width > 0 && slice.y + slice.height > 0 && slice.x < bounds.w && slice.y < bounds.h);
+
+  const cols = Math.max(1, +($('gridCols')?.value || 1));
+  const rows = Math.max(1, +($('gridRows')?.value || 1));
+  const gridExpected = cols * rows;
+  const fallbackToGrid = (reason) => {
+    updateGridCellSizeFromSelectedLayer();
+    spriteSlices = buildGridSpriteSlices();
+    selectedSpriteSliceId = spriteSlices[0]?.id || null;
+    renderSpriteGuides();
+    const msg = `${reason} → 현재 그리드 ${cols}×${rows} 기준 ${spriteSlices.length}개 프레임으로 분할`;
+    spriteSummary(msg); setStatus(`스프라이트 시트 추출: ${msg}`);
+    return spriteSlices;
+  };
+  const giant = spriteSlices.length === 1
+    && spriteSlices[0].width >= bounds.w * 0.8
+    && spriteSlices[0].height >= bounds.h * 0.8
+    && gridExpected > 1;
+  if (giant) return fallbackToGrid('큰 배경 덩어리 감지');
+
+  const configuredAsFrameSheet = gridExpected > 1 && (rows === 1 || +($('animFrameCount')?.value || 0) === gridExpected);
+  if (configuredAsFrameSheet && spriteSlices.length !== gridExpected) {
+    return fallbackToGrid(`프레임 수 불일치 감지(${spriteSlices.length}개 탐지)`);
+  }
+
   selectedSpriteSliceId = spriteSlices[0]?.id || null;
   renderSpriteGuides();
   const msg = spriteSlices.length ? `${spriteSlices.length}개 조각 탐지 · 첫 조각 선택됨` : '조각 없음 · 배경 제거/투명 PNG 상태를 확인하세요';
@@ -885,13 +1014,59 @@ async function detectSpriteSlices() {
   return spriteSlices;
 }
 
+function updateSpriteGuideStyles() {
+  canvas.getObjects().filter(o => o.maskRole === 'sprite-guide').forEach((guide) => {
+    const selected = guide.spriteSliceId === selectedSpriteSliceId;
+    guide.set({
+      stroke: selected ? '#22c55e' : '#f59e0b',
+      strokeWidth: selected ? 3 : 2,
+      strokeDashArray: selected ? null : [6, 4],
+    });
+  });
+  canvas.requestRenderAll();
+}
+
+function spriteTargetOrigin() {
+  const target = activeSpriteTarget();
+  const bounds = imageCanvasBounds(target);
+  if (!target || !bounds) return null;
+  return bounds;
+}
+
+function spriteSliceCanvasBox(slice) {
+  const origin = spriteTargetOrigin();
+  if (!origin || !slice) return null;
+  return {
+    x: origin.left + Math.round(slice.x || 0),
+    y: origin.top + Math.round(slice.y || 0),
+    width: Math.round(slice.width || 1),
+    height: Math.round(slice.height || 1),
+    origin,
+  };
+}
+
+function syncSpriteSliceFromGuide(guide) {
+  const slice = spriteSlices.find(s => s.id === guide.spriteSliceId);
+  if (!slice) return null;
+  const origin = spriteTargetOrigin() || { left: 0, top: 0 };
+  slice.x = Math.round((guide.left || 0) - origin.left);
+  slice.y = Math.round((guide.top || 0) - origin.top);
+  slice.width = Math.round((guide.width || slice.width) * (guide.scaleX || 1));
+  slice.height = Math.round((guide.height || slice.height) * (guide.scaleY || 1));
+  slice.area = slice.width * slice.height;
+  guide.set({ width: slice.width, height: slice.height, scaleX: 1, scaleY: 1 });
+  guide.setCoords();
+  return slice;
+}
+
 function renderSpriteGuides() {
-  canvas.getObjects().filter(o => o.maskRole === 'sprite-guide').forEach(o => canvas.remove(o));
+  removeSpriteGuideObjects();
+  const origin = spriteTargetOrigin() || { left: 0, top: 0 };
   spriteSlices.forEach((slice, idx) => {
     const selected = slice.id === selectedSpriteSliceId;
     const rect = new fabric.Rect({
-      left: slice.x,
-      top: slice.y,
+      left: origin.left + slice.x,
+      top: origin.top + slice.y,
       width: slice.width,
       height: slice.height,
       fill: 'rgba(0,0,0,0)',
@@ -900,9 +1075,12 @@ function renderSpriteGuides() {
       strokeDashArray: selected ? null : [6, 4],
       selectable: true,
       evented: true,
-      hasControls: false,
-      lockMovementX: true,
-      lockMovementY: true,
+      hasControls: true,
+      hasRotatingPoint: false,
+      lockRotation: true,
+      lockScalingFlip: true,
+      lockMovementX: false,
+      lockMovementY: false,
       name: `Sprite Slice ${idx + 1}`,
       excludeFromLayers: true,
       excludeFromExport: true,
@@ -912,8 +1090,20 @@ function renderSpriteGuides() {
     });
     rect.on('mousedown', () => {
       selectedSpriteSliceId = slice.id;
-      renderSpriteGuides();
+      updateSpriteGuideStyles();
       spriteSummary(`선택 조각 ${idx + 1}/${spriteSlices.length} · ${slice.width}×${slice.height} · area ${slice.area}`);
+    });
+    rect.on('moving', () => {
+      const updated = syncSpriteSliceFromGuide(rect);
+      if (updated) spriteSummary(`조각 위치 이동 · rel ${updated.x},${updated.y} · ${updated.width}×${updated.height}`);
+    });
+    rect.on('scaling', () => {
+      const updated = syncSpriteSliceFromGuide(rect);
+      if (updated) spriteSummary(`조각 크기 조절 · rel ${updated.x},${updated.y} · ${updated.width}×${updated.height}`);
+    });
+    rect.on('modified', () => {
+      const updated = syncSpriteSliceFromGuide(rect);
+      if (updated) spriteSummary(`조각 박스 수정 완료 · rel ${updated.x},${updated.y} · ${updated.width}×${updated.height}`);
     });
     canvas.add(rect);
   });
@@ -928,13 +1118,15 @@ async function spriteSliceDataUrl(slice = selectedSpriteSlice()) {
   const target = activeSpriteTarget();
   if (!target) throw new Error('이미지 레이어 선택 필요');
   if (!slice) throw new Error('탐지된 조각 없음');
+  const box = spriteSliceCanvasBox(slice);
+  if (!box) throw new Error('선택 레이어 기준점 확인 실패');
   const dataUrl = await canvasWithOnlyObjectDataUrl(target);
   const img = await loadHtmlImage(dataUrl);
   const el = document.createElement('canvas');
   el.width = slice.width; el.height = slice.height;
   const ctx = el.getContext('2d');
   ctx.clearRect(0, 0, el.width, el.height);
-  ctx.drawImage(img, slice.x, slice.y, slice.width, slice.height, 0, 0, slice.width, slice.height);
+  ctx.drawImage(img, box.x, box.y, slice.width, slice.height, 0, 0, slice.width, slice.height);
   return el.toDataURL('image/png');
 }
 
@@ -942,7 +1134,8 @@ async function extractSpriteSliceToLayer() {
   try {
     const slice = selectedSpriteSlice();
     const url = await spriteSliceDataUrl(slice);
-    const layer = await addPatchImageUrl(url, { x: slice.x, y: slice.y, width: slice.width, height: slice.height, patch_width: slice.width, patch_height: slice.height }, `Sprite Slice ${spriteSlices.indexOf(slice) + 1}`);
+    const box = spriteSliceCanvasBox(slice);
+    const layer = await addPatchImageUrl(url, { x: box?.x ?? slice.x, y: box?.y ?? slice.y, width: slice.width, height: slice.height, patch_width: slice.width, patch_height: slice.height }, `Sprite Slice ${spriteSlices.indexOf(slice) + 1}`);
     layer._originalSrc = url;
     spriteSummary(`조각 레이어 생성 · ${slice.width}×${slice.height}`);
   } catch (err) {
@@ -978,11 +1171,14 @@ async function exportAllSpriteSlicesZip() {
       const filename = `sprite-${String(i + 1).padStart(3, '0')}.png`; // sprite-001.png
       const url = await spriteSliceDataUrl(slice);
       files.push({ name: filename, bytes: dataUrlToBytes(url) });
+      const box = spriteSliceCanvasBox(slice) || { x: slice.x, y: slice.y };
       manifest.slices.push({
         file: filename,
         index: i + 1,
         x: slice.x,
         y: slice.y,
+        canvasX: box.x,
+        canvasY: box.y,
         width: slice.width,
         height: slice.height,
         area: slice.area,
@@ -1007,15 +1203,13 @@ function buildGridSpriteSlices() {
   const cellH = Math.max(1, +($('gridCellH')?.value || 32));
   const gapX = Math.max(0, +($('gridGapX')?.value || 0));
   const gapY = Math.max(0, +($('gridGapY')?.value || 0));
-  const left = Math.round(target.left || 0);
-  const top = Math.round(target.top || 0);
   const slices = [];
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       slices.push({
         id: uid('grid-sprite'),
-        x: left + col * (cellW + gapX),
-        y: top + row * (cellH + gapY),
+        x: col * (cellW + gapX),
+        y: row * (cellH + gapY),
         width: cellW,
         height: cellH,
         area: cellW * cellH,
@@ -1028,10 +1222,15 @@ function buildGridSpriteSlices() {
   return slices;
 }
 
+function currentGridSpriteSlices() {
+  if (spriteSlices.some(s => s.grid)) return spriteSlices;
+  return buildGridSpriteSlices();
+}
+
 async function buildAnimationFramesFromGrid() {
   if (!activeSpriteTarget()) throw new Error('이미지 레이어 선택 필요');
   const frameCount = Math.max(1, +($('animFrameCount')?.value || 4));
-  const frames = buildGridSpriteSlices().slice(0, frameCount);
+  const frames = currentGridSpriteSlices().slice(0, frameCount);
   const urls = [];
   for (const slice of frames) {
     const dataUrl = await spriteSliceDataUrl(slice);
@@ -1047,16 +1246,30 @@ async function buildAnimationFramesFromGrid() {
   return urls;
 }
 
+function animationPreviewStages() {
+  return ['animationPreviewStage']
+    .map(id => $(id))
+    .filter(Boolean);
+}
+
+function animationFrameStrips() {
+  return ['animationFrameStrip']
+    .map(id => $(id))
+    .filter(Boolean);
+}
+
 function renderAnimationFrameStrip(frames = animationPreviewFrames) {
-  const strip = $('animationFrameStrip');
-  if (!strip) return;
-  strip.innerHTML = '';
-  frames.forEach((url, idx) => {
-    const img = document.createElement('img');
-    img.src = url;
-    img.alt = `animation frame ${idx + 1}`;
-    img.dataset.frameIndex = String(idx);
-    strip.appendChild(img);
+  const strips = animationFrameStrips();
+  if (!strips.length) return;
+  strips.forEach(strip => {
+    strip.innerHTML = '';
+    frames.forEach((url, idx) => {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = `animation frame ${idx + 1}`;
+      img.dataset.frameIndex = String(idx);
+      strip.appendChild(img);
+    });
   });
 }
 
@@ -1067,15 +1280,17 @@ function stopAnimationPreview() {
 }
 
 function playAnimationPreview(frames = animationPreviewFrames) {
-  const stage = $('animationPreviewStage');
-  if (!stage || !frames.length) return;
+  const stages = animationPreviewStages();
+  if (!stages.length || !frames.length) return;
   stopAnimationPreview();
   let idx = 0;
   let dir = 1;
   const mode = $('animMode')?.value || 'loop';
   const fps = clamp(+($('animFps')?.value || 8), 1, 30);
   const draw = () => {
-    stage.innerHTML = `<img alt="animation preview frame" src="${frames[idx]}"><span>${idx + 1}/${frames.length} · ${mode}</span>`;
+    stages.forEach(stage => {
+      stage.innerHTML = `<img alt="animation preview frame" src="${frames[idx]}"><span>${idx + 1}/${frames.length} · ${mode}</span>`;
+    });
     if (mode === 'pingpong') {
       if (idx >= frames.length - 1) dir = -1;
       if (idx <= 0) dir = 1;
@@ -1099,11 +1314,18 @@ async function buildAnimationPreview() {
 
 async function detectGridSpriteSlices() {
   try {
+    updateGridCellSizeFromSelectedLayer();
+    const target = activeSpriteTarget();
     spriteSlices = buildGridSpriteSlices();
     selectedSpriteSliceId = spriteSlices[0]?.id || null;
     renderSpriteGuides();
-    spriteSummary(`그리드 ${spriteSlices.length}개 미리보기 · ${$('gridCols')?.value || 1}×${$('gridRows')?.value || 1}`);
+    if (target) {
+      canvas.setActiveObject(target);
+      rememberSelectedLayer(target);
+    }
+    spriteSummary(`그리드 ${spriteSlices.length}개 미리보기 · ${$('gridCols')?.value || 1}×${$('gridRows')?.value || 1} · 박스는 드래그로 이동/조절 가능`);
     setStatus(`그리드 슬라이스 미리보기: ${spriteSlices.length}개`);
+    canvas.requestRenderAll();
     return spriteSlices;
   } catch (err) {
     console.error(err); alert(`그리드 미리보기 실패: ${err.message}`); setStatus(`그리드 미리보기 실패: ${err.message}`);
@@ -1114,9 +1336,9 @@ async function detectGridSpriteSlices() {
 async function exportGridSpriteSlicesZip() {
   try {
     if (!activeSpriteTarget()) throw new Error('이미지 레이어 선택 필요');
-    const gridSlices = buildGridSpriteSlices();
+    let gridSlices = currentGridSpriteSlices();
     spriteSlices = gridSlices;
-    selectedSpriteSliceId = spriteSlices[0]?.id || null;
+    if (!selectedSpriteSliceId) selectedSpriteSliceId = spriteSlices[0]?.id || null;
     renderSpriteGuides();
     const encoder = new TextEncoder();
     const files = [];
@@ -1137,7 +1359,8 @@ async function exportGridSpriteSlicesZip() {
       const filename = `grid-sprite-${String(i + 1).padStart(3, '0')}.png`; // grid-sprite-001.png
       const url = await spriteSliceDataUrl(slice);
       files.push({ name: filename, bytes: dataUrlToBytes(url) });
-      manifest.slices.push({ file: filename, index: i + 1, row: slice.row, col: slice.col, x: slice.x, y: slice.y, width: slice.width, height: slice.height });
+      const box = spriteSliceCanvasBox(slice) || { x: slice.x, y: slice.y };
+      manifest.slices.push({ file: filename, index: i + 1, row: slice.row, col: slice.col, x: slice.x, y: slice.y, canvasX: box.x, canvasY: box.y, width: slice.width, height: slice.height });
     }
     files.push({ name: 'grid-manifest.json', bytes: encoder.encode(JSON.stringify(manifest, null, 2)) });
     const zipBlob = buildStoredZip(files);
@@ -1519,15 +1742,46 @@ function addGallery(url, label='asset') {
   $('gallery').prepend(card);
 }
 
+function objectCanvasBounds(obj) {
+  if (!obj) return null;
+  obj.setCoords?.();
+  const rect = obj.getBoundingRect ? obj.getBoundingRect(true, true) : null;
+  if (rect && Number.isFinite(rect.left) && Number.isFinite(rect.top)) {
+    return {
+      left: rect.left || 0,
+      top: rect.top || 0,
+      width: Math.max(1, rect.width || 1),
+      height: Math.max(1, rect.height || 1),
+    };
+  }
+  return {
+    left: obj.left || 0,
+    top: obj.top || 0,
+    width: obj.getScaledWidth ? obj.getScaledWidth() : ((obj.width || 1) * (obj.scaleX || 1)),
+    height: obj.getScaledHeight ? obj.getScaledHeight() : ((obj.height || 1) * (obj.scaleY || 1)),
+  };
+}
+
+function moveObjectBoundingTopLeft(obj, left, top) {
+  const bounds = objectCanvasBounds(obj);
+  if (!obj || !bounds) return;
+  obj.set({
+    left: (obj.left || 0) + (left - bounds.left),
+    top: (obj.top || 0) + (top - bounds.top),
+  });
+  obj.setCoords?.();
+}
+
 function syncProps() {
   const obj = selectedLayerObject();
   $('selectedName').textContent = obj ? `${nameOf(obj)} (${obj.isDrawingLayer ? 'drawing layer' : obj.type})` : '선택 없음';
   for (const id of ['propX','propY','propW','propH','propRot','propOpacity','textContent']) $(id).value = '';
   if (!obj || obj.isDrawingLayer) return;
-  $('propX').value = Math.round(obj.left || 0);
-  $('propY').value = Math.round(obj.top || 0);
-  $('propW').value = Math.round(obj.getScaledWidth());
-  $('propH').value = Math.round(obj.getScaledHeight());
+  const bounds = objectCanvasBounds(obj);
+  $('propX').value = Math.round(bounds.left);
+  $('propY').value = Math.round(bounds.top);
+  $('propW').value = Math.round(bounds.width);
+  $('propH').value = Math.round(bounds.height);
   $('propRot').value = Math.round(obj.angle || 0);
   $('propOpacity').value = obj.opacity ?? 1;
   if ($('layerOpacity')) $('layerOpacity').value = obj.opacity ?? 1;
@@ -1868,10 +2122,23 @@ function setViewScale(scale, anchorEvent = null) {
   return pos;
 }
 
-function fitView() {
+function fitView(showStatus = true) {
   const workspace = $('workspace');
-  const scale = Math.min((workspace.clientWidth - 90) / canvas.width, (workspace.clientHeight - 90) / canvas.height, 1);
-  setViewScale(scale);
+  const shell = $('canvasShell');
+  if (!workspace || !shell) return;
+  const margin = 72;
+  const baseW = shell.offsetWidth || (canvas.width + 36);
+  const baseH = shell.offsetHeight || (canvas.height + 36);
+  const availableW = Math.max(120, workspace.clientWidth - margin);
+  const availableH = Math.max(120, workspace.clientHeight - margin);
+  const scale = clamp(Math.min(availableW / baseW, availableH / baseH, 1), 0.05, 4);
+  viewScale = scale;
+  canvasPanOffset = { x: 0, y: 0 };
+  shell.style.transform = `scale(${viewScale})`;
+  shell.style.transformOrigin = 'top left';
+  updateCanvasStageSize();
+  if ($('zoomLabel')) $('zoomLabel').textContent = `${Math.round(viewScale * 100)}%`;
+  if (showStatus) setStatus?.(`캔버스를 화면 중앙에 맞췄습니다 · ${Math.round(viewScale * 100)}%`);
 }
 
 function zoomBy(delta, anchorEvent = null) {
@@ -3614,10 +3881,14 @@ $('eraserSize').oninput = () => { $('eraserSizeValue').textContent = $('eraserSi
 
 $('applyProps').onclick = () => {
   const obj = active(); if (!obj) return;
+  const targetX = +$('propX').value || 0;
+  const targetY = +$('propY').value || 0;
   const curW = obj.getScaledWidth(); const curH = obj.getScaledHeight();
-  obj.set({ left:+$('propX').value || 0, top:+$('propY').value || 0, angle:+$('propRot').value || 0, opacity: Math.max(0, Math.min(1, +$('propOpacity').value || 0)) });
+  obj.set({ angle:+$('propRot').value || 0, opacity: Math.max(0, Math.min(1, +$('propOpacity').value || 0)) });
   if (+$('propW').value > 0) obj.scaleX *= (+$('propW').value / curW);
   if (+$('propH').value > 0) obj.scaleY *= (+$('propH').value / curH);
+  obj.setCoords?.();
+  moveObjectBoundingTopLeft(obj, targetX, targetY);
   canvas.renderAll(); saveHistory(); syncProps(); renderLayers();
 };
 $('applyStyle').onclick = () => {
@@ -3654,11 +3925,15 @@ if ($('extractSpriteLayer')) $('extractSpriteLayer').onclick = extractSpriteSlic
 if ($('exportSpritePng')) $('exportSpritePng').onclick = exportSpriteSlicePng;
 if ($('exportAllSpritesZip')) $('exportAllSpritesZip').onclick = exportAllSpriteSlicesZip;
 if ($('detectGridSprites')) $('detectGridSprites').onclick = detectGridSpriteSlices;
+['gridCols','gridRows'].forEach(id => {
+  if ($(id)) ['input','change'].forEach(evt => $(id).addEventListener(evt, () => updateGridCellSizeFromSelectedLayer({ renderExisting: true })));
+});
 if ($('exportGridSpritesZip')) $('exportGridSpritesZip').onclick = exportGridSpriteSlicesZip;
 if ($('buildAnimationPreview')) $('buildAnimationPreview').onclick = () => buildAnimationPreview().catch(err => { console.error(err); alert(`애니메이션 미리보기 실패: ${err.message}`); setStatus(`애니메이션 미리보기 실패: ${err.message}`); });
 if ($('stopAnimationPreview')) $('stopAnimationPreview').onclick = stopAnimationPreview;
 if ($('buildPixelPrompt')) $('buildPixelPrompt').onclick = syncPixelAssetPrompt;
 if ($('generatePixelAsset')) $('generatePixelAsset').onclick = () => { syncPixelAssetPrompt(); generateAiAsset().catch(err => { console.error(err); alert(`도트 에셋 생성 실패: ${err.message}`); setStatus(`도트 에셋 생성 실패: ${err.message}`); }); };
+if ($('generateFrontIdleFromSelected')) $('generateFrontIdleFromSelected').onclick = () => generateFrontIdleFromSelected();
 if ($('runPixelWorkflow')) $('runPixelWorkflow').onclick = () => runPixelWorkflow().catch(err => { console.error(err); alert(`도트 워크플로우 실패: ${err.message}`); setStatus(`도트 워크플로우 실패: ${err.message}`); });
 if ($('runPixelSamplePack')) $('runPixelSamplePack').onclick = () => runPixelSamplePack().catch(err => { console.error(err); alert(`샘플팩 생성 실패: ${err.message}`); setStatus(`샘플팩 생성 실패: ${err.message}`); });
 if ($('generate8DirIdle')) $('generate8DirIdle').onclick = () => runDirectionalPixelWorkflow('idle').catch(err => { console.error(err); alert(`8방향 idle 생성 실패: ${err.message}`); setStatus(`8방향 idle 생성 실패: ${err.message}`); });
@@ -3766,7 +4041,8 @@ async function generateAiAsset() {
     const directionMode = $('pixelDirectionMode')?.value || 'single';
     const targetDirection = $('pixelTargetDirection')?.value || 'S';
     const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
-    const animationMode = ($('pixelAnimationPreset')?.value || 'idle').startsWith('walk') ? 'walk' : 'idle';
+    const rawAnimPreset = $('pixelAnimationPreset')?.value || 'idle';
+    const animationMode = rawAnimPreset.startsWith('walk') ? 'walk' : rawAnimPreset;
     const payload = {
       prompt,
       preset,
@@ -3776,7 +4052,8 @@ async function generateAiAsset() {
       reference_direction: referenceDirection,
       direction_mode: directionMode,
       animation_mode: animationMode,
-      walk_frames: Math.max(3, Math.min(8, +($('pixelWalkFrames')?.value || 4))),
+      frame_count: pixelPresetFrameCount(),
+      walk_frames: pixelPresetFrameCount(),
       chroma_mode: $('pixelChromaMode')?.value || 'global'
     };
     if (useReference) payload.reference_image = imageObjectToDataUrl(referenceObj);
@@ -3795,6 +4072,155 @@ async function generateAiAsset() {
     return { url, img, data, referenceObj: referenceObj || null };
   } catch (err) { setStatus('AI generation failed: ' + err.message); throw err; }
   finally { if (generateBtn) generateBtn.disabled = false; }
+}
+
+function setFrontIdleGridForImage(img, frames = 4) {
+  const defaults = applyPixelWorkflowGridDefaults(img);
+  if ($('gridRows')) $('gridRows').value = '1';
+  if ($('gridCellH')) $('gridCellH').value = String(imageDisplayedSize(img)?.h || defaults.frameH);
+  if ($('pixelFrameH')) $('pixelFrameH').value = $('gridCellH')?.value || String(defaults.frameH);
+  if ($('animFps')) $('animFps').value = '5';
+  if ($('animMode')) $('animMode').value = 'loop';
+}
+
+function animationPresetSpec(presetRaw) {
+  const preset = presetRaw || 'idle';
+  const frameCount = requestedPixelFrameCount();
+  const specs = {
+    idle: {
+      key: `idle${frameCount}`, label: 'Idle', frames: frameCount,
+      frameOrder: `${frameCount} subtle breathing frames in one loop`,
+      motion: 'restrained breathing only; feet planted on the same baseline; no stepping, no turning'
+    },
+    walk4: {
+      key: `walk${frameCount}`, label: 'Walk', frames: frameCount,
+      frameOrder: `${frameCount} evenly spaced walk-cycle phases with opposite contacts`,
+      motion: 'readable walk cycle with alternating arms and legs; consistent foot baseline and pivot'
+    },
+    walk6: {
+      key: `walk${frameCount}`, label: 'Walk', frames: frameCount,
+      frameOrder: `${frameCount} evenly spaced walk-cycle phases with opposite contacts`,
+      motion: 'smooth walk cycle with real alternating limbs; no duplicate idle frames'
+    },
+    attack: {
+      key: `attack${frameCount}`, label: 'Attack', frames: frameCount,
+      frameOrder: `${frameCount} readable attack beats from ready/wind-up through impact/recovery`,
+      motion: 'clear attack silhouette while preserving the chosen facing direction and body identity'
+    },
+    jump: {
+      key: `jump${frameCount}`, label: 'Jump', frames: frameCount,
+      frameOrder: `${frameCount} readable jump beats from crouch/takeoff through air/landing`,
+      motion: 'vertical jump arc in place; no sideways travel unless direction pose requires it'
+    },
+    cast: {
+      key: `cast${frameCount}`, label: 'Cast', frames: frameCount,
+      frameOrder: `${frameCount} readable cast beats from ready/gather through release/recover`,
+      motion: 'spell-cast gesture with restrained effect pixels; keep character readable and consistent'
+    },
+    hurt: {
+      key: `hurt${frameCount}`, label: 'Hurt', frames: frameCount,
+      frameOrder: `${frameCount} readable hurt/recoil/recovery beats`,
+      motion: 'small hit reaction; do not change costume, species, or facing direction'
+    },
+    death: {
+      key: `death${frameCount}`, label: 'Death', frames: frameCount,
+      frameOrder: `${frameCount} readable collapse beats ending down/still`,
+      motion: 'short collapse animation; keep readable silhouette and consistent outfit colors'
+    },
+    ui_static: {
+      key: 'static1', label: 'Static', frames: 1,
+      frameOrder: 'single clean static frame',
+      motion: 'no animation; one isolated game asset frame'
+    }
+  };
+  return specs[preset] || specs.idle;
+}
+
+function buildSelectedActionSpritePrompt(referenceObj, spec) {
+  const baseSubject = ($('pixelSubject')?.value || '').trim();
+  const palette = ($('pixelPalette')?.value || 'limited dark fantasy palette').trim();
+  const targetDirection = $('pixelTargetDirection')?.value || 'S';
+  const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
+  const directionText = directionLabel(targetDirection);
+  const referenceText = directionLabel(referenceDirection);
+  const frameText = spec.frames === 1
+    ? 'Exactly one isolated sprite frame.'
+    : `Exactly one horizontal row of ${spec.frames} evenly spaced frames.`;
+  return `${baseSubject ? baseSubject + '\n\n' : ''}Create a ${spec.label.toLowerCase()} pixel-art sprite from the selected reference character.
+Target direction: ${directionText}. Keep the visible character facing this target direction in every frame.
+Reference image direction: ${referenceText}. Use it only for identity, costume, colors, proportions, pixel density, outline weight, and scale.
+${frameText}
+Frame order: ${spec.frameOrder}.
+Motion rule: ${spec.motion}.
+Preserve the same identity, face/species, costume, colors, silhouette, pixel density, outline weight, scale, and pivot across all frames. No color drift between frames.
+Refined 32-bit dark fantasy pixel art, crisp hard pixels, clean outline, ${palette}.
+Flat exact #00FF00 chroma green background edge-to-edge.
+No text, labels, numbers, watermark, mockup frame, scenery, extra characters, multiple rows, contact sheet, or alternate directions.`;
+}
+
+async function generateFrontIdleFromSelected() {
+  const referenceObj = selectedLayerObject();
+  if (!referenceObj || referenceObj.type !== 'image') {
+    alert('먼저 캔버스에서 캐릭터 이미지 레이어를 선택하세요.');
+    setStatus('방향/동작 자동 생성 실패: 이미지 레이어 선택 필요');
+    return null;
+  }
+  const btn = $('generateFrontIdleFromSelected');
+  if (btn) btn.disabled = true;
+  const preset = $('pixelAnimationPreset')?.value || 'idle';
+  const spec = animationPresetSpec(preset);
+  const targetDirection = $('pixelTargetDirection')?.value || 'S';
+  const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
+  const prompt = buildSelectedActionSpritePrompt(referenceObj, spec);
+  try {
+    setStatus(`선택 캐릭터 기준 ${directionLabel(targetDirection)} ${spec.label} ${spec.frames}프레임 자동 생성 중...`);
+    const res = await fetch('/api/generate-reference', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        reference_image: imageObjectToDataUrl(referenceObj),
+        prompt,
+        negative: 'wrong facing direction, alternate directions, turntable, contact sheet, multiple rows, labels, text, numbers, watermark, different character per frame, color drift, costume changes, white background, scenery, cropped feet, malformed limbs, fake walk cycle, duplicate frames',
+        preset: 'pixel',
+        aspect_ratio: 'square',
+        background_mode: 'chroma_green',
+        direction_mode: 'single',
+        target_direction: targetDirection,
+        reference_direction: referenceDirection,
+        animation_mode: spec.key,
+        frame_count: spec.frames,
+        chroma_mode: $('pixelChromaMode')?.value || 'global',
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'direction/action generation failed');
+    const url = withCacheBust(data.url);
+    const resultLabel = `${targetDirection} ${spec.label} ${spec.frames}f`;
+    addGallery(url, data.method || data.model || resultLabel);
+    const img = await addImageUrl(url, `${resultLabel} - ${nameOf(referenceObj)}`);
+    canvas.setActiveObject(img);
+    rememberSelectedLayer(img);
+    setFrontIdleGridForImage(img, spec.frames);
+    if (spec.frames > 1) {
+      removeSpriteGuideObjects();
+      spriteSlices = buildGridSpriteSlices();
+      selectedSpriteSliceId = null;
+      await buildAnimationPreview();
+    }
+    if ($('pixelQaSummary') && data.qa) {
+      $('pixelQaSummary').textContent = `${resultLabel} 자동 · alpha ${data.qa.alpha_min}-${data.qa.alpha_max} · corners ${data.qa.corner_alpha?.join('/') || '-'} · green ${data.qa.green_pixels ?? '-'}`;
+    }
+    recordPixelAssetResult(url, data.method || data.model || resultLabel);
+    setStatus(`${directionLabel(targetDirection)} ${spec.label} ${spec.frames}프레임 자동 생성 완료 · grid/preview 연결됨`);
+    return { url, img, data };
+  } catch (err) {
+    console.error(err);
+    alert(`방향/동작 자동 생성 실패: ${err.message}`);
+    setStatus(`방향/동작 자동 생성 실패: ${err.message}`);
+    return null;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function runPixelWorkflow() {
@@ -3817,10 +4243,11 @@ async function runPixelWorkflow() {
   }
   canvas.setActiveObject(finalImg);
   rememberSelectedLayer(finalImg);
-  applyPixelWorkflowGridDefaults();
-  await detectGridSpriteSlices();
-  if ($('pixelWorkflowPreview')?.checked) await buildAnimationPreview();
-  setStatus(`도트 워크플로우 완료 · ${pixelPresetFrameCount()} frames`);
+  applyPixelWorkflowGridDefaults(finalImg);
+  removeSpriteGuideObjects();
+  spriteSlices = buildGridSpriteSlices();
+  selectedSpriteSliceId = null;
+  setStatus(`도트 워크플로우 완료 · ${pixelPresetFrameCount()} frames · 그리드 값 자동 설정됨`);
   return { ...result, finalUrl, finalImg };
 }
 
@@ -4058,7 +4485,7 @@ function handleHistoryShortcut(e) {
   return true;
 }
 
-window.addEventListener('resize', fitView);
+window.addEventListener('resize', () => fitView(false));
 window.addEventListener('keydown', (e) => {
   if (handleEscapeShortcut(e)) return;
   if (handleClipboardShortcut(e)) return;

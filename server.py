@@ -997,8 +997,15 @@ No text, no numbers, no watermark, no mockup frame.{note}
 User request: {prompt.strip()}""".strip()
 
 
-def build_reference_sprite_prompt(prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> str:
+def build_reference_sprite_prompt(prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4, frame_count: int | None = None) -> str:
     neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
+    requested_frames = max(1, min(8, int(frame_count or walk_frames or 4)))
+    action_key_raw = (animation_mode or "idle").lower()
+    # UI can send action keys like attack6/walk4. Normalize them for the action
+    # contract while keeping the requested frame count explicit.
+    action_key = "walk" if action_key_raw.startswith("walk") else action_key_raw
+    action_key = "attack" if action_key_raw.startswith("attack") else action_key
+    action_key = "idle" if action_key_raw.startswith("idle") else action_key
     direction_contract = ""
     if direction_mode == "8dir":
         direction_contract = """
@@ -1025,17 +1032,29 @@ Single-target one-direction generation contract:
 - If target_direction is S, the sprite must face camera/front.
 - Keep a single centered sprite with transparent/chroma background margin, not a row/stack.""".format(reference_direction=reference_direction, target_direction=target_direction)
     frame_contract = ""
-    action_key = (animation_mode or "idle").lower()
     if action_key in SPRITE_ACTION_MATRIX:
         spec = SPRITE_ACTION_MATRIX[action_key]
+        columns = list(spec['columns'])
+        if requested_frames != len(columns):
+            if action_key == "idle" and requested_frames > 1:
+                columns = [f"breath{i + 1}" for i in range(requested_frames)]
+            elif action_key == "attack":
+                attack_beats = ["ready", "windup", "strike", "impact", "follow-through", "recover", "settle", "return"]
+                columns = attack_beats[:requested_frames]
+            elif action_key == "walk":
+                columns = [f"walk{i + 1}" for i in range(requested_frames)]
+            else:
+                columns = [f"frame{i + 1}" for i in range(requested_frames)]
         frame_contract = f"""
 {action_key.capitalize()} action contract:
-- Frame count: {spec['frames']}.
-- column order must be exactly: {', '.join(spec['columns'])}.
+- Frame count: exactly {requested_frames}.
+- column order must be exactly: {', '.join(columns)}.
 - {spec['contract']}.
-- Do not change identity, equipment, palette, proportions, pivot, or feet baseline between frames."""
-        if action_key == "walk":
-            frame_contract += f"\n- Use {walk_frames} walk frames per direction."
+- Do not change identity, equipment, palette, proportions, pivot, or feet baseline between frames.
+- Cell-boundary rule: treat every frame as a separate boxed cell with a wide empty #00FF00 gutter between cells.
+- Containment rule: every body part, weapon, held object, motion smear, slash arc, VFX, shadow, and silhouette must stay fully inside its own cell.
+- Margin rule: keep at least 15% empty side margin inside each cell. If the action would spill across a boundary, shrink the weapon arc/pose rather than touching the next cell.
+- Failure rule: no frame may touch or cross a cell edge; no motion pixels may appear in the neighboring frame's space."""
     return f"""Create a new pixel-art game asset sprite sheet from the supplied reference image.
 
 Reference contract:
@@ -1051,7 +1070,7 @@ User request: {prompt.strip()}
 {neg}""".strip()
 
 
-def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4) -> tuple[str, str, str]:
+def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4, frame_count: int | None = None) -> tuple[str, str, str]:
     """Generate a new sprite/asset sheet while using the selected image as style/identity reference."""
     import httpx
     from agent.auxiliary_client import _codex_cloudflare_headers
@@ -1081,7 +1100,7 @@ def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, neg
             "type": "message",
             "role": "user",
             "content": [
-                {"type": "input_text", "text": build_reference_sprite_prompt(prompt, negative, direction_mode=direction_mode, reference_direction=reference_direction, target_direction=target_direction, animation_mode=animation_mode, walk_frames=walk_frames)},
+                {"type": "input_text", "text": build_reference_sprite_prompt(prompt, negative, direction_mode=direction_mode, reference_direction=reference_direction, target_direction=target_direction, animation_mode=animation_mode, walk_frames=walk_frames, frame_count=frame_count)},
                 {"type": "input_text", "text": "Reference image to preserve identity/style:"},
                 {"type": "input_image", "image_url": data_url_to_png_data_url(reference_data_url)},
             ],
@@ -1669,6 +1688,7 @@ class Handler(SimpleHTTPRequestHandler):
                     target_direction=target_direction,
                     animation_mode=animation_mode,
                     walk_frames=int(data.get("walk_frames", 4) or 4),
+                    frame_count=int(data.get("frame_count", data.get("walk_frames", 4)) or 4),
                 )
                 raw = base64.b64decode(image_b64)
                 out, qa = postprocess_pixel_generation_bytes(
