@@ -2127,14 +2127,45 @@ function renderLayers() {
   updateEmptyCanvasHint();
 }
 
+function syncSpriteAfterCanvasResize({ rebuildPreview = true } = {}) {
+  const target = activeSpriteTarget();
+  if (!target || target.type !== 'image') return;
+  spriteSourceLayerId = layerKey(target);
+
+  // Canvas size changes do not change the image source pixels, but they can make
+  // the visible Fabric bounds/grid inputs stale. Keep sprite slices in selected
+  // image-relative coordinates, then re-render guide boxes from the target's new
+  // canvas bounds. For grid-mode slices, rebuild the grid from the selected
+  // image's displayed bounds so crop/export/animation preview stay aligned.
+  if (spriteSlices.some(s => s.grid)) {
+    updateGridCellSizeFromSelectedLayer({ renderExisting: true });
+  } else if (spriteSlices.length) {
+    renderSpriteGuides();
+  } else {
+    applyPixelWorkflowGridDefaults(target);
+  }
+
+  if (rebuildPreview && animationPreviewFrames.length) {
+    buildAnimationPreview().catch(err => {
+      console.warn('Animation preview rebuild after canvas resize failed', err);
+      spriteSummary(`캔버스 크기 변경 후 미리보기 재생성 실패: ${err.message}`);
+    });
+  }
+}
+
 function setCanvasSize(w, h) {
+  const priorSpriteTarget = activeSpriteTarget();
+  const priorSpriteLayerId = layerKey(priorSpriteTarget) || spriteSourceLayerId;
   canvas.setWidth(w); canvas.setHeight(h);
   canvas.getObjects().forEach(o => { if (o.isDrawingLayer) o.set({ width: w, height: h }); });
   $('canvasW').value = w; $('canvasH').value = h;
+  if (priorSpriteLayerId) spriteSourceLayerId = priorSpriteLayerId;
+  syncSpriteAfterCanvasResize();
   canvas.renderAll();
   fitView();
   saveHistory();
 }
+
 
 function canvasStageMetrics(scale = viewScale) {
   const workspace = $('workspace');
