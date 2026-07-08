@@ -1227,10 +1227,19 @@ function currentGridSpriteSlices() {
   return buildGridSpriteSlices();
 }
 
+function currentAnimationSpriteSlices(frameCount = Math.max(1, +($('animFrameCount')?.value || 4))) {
+  // User flow: image → 자동 조각 찾기 → 애니메이션 재생.
+  // In that flow the detected boxes ARE the frames. Do not rebuild from stale
+  // gridCellW/H defaults (32×32), or the preview crops blank top-left pixels.
+  if (spriteSlices.length) return spriteSlices.slice(0, frameCount);
+  return buildGridSpriteSlices().slice(0, frameCount);
+}
+
 async function buildAnimationFramesFromGrid() {
   if (!activeSpriteTarget()) throw new Error('이미지 레이어 선택 필요');
   const frameCount = Math.max(1, +($('animFrameCount')?.value || 4));
-  const frames = currentGridSpriteSlices().slice(0, frameCount);
+  const frames = currentAnimationSpriteSlices(frameCount);
+  if (!frames.length) throw new Error('프레임 조각 없음 · 먼저 자동 조각 찾기 또는 그리드 미리보기를 실행하세요');
   const urls = [];
   for (const slice of frames) {
     const dataUrl = await spriteSliceDataUrl(slice);
