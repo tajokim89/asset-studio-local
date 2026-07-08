@@ -1118,15 +1118,30 @@ async function spriteSliceDataUrl(slice = selectedSpriteSlice()) {
   const target = activeSpriteTarget();
   if (!target) throw new Error('이미지 레이어 선택 필요');
   if (!slice) throw new Error('탐지된 조각 없음');
-  const box = spriteSliceCanvasBox(slice);
-  if (!box) throw new Error('선택 레이어 기준점 확인 실패');
-  const dataUrl = await canvasWithOnlyObjectDataUrl(target);
+  const bounds = imageCanvasBounds(target);
+  if (!bounds) throw new Error('선택 레이어 크기 확인 실패');
+
+  // IMPORTANT: spriteSlices are selected-image-local coordinates, not canvas
+  // coordinates. Crop from the source image buffer directly. Cropping from a
+  // full-canvas render makes any frame outside the visible 1024 canvas export
+  // as a fully transparent PNG (the black_orc 4-frame sheet repro).
+  const dataUrl = await imageObjectDataUrl(target);
   const img = await loadHtmlImage(dataUrl);
+  const naturalW = img.naturalWidth || img.width || bounds.w || 1;
+  const naturalH = img.naturalHeight || img.height || bounds.h || 1;
+  const scaleX = naturalW / Math.max(1, bounds.w);
+  const scaleY = naturalH / Math.max(1, bounds.h);
+  const sx = Math.max(0, Math.round((slice.x || 0) * scaleX));
+  const sy = Math.max(0, Math.round((slice.y || 0) * scaleY));
+  const sw = Math.max(1, Math.min(naturalW - sx, Math.round((slice.width || 1) * scaleX)));
+  const sh = Math.max(1, Math.min(naturalH - sy, Math.round((slice.height || 1) * scaleY)));
+
   const el = document.createElement('canvas');
-  el.width = slice.width; el.height = slice.height;
+  el.width = Math.max(1, Math.round(slice.width || sw));
+  el.height = Math.max(1, Math.round(slice.height || sh));
   const ctx = el.getContext('2d');
   ctx.clearRect(0, 0, el.width, el.height);
-  ctx.drawImage(img, box.x, box.y, slice.width, slice.height, 0, 0, slice.width, slice.height);
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, el.width, el.height);
   return el.toDataURL('image/png');
 }
 
