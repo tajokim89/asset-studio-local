@@ -103,11 +103,53 @@ function directionLabel(code) {
   return ({ S:'S/front, face camera', SW:'SW/front-left, body turned toward screen-left', W:'W/left true side profile, face screen-left', NW:'NW/back-left, back turned toward screen-left', N:'N/back', NE:'NE/back-right, back turned toward screen-right', E:'E/right true side profile, face screen-right', SE:'SE/front-right, body turned toward screen-right' })[code] || code;
 }
 
+const PIXEL_ACTOR_ASSET_TYPES = new Set(['character', 'monster']);
+let lastActorAnimationPreset = 'idle';
+
+function isPixelActorAssetType(type = $('pixelAssetType')?.value || 'character') {
+  return PIXEL_ACTOR_ASSET_TYPES.has(type);
+}
+
+function effectivePixelAnimationPreset() {
+  return isPixelActorAssetType() ? ($('pixelAnimationPreset')?.value || 'idle') : 'ui_static';
+}
+
 function requestedPixelFrameCount() {
+  if (!isPixelActorAssetType() || effectivePixelAnimationPreset() === 'ui_static') return 1;
   return Math.max(1, Math.min(8, +($('pixelWalkFrames')?.value || 4)));
 }
 
-function buildDirectionalSpriteSheetContract(anim = $('pixelAnimationPreset')?.value || 'idle') {
+function syncPixelAssetWorkflowUi({ silent = false } = {}) {
+  const type = $('pixelAssetType')?.value || 'character';
+  const actor = isPixelActorAssetType(type);
+  const motionIds = ['pixelMotionControls', 'pixelDirectionControls', 'pixelReferenceControls', 'pixelFrameControls', 'pixelLegacyDirectionControls'];
+  motionIds.forEach(id => $(id)?.classList.toggle('hidden', !actor));
+  $('pixelStaticModeNotice')?.classList.toggle('hidden', actor);
+  $('pixelAdvancedBatch')?.classList.toggle('hidden', !actor);
+  $('legacyDirectionalButtons')?.classList.add('hidden');
+
+  if (!actor) {
+    const current = $('pixelAnimationPreset')?.value || 'idle';
+    if (current !== 'ui_static') lastActorAnimationPreset = current;
+    if ($('pixelAnimationPreset')) $('pixelAnimationPreset').value = 'ui_static';
+    if ($('pixelDirectionMode')) $('pixelDirectionMode').value = 'single';
+    if ($('pixelTargetDirection')) $('pixelTargetDirection').value = 'S';
+    if ($('pixelReferenceDirection')) $('pixelReferenceDirection').value = 'S';
+    if ($('pixelWalkFrames')) $('pixelWalkFrames').value = '1';
+  } else {
+    if ($('pixelAnimationPreset')?.value === 'ui_static') $('pixelAnimationPreset').value = lastActorAnimationPreset || 'idle';
+    if ($('pixelWalkFrames') && +$('pixelWalkFrames').value < 3) $('pixelWalkFrames').value = '4';
+  }
+
+  const typeLabel = ({ character:'캐릭터', monster:'몬스터', item:'아이템', ui_panel:'UI 패널', button:'버튼', icon:'아이콘', tile:'타일' })[type] || type;
+  if ($('generatePixelAsset')) $('generatePixelAsset').textContent = actor ? `새 ${typeLabel} 스프라이트 생성` : `${typeLabel} 정적 에셋 생성`;
+  if ($('generateFrontIdleFromSelected')) $('generateFrontIdleFromSelected').textContent = actor ? '선택 이미지 기준 방향/동작 생성' : '선택 이미지 스타일로 정적 에셋 생성';
+  if ($('runPixelWorkflow')) $('runPixelWorkflow').textContent = actor ? '생성 → 배경 제거 → 그리드 값 맞춤' : '정적 에셋 생성 → 배경 제거';
+  if (!silent) setStatus(actor ? `${typeLabel} 모드 · 동작/방향 선택 사용` : `${typeLabel} 모드 · 동작/방향 숨김 · 1프레임 생성`);
+  applyPixelWorkflowGridDefaults();
+}
+
+function buildDirectionalSpriteSheetContract(anim = effectivePixelAnimationPreset()) {
   const mode = $('pixelDirectionMode')?.value || 'single';
   const dirs = directionLabelsForMode(mode);
   const refDir = $('pixelReferenceDirection')?.value || 'S';
@@ -132,13 +174,16 @@ function buildDirectionalSpriteSheetContract(anim = $('pixelAnimationPreset')?.v
 
 function buildPixelAssetPrompt() {
   const type = $('pixelAssetType')?.value || 'character';
-  const anim = $('pixelAnimationPreset')?.value || 'idle';
+  const actor = isPixelActorAssetType(type);
+  const anim = effectivePixelAnimationPreset();
   const style = $('pixelStylePreset')?.value || '32bit_refined';
   const singleMode = ($('pixelDirectionMode')?.value || 'single') === 'single';
   const direction = singleMode ? directionLabel($('pixelTargetDirection')?.value || 'S') : ($('pixelDirection')?.value || 'front');
   const palette = ($('pixelPalette')?.value || 'limited dark game palette').trim();
   const subject = ($('pixelSubject')?.value || 'game character').trim();
-  const typeLine = type === 'ui_panel' ? 'UI game asset, clean panel parts, reusable game UI component' : `${type} game asset`;
+  const typeLine = type === 'ui_panel'
+    ? 'UI game asset, clean panel parts, reusable game UI component'
+    : `${type} game asset`;
   const frameCount = anim === 'ui_static' ? 1 : requestedPixelFrameCount();
   const animLine = {
     idle: `idle animation, ${frameCount}-frame subtle breathing loop, evenly spaced sprite sheet cells`,
@@ -149,11 +194,14 @@ function buildPixelAssetPrompt() {
     cast: `cast animation, ${frameCount} frames, gather/release/recovery beats, evenly spaced sprite sheet cells`,
     hurt: `hurt animation, ${frameCount} frames, impact recoil and recovery, evenly spaced sprite sheet cells`,
     death: `death animation, ${frameCount} frames, collapse/down/still beats, evenly spaced sprite sheet cells`,
-    ui_static: 'UI static single asset, no animation frames, crisp reusable interface element',
+    ui_static: `${type} static single asset, no animation frames, crisp reusable game component`,
   }[anim] || `${frameCount}-frame animation frames`;
   const styleLine = `${style.replaceAll('_', ' ')}, refined pixel art, not chunky NES, clean silhouette, game-ready production quality`;
-  const directionalContract = buildDirectionalSpriteSheetContract(anim);
-  return `${subject}\n${typeLine}\n${animLine}\n${directionalContract}\nDirection hint: ${direction}\nPalette: ${palette}\nStyle: ${styleLine}\nOutput: pixel-art sprite sheet when animated, transparent background, isolated asset, centered, consistent scale, clean alpha edges, no text, no watermark, no logo, no mockup frame.`;
+  const directionalContract = actor ? buildDirectionalSpriteSheetContract(anim) : 'Static asset contract: exactly one isolated reusable game asset, no animation, no direction sheet, no alternate poses.';
+  const outputLine = actor
+    ? 'Output: pixel-art sprite sheet, transparent background, isolated asset, centered, consistent scale, clean alpha edges, no text, no watermark, no logo, no mockup frame.'
+    : 'Output: single transparent PNG-style pixel asset, centered, clean alpha edges, no sprite sheet, no text, no watermark, no logo, no mockup frame.';
+  return `${subject}\n${typeLine}\n${animLine}\n${directionalContract}\n${actor ? `Direction hint: ${direction}` : 'Direction hint: not applicable for this asset type.'}\nPalette: ${palette}\nStyle: ${styleLine}\n${outputLine}`;
 }
 
 function syncPixelAssetPrompt() {
@@ -167,7 +215,7 @@ function syncPixelAssetPrompt() {
 }
 
 function pixelPresetFrameCount() {
-  const anim = $('pixelAnimationPreset')?.value || 'idle';
+  const anim = effectivePixelAnimationPreset();
   if (anim === 'ui_static') return 1;
   return requestedPixelFrameCount();
 }
@@ -243,7 +291,7 @@ function recordPixelAssetResult(url, label = 'generated') {
   if (!slots || !url) return;
   const card = document.createElement('div');
   card.className = 'pixel-result-slot filled';
-  const anim = $('pixelAnimationPreset')?.value || 'idle';
+  const anim = effectivePixelAnimationPreset();
   const type = $('pixelAssetType')?.value || 'character';
   card.innerHTML = `<img alt="pixel asset result" src="${url}"><span>${type} · ${anim} · ${label}</span>`;
   slots.prepend(card);
@@ -3966,9 +4014,11 @@ if ($('runDirectionalPixelPack')) $('runDirectionalPixelPack').onclick = () => r
 ['pixelFrameW','pixelFrameH','pixelAnimationPreset','pixelDirectionMode','pixelTargetDirection','pixelWalkFrames'].forEach(id => {
   if ($(id)) $(id).addEventListener('change', () => applyPixelWorkflowGridDefaults());
 });
-['pixelAssetType','pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelDirectionMode','pixelTargetDirection','pixelReferenceDirection','pixelWalkFrames','pixelChromaMode','pixelPalette','pixelSubject'].forEach(id => {
+if ($('pixelAssetType')) $('pixelAssetType').addEventListener('change', () => { syncPixelAssetWorkflowUi(); syncPixelAssetPrompt(); });
+['pixelAnimationPreset','pixelStylePreset','pixelDirection','pixelDirectionMode','pixelTargetDirection','pixelReferenceDirection','pixelWalkFrames','pixelChromaMode','pixelPalette','pixelSubject'].forEach(id => {
   if ($(id)) $(id).addEventListener(id === 'pixelSubject' || id === 'pixelPalette' ? 'input' : 'change', () => syncPixelAssetPrompt());
 });
+syncPixelAssetWorkflowUi({ silent: true });
 if ($('runInpaint')) $('runInpaint').onclick = runSelectedAreaAiEdit;
 if ($('applyInpaintNewLayer')) $('applyInpaintNewLayer').onclick = applyPendingInpaintAsLayer;
 if ($('applyInpaintReplace')) $('applyInpaintReplace').onclick = applyPendingInpaintAsReplacement;
@@ -4065,7 +4115,7 @@ async function generateAiAsset() {
     const directionMode = $('pixelDirectionMode')?.value || 'single';
     const targetDirection = $('pixelTargetDirection')?.value || 'S';
     const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
-    const rawAnimPreset = $('pixelAnimationPreset')?.value || 'idle';
+    const rawAnimPreset = effectivePixelAnimationPreset();
     const animationMode = rawAnimPreset.startsWith('walk') ? 'walk' : rawAnimPreset;
     const payload = {
       prompt,
@@ -4163,6 +4213,16 @@ function animationPresetSpec(presetRaw) {
 function buildSelectedActionSpritePrompt(referenceObj, spec) {
   const baseSubject = ($('pixelSubject')?.value || '').trim();
   const palette = ($('pixelPalette')?.value || 'limited dark fantasy palette').trim();
+  const type = $('pixelAssetType')?.value || 'character';
+  const actor = isPixelActorAssetType(type);
+  if (!actor) {
+    return `${baseSubject ? baseSubject + '\n\n' : ''}Create one static ${type} pixel-art game asset using the selected image only as a visual style/color reference.
+No character animation, no directional sheet, no alternate poses, no multiple frames.
+Preserve the reference's pixel density, outline weight, palette mood, and production style, but create the requested ${type} asset.
+Refined 32-bit game-ready pixel art, crisp hard pixels, clean silhouette, ${palette}.
+Flat exact #00FF00 chroma green background edge-to-edge.
+No text, labels, numbers, watermark, mockup frame, scenery, extra characters, or sprite sheet.`;
+  }
   const targetDirection = $('pixelTargetDirection')?.value || 'S';
   const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
   const directionText = directionLabel(targetDirection);
@@ -4184,27 +4244,30 @@ No text, labels, numbers, watermark, mockup frame, scenery, extra characters, mu
 
 async function generateFrontIdleFromSelected() {
   const referenceObj = selectedLayerObject();
+  const type = $('pixelAssetType')?.value || 'character';
+  const actor = isPixelActorAssetType(type);
   if (!referenceObj || referenceObj.type !== 'image') {
-    alert('먼저 캔버스에서 캐릭터 이미지 레이어를 선택하세요.');
-    setStatus('방향/동작 자동 생성 실패: 이미지 레이어 선택 필요');
+    alert(actor ? '먼저 캔버스에서 캐릭터/몬스터 이미지 레이어를 선택하세요.' : '선택 이미지 스타일 생성은 먼저 이미지 레이어를 선택해야 합니다.');
+    setStatus('선택 이미지 기준 생성 실패: 이미지 레이어 선택 필요');
     return null;
   }
   const btn = $('generateFrontIdleFromSelected');
   if (btn) btn.disabled = true;
-  const preset = $('pixelAnimationPreset')?.value || 'idle';
+  const preset = effectivePixelAnimationPreset();
   const spec = animationPresetSpec(preset);
   const targetDirection = $('pixelTargetDirection')?.value || 'S';
   const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
   const prompt = buildSelectedActionSpritePrompt(referenceObj, spec);
+  const statusPrefix = actor ? `선택 ${type} 기준 ${directionLabel(targetDirection)} ${spec.label} ${spec.frames}프레임` : `선택 이미지 스타일 기준 ${type} 정적 에셋`;
   try {
-    setStatus(`선택 캐릭터 기준 ${directionLabel(targetDirection)} ${spec.label} ${spec.frames}프레임 자동 생성 중...`);
+    setStatus(`${statusPrefix} 자동 생성 중...`);
     const res = await fetch('/api/generate-reference', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         reference_image: imageObjectToDataUrl(referenceObj),
         prompt,
-        negative: 'wrong facing direction, alternate directions, turntable, contact sheet, multiple rows, labels, text, numbers, watermark, different character per frame, color drift, costume changes, white background, scenery, cropped feet, malformed limbs, fake walk cycle, duplicate frames',
+        negative: actor ? 'wrong facing direction, alternate directions, turntable, contact sheet, multiple rows, labels, text, numbers, watermark, different character per frame, color drift, costume changes, white background, scenery, cropped feet, malformed limbs, fake walk cycle, duplicate frames' : 'animation frames, sprite sheet, character pose sheet, directional views, labels, text, numbers, watermark, white background, scenery, mockup frame',
         preset: 'pixel',
         aspect_ratio: 'square',
         background_mode: 'chroma_green',
@@ -4219,7 +4282,7 @@ async function generateFrontIdleFromSelected() {
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'direction/action generation failed');
     const url = withCacheBust(data.url);
-    const resultLabel = `${targetDirection} ${spec.label} ${spec.frames}f`;
+    const resultLabel = actor ? `${targetDirection} ${spec.label} ${spec.frames}f` : `${type} static`;
     addGallery(url, data.method || data.model || resultLabel);
     const img = await addImageUrl(url, `${resultLabel} - ${nameOf(referenceObj)}`);
     canvas.setActiveObject(img);
@@ -4235,7 +4298,7 @@ async function generateFrontIdleFromSelected() {
       $('pixelQaSummary').textContent = `${resultLabel} 자동 · alpha ${data.qa.alpha_min}-${data.qa.alpha_max} · corners ${data.qa.corner_alpha?.join('/') || '-'} · green ${data.qa.green_pixels ?? '-'}`;
     }
     recordPixelAssetResult(url, data.method || data.model || resultLabel);
-    setStatus(`${directionLabel(targetDirection)} ${spec.label} ${spec.frames}프레임 자동 생성 완료 · grid/preview 연결됨`);
+    setStatus(actor ? `${directionLabel(targetDirection)} ${spec.label} ${spec.frames}프레임 자동 생성 완료 · grid/preview 연결됨` : `${type} 정적 에셋 자동 생성 완료 · 1프레임 그리드 연결됨`);
     return { url, img, data };
   } catch (err) {
     console.error(err);
