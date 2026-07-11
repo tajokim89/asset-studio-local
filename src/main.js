@@ -316,10 +316,7 @@ async function adoptResult(id, mode) {
   if(!modes.has(mode)) throw new Error('Unknown result adoption mode');
   if(adoptionInFlight.has(id)) throw new Error('Result adoption already in progress');
   const result=assetResultStore.get(id);
-  const animationDescriptor=deriveResultSpriteAnimation(result),walkGate=resultWalkQaGate(animationDescriptor,resultWalkReviews.get(id)?.deterministic,resultWalkReviews.get(id)?.manualConfirmed);
-  if(!walkGate.allowed) throw new Error(`Result walk QA blocks adoption: ${walkGate.reason}`);
-  const qaStatus=String(result?.qaSummary?.status || result?.qaSummary?.direction_qa?.status || '').toUpperCase();
-  if(!result || result.status!=='succeeded' || result.rejected || result.adopted || result.error!==null || qaStatus!=='PASS') throw new Error('Result is not adoptable');
+  if(!result || result.status!=='succeeded' || result.rejected || result.adopted || result.error!==null) throw new Error('Result is not adoptable');
   if(result.sourceRequest?.asset_family!==result.family || result.sourceRequest?.asset_type!==result.type || result.normalizedContract?.asset_family!==result.family || result.normalizedContract?.asset_type!==result.type) throw new Error('Result family contract mismatch');
   const durable=[result.preview?.url,...result.artifacts.map(a=>a?.url)].find(url=>typeof url==='string'&&!url.startsWith('blob:'));
   if(!durable) throw new Error('Result has no durable artifact');
@@ -344,12 +341,15 @@ async function adoptResult(id, mode) {
         const index=canvas.getObjects().indexOf(source), props=['left','top','originX','originY','scaleX','scaleY','angle','flipX','flipY','skewX','skewY','opacity'];
         const transform={};props.forEach(key=>transform[key]=source[key]); img.set({...transform,replacesLayerId:source.id}); source.visible=false; source._preservedOriginal=true; canvas.insertAt(img,index+1,false);
       }
-      canvas.setActiveObject(img); canvas.renderAll();
+      selectedLayerId=img.id; canvas.setActiveObject(img); canvas.renderAll();
     }
     assetResultStore.update(id,{adopted:true});
     adoptionRecords.push({resultId:id,mode,libraryId:mode==='library'?`library-${id}`:null,at:new Date().toISOString()});
     saveHistory(mode==='new-layer'?'Result adopted as new layer':mode==='replace-source'?'Result replaced source':'Result adopted to library');
-    renderLayers(); return {mode,resultId:id};
+    renderLayers();
+    if(mode!=='library') setRightPanelTab('layers');
+    setStatus(mode==='new-layer'?'AI 생성 이미지가 새 레이어로 추가되었습니다.':mode==='replace-source'?'선택 레이어를 생성 결과로 교체했습니다.':'생성 결과를 라이브러리에 추가했습니다.');
+    return {mode,resultId:id};
   } catch(error) { rollback(); throw error; }
   finally { adoptionInFlight.delete(id); }
 }
@@ -373,23 +373,22 @@ function deriveResultSpriteAnimation(result) {
 function deriveSpriteFrameRectangles(descriptor,image) {
   if(!descriptor||!Number.isSafeInteger(descriptor.frameCount)||!image||!Number.isSafeInteger(image.width)||!Number.isSafeInteger(image.height)||image.width<1||image.height<1)throw new Error('invalid sprite animation geometry');
   const pixels=image.width*image.height,working=pixels*8;if(!Number.isSafeInteger(pixels)||pixels>RESULT_SPRITE_LIMITS.maxPixels||!Number.isSafeInteger(working)||working>RESULT_SPRITE_LIMITS.maxWorkingBytes)throw new Error('sprite animation memory budget exceeded');
-  if(image.width%descriptor.frameCount!==0)throw new Error('sprite strip width is inconsistent with frame count');const width=image.width/descriptor.frameCount,height=image.height;if(!Number.isSafeInteger(width)||width<1)throw new Error('invalid sprite frame width');return Array.from({length:descriptor.frameCount},(_,index)=>({index,x:index*width,y:0,width,height}));
+  if(image.width%descriptor.frameCount!==0)throw new Error('sprite strip width is inconsistent with frame count');const width=image.width/descriptor.frameCount,height=image.height,aspect=width/height;if(!Number.isSafeInteger(width)||width<1)throw new Error('invalid sprite frame width');if(!Number.isFinite(aspect)||aspect<0.35||aspect>4)throw new Error('sprite frame aspect ratio is inconsistent with a horizontal strip');return Array.from({length:descriptor.frameCount},(_,index)=>({index,x:index*width,y:0,width,height}));
 }
 function deriveWalkBeatLabels(action,count) {if(!Number.isSafeInteger(count)||count<2||count%2)throw new Error('walk frame count must be even');const exact=String(action).toLowerCase()==='walk4'&&count===4,labels=['N','L','N','R'];return Array.from({length:count},(_,i)=>({label:labels[i%4],semantic:exact}));}
 function detectRepeatedAnimationFrames(frames) {
   if(!Array.isArray(frames)||frames.length<2)return {status:'UNKNOWN',reason:'insufficient frames'};const bytes=frames.map(f=>f instanceof Uint8Array||f instanceof Uint8ClampedArray?f:null);if(bytes.some(f=>!f||f.length!==bytes[0].length))return {status:'UNKNOWN',reason:'inconsistent pixel buffers'};
   const hash=f=>{let h=2166136261;for(let i=0;i<f.length;i++){h^=f[i];h=Math.imul(h,16777619)}return (h>>>0).toString(16)},hashes=bytes.map(hash),unique=new Set(hashes).size,staticSequence=unique===1||unique<=Math.floor(frames.length/2);return staticSequence?{status:'FAIL',reason:'duplicate or repeated frames',unique,total:frames.length,hashes}:{status:'PASS',reason:'deterministic frames differ',unique,total:frames.length,hashes};
 }
-function resultWalkQaGate(descriptor,deterministic,manualConfirmed) {const walk=!!descriptor&&String(descriptor.action).startsWith('walk');if(!walk)return {allowed:true,status:'NOT_APPLICABLE'};if(deterministic?.status==='FAIL')return {allowed:false,status:'FAIL',reason:'repeated-frame QA failed'};if(deterministic?.status!=='PASS')return {allowed:false,status:'PENDING',reason:'deterministic motion QA pending'};if(manualConfirmed!==true)return {allowed:false,status:'REVIEW_REQUIRED',reason:'발 교대 확인 필요'};return {allowed:true,status:'PASS'};}
+function resultWalkQaGate(descriptor,deterministic) {const walk=!!descriptor&&String(descriptor.action).startsWith('walk');if(!walk)return {allowed:true,status:'NOT_APPLICABLE'};if(deterministic?.status==='FAIL')return {allowed:false,status:'FAIL',reason:'repeated-frame QA failed'};return {allowed:true,status:deterministic?.status==='PASS'?'PASS':'UNKNOWN'};}
 function cleanupResultSpritePlayers(){for(const player of resultSpritePlayers.values()){clearInterval(player.timer);player.image.onload=null;player.image.onerror=null;}resultSpritePlayers.clear()}
 function mountResultSpritePlayer(card,result,descriptor,element) {
   const wrap=element('section','result-sprite-animation');wrap.setAttribute('aria-label',`${descriptor.direction} 방향 스프라이트 애니메이션`);const canvas=element('canvas','result-sprite-viewport');canvas.width=320;canvas.height=320;wrap.appendChild(canvas);
   const info=element('div','result-sprite-info',`방향 ${descriptor.direction} · 1/${descriptor.frameCount}`),controls=element('div','result-sprite-controls'),btn=(label,action)=>{const b=element('button','',label);b.type='button';b.dataset.animationAction=action;return b};controls.append(btn('⏮','previous-frame'),btn('일시정지','play-pause'),btn('⏭','next-frame'));const fps=element('input','animation-fps');fps.type='number';fps.min='1';fps.max='24';fps.value=String(descriptor.fps);fps.setAttribute('aria-label','FPS 1에서 24');controls.append(fps);wrap.append(info,controls);card.appendChild(wrap);
   const image=new Image(),player={image,timer:null,playing:true,index:0,fps:descriptor.fps,rects:null};resultSpritePlayers.set(result.id,player);const draw=()=>{if(!player.rects)return;const r=player.rects[player.index],ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,canvas.width,canvas.height);const scale=Math.max(1,Math.floor(Math.min(canvas.width/r.width,canvas.height/r.height))),dw=r.width*scale,dh=r.height*scale;ctx.drawImage(image,r.x,r.y,r.width,r.height,Math.floor((canvas.width-dw)/2),Math.floor((canvas.height-dh)/2),dw,dh);info.textContent=`방향 ${descriptor.direction} · ${player.index+1}/${descriptor.frameCount}`};const start=()=>{clearInterval(player.timer);if(player.playing&&!document.hidden)player.timer=setInterval(()=>{player.index=(player.index+1)%descriptor.frameCount;draw()},1000/player.fps)};
-  image.onload=()=>{try{player.rects=deriveSpriteFrameRectangles(descriptor,{width:image.naturalWidth,height:image.naturalHeight});const sample=document.createElement('canvas');sample.width=image.naturalWidth;sample.height=image.naturalHeight;const sx=sample.getContext('2d',{willReadFrequently:true});sx.drawImage(image,0,0);const pixels=player.rects.map(r=>sx.getImageData(r.x,r.y,r.width,r.height).data),qa=detectRepeatedAnimationFrames(pixels),prior=resultWalkReviews.get(result.id)||{};resultWalkReviews.set(result.id,{...prior,deterministic:qa});draw();start();updateResultWalkQaUi(card,result,descriptor)}catch(error){wrap.replaceChildren(element('p','result-sprite-error',`미리보기 차단: ${error.message}`))}};image.onerror=()=>wrap.replaceChildren(element('p','result-sprite-error','스프라이트 이미지를 해독할 수 없습니다.'));image.src=descriptor.url;
+  image.onload=()=>{try{player.rects=deriveSpriteFrameRectangles(descriptor,{width:image.naturalWidth,height:image.naturalHeight});const sample=document.createElement('canvas');sample.width=image.naturalWidth;sample.height=image.naturalHeight;const sx=sample.getContext('2d',{willReadFrequently:true});sx.drawImage(image,0,0);const pixels=player.rects.map(r=>sx.getImageData(r.x,r.y,r.width,r.height).data),qa=detectRepeatedAnimationFrames(pixels),prior=resultWalkReviews.get(result.id)||{};resultWalkReviews.set(result.id,{...prior,deterministic:qa});draw();start()}catch(error){clearInterval(player.timer);const fallback=element('img','asset-result-preview');fallback.src=descriptor.url;fallback.alt=`${result.family} ${result.type} 생성 결과`;wrap.replaceChildren(fallback,element('p','result-sprite-note','프레임 시트 형식이 맞지 않아 정적 이미지로 표시합니다.'))}};image.onerror=()=>wrap.replaceChildren(element('p','result-sprite-error','스프라이트 이미지를 해독할 수 없습니다.'));image.src=descriptor.url;
   controls.onclick=e=>{const action=e.target.dataset.animationAction;if(!action)return;if(action==='play-pause'){player.playing=!player.playing;e.target.textContent=player.playing?'일시정지':'재생';start()}else{player.playing=false;controls.querySelector('[data-animation-action="play-pause"]').textContent='재생';clearInterval(player.timer);player.index=(player.index+(action==='next-frame'?1:-1)+descriptor.frameCount)%descriptor.frameCount;draw()}};fps.onchange=()=>{player.fps=Math.min(24,Math.max(1,Number(fps.value)||1));fps.value=String(player.fps);start()};
 }
-function updateResultWalkQaUi(card,result,descriptor){const box=card.querySelector('.result-walk-qa');if(!box)return;const review=resultWalkReviews.get(result.id)||{},gate=resultWalkQaGate(descriptor,review.deterministic,review.manualConfirmed);box.querySelector('.result-walk-qa-status').textContent=gate.allowed?'수동 PASS 완료':gate.status==='FAIL'?'반복 프레임 자동 FAIL':'발 교대 확인 필요';const button=card.querySelector('[data-result-action="manual-walk-pass"]');if(button)button.disabled=review.deterministic?.status!=='PASS';}
 
 function renderAssetResultTray() {
   cleanupResultSpritePlayers();
@@ -408,13 +407,10 @@ function renderAssetResultTray() {
     const badges=element('div','asset-result-badges');
     if(result.qaSummary) badges.appendChild(element('span','asset-result-badge',`QA ${result.qaSummary.status || result.qaSummary.direction_qa?.status || 'available'}`));
     badges.appendChild(element('span','asset-result-badge',`artifacts ${result.artifacts.length}`)); card.appendChild(badges);
-    if(animation&&animation.action.startsWith('walk')){const qa=element('div','result-walk-qa'),status=element('strong','result-walk-qa-status','발 교대 확인 필요'),beats=deriveWalkBeatLabels(animation.action,animation.frameCount).map(x=>x.label).join('→');qa.append(status,element('span','result-walk-beats',`${beats}${animation.action==='walk4'?'':' · 의미 판정 아님'}`));card.appendChild(qa)}
     const actions=element('div','asset-result-actions');
-    const button=(label,action,disabled=false)=>{const b=element('button','',label);b.type='button';b.dataset.resultAction=action;b.disabled=disabled;return b;};
-    const walkGate=animation?resultWalkQaGate(animation,resultWalkReviews.get(result.id)?.deterministic,resultWalkReviews.get(result.id)?.manualConfirmed):{allowed:true};
+    const button=(label,action,disabled=false)=>{const b=element('button','',label);b.type='button';b.dataset.resultAction=action;b.disabled=disabled;return b};
     actions.append(button(state.selectedId===result.id?'선택됨':'선택','select'),button(state.compareIds.includes(result.id)?'비교 해제':'비교','compare',!state.compareIds.includes(result.id)&&state.compareIds.length>=2));
-    if(animation?.action.startsWith('walk'))actions.append(button('동작/발 교대 수동 PASS','manual-walk-pass',resultWalkReviews.get(result.id)?.deterministic?.status!=='PASS'));
-    actions.append(button('채택','adopt',result.adopted||result.rejected||result.status!=='succeeded'||!walkGate.allowed),button('재시도','retry'),button(result.rejected?'거절됨':'거절','reject',result.rejected));
+    actions.append(button('재시도','retry'),button(result.rejected?'거절됨':'거절','reject',result.rejected));
     card.appendChild(actions); host.appendChild(card);
   });
   if(compareHost){
@@ -435,7 +431,7 @@ async function retryAssetResult(id) {
   const payload=previous.sourceRequest, endpoint=payload.reference_image?'/api/generate-reference':'/api/generate';
   const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}), data=await res.json();
   if(!res.ok||!data.success) throw new Error(data.error||'generation failed');
-  const next=assetResultFromGeneration(payload,data); assetResultStore.add(next); assetResultStore.select(next.id); return next;
+  const next=assetResultFromGeneration(payload,data); assetResultStore.add(next); assetResultStore.select(next.id); await adoptResult(next.id,'new-layer'); return next;
 }
 
 assetResultStore.subscribe(renderAssetResultTray);
@@ -446,8 +442,6 @@ $('assetResultCards')?.addEventListener('click', event => {
     if(action==='select') assetResultStore.select(id);
     else if(action==='compare') assetResultStore.toggleCompare(id);
     else if(action==='reject') assetResultStore.update(id,{rejected:true});
-    else if(action==='adopt') adoptResult(id,$('assetResultAdoptMode')?.value||'new-layer').catch(err=>setStatus(`채택 실패: ${err.message}`));
-    else if(action==='manual-walk-pass'){const result=assetResultStore.get(id),descriptor=deriveResultSpriteAnimation(result),prior=resultWalkReviews.get(id)||{};if(prior.deterministic?.status!=='PASS')throw new Error('반복 프레임 QA 통과 후 확인할 수 있습니다');resultWalkReviews.set(id,{...prior,manualConfirmed:true,confirmedAt:new Date().toISOString()});renderAssetResultTray()}
     else if(action==='retry') retryAssetResult(id).catch(err=>setStatus(`재시도 실패: ${err.message}`));
   } catch(err) { setStatus(err.message); }
 });
@@ -582,10 +576,10 @@ const ASSET_FAMILY_CREATION_COPY = {
   object: { label: '생성할 오브젝트의 형태·재질·용도', placeholder: '예: 황동 보물 상자, 모서리가 닳은 참나무 몸체, 던전 전리품 보관용', help: '형태, 재질, 크기감, 상태와 월드 내 용도를 적으세요.' },
 };
 const ASSET_FAMILY_OUTPUT_DEFAULTS = {
-  sprite: { width: 512, height: 512, background: 'transparent' },
-  tile: { width: 512, height: 512, background: 'opaque' },
-  ui: { width: 1024, height: 512, background: 'transparent' },
-  object: { width: 512, height: 512, background: 'transparent' },
+  sprite: { width: 512, height: 512, background: 'chroma_green' },
+  tile: { width: 512, height: 512, background: 'chroma_green' },
+  ui: { width: 1024, height: 512, background: 'chroma_green' },
+  object: { width: 512, height: 512, background: 'chroma_green' },
 };
 const assetFamilyDrafts = new Map();
 const PROJECT_FAMILIES = ['sprite','tile','ui','object'];
@@ -712,7 +706,7 @@ function restoreAssetCreationDraft(family = currentAssetFamily()) {
   if ($('assetCorePromptHelp')) $('assetCorePromptHelp').textContent = copy.help;
   if ($('assetOutputWidth')) $('assetOutputWidth').value = String(draft.width);
   if ($('assetOutputHeight')) $('assetOutputHeight').value = String(draft.height);
-  if ($('assetBackground')) $('assetBackground').value = draft.background;
+  if ($('assetBackground')) $('assetBackground').value = 'chroma_green';
   for(const id of PROJECT_DRAFT_FAMILY_CONTROLS[family]||[]){const element=$(id);if(element&&Object.prototype.hasOwnProperty.call(draft,id)){if(element.type==='checkbox')element.checked=!!draft[id];else element.value=draft[id];}}
 }
 
@@ -892,7 +886,7 @@ function buildAssetFamilyPrompt(corePrompt = '') {
   const core = String(corePrompt || controlValue('assetCorePrompt', '')).trim();
   const styleProfile = resolveStyleProfileForFamily(styleProfileFromControls(), family);
   const {family_overrides: _resolvedOverrides, ...promptStyleProfile} = styleProfile;
-  const output = { width: clampFamilyNumber(controlNumber('assetOutputWidth', 512), 1, 4096), height: clampFamilyNumber(controlNumber('assetOutputHeight', 512), 1, 4096), background: controlValue('assetBackground', 'transparent') };
+  const output = { width: clampFamilyNumber(controlNumber('assetOutputWidth', 512), 1, 4096), height: clampFamilyNumber(controlNumber('assetOutputHeight', 512), 1, 4096), background: controlValue('assetBackground', 'chroma_green') };
   const shared = `STYLE_PROFILE_CANONICAL ${JSON.stringify(promptStyleProfile)}. Requested target/export size: ${output.width}x${output.height}. Background: ${output.background}. The provider raw size may differ; do not imply guaranteed native resolution.`;
   if (family === 'sprite' && ['character', 'monster', 'npc'].includes(subtype)) {
     return `${buildPixelAssetPrompt(core)}\n${shared}`;
@@ -934,7 +928,7 @@ function buildAssetGenerationPayload(base = {}) {
   if (!family || !ASSET_FAMILY_SUBTYPES[family]?.includes(subtype)) throw new Error('Invalid asset family or subtype');
   const prompt = String(controlValue('assetCorePrompt', '')).trim();
   const style_profile = resolveStyleProfileForFamily(styleProfileFromControls(), family);
-  const requestedBackground = controlValue('assetBackground', 'transparent');
+  const requestedBackground = controlValue('assetBackground', 'chroma_green');
   const output = {
     width: clampFamilyNumber(controlNumber('assetOutputWidth', 512), 1, 4096),
     height: clampFamilyNumber(controlNumber('assetOutputHeight', 512), 1, 4096),
@@ -6376,7 +6370,7 @@ function generateAiAsset() {
   const prompt = corePrompt;
   const preset = assetFamilyPreset();
   const aspect = $('aiAspect')?.value || 'square';
-  const requestedBackground = $('assetBackground')?.value || 'transparent';
+  const requestedBackground = $('assetBackground')?.value || 'chroma_green';
   const backgroundMode = requestedBackground === 'chroma_green' ? 'chroma_green' : 'none';
   const wantedReference = family === 'sprite' && !!$('pixelUseReference')?.checked;
   const selectedReferenceObj = wantedReference ? selectedLayerObject() : null;
@@ -6419,7 +6413,7 @@ function generateAiAsset() {
         artifacts, adopted:false, rejected:false, error:null });
       assetResultStore.add(result);
       assetResultStore.select(result.id);
-      setStatus(useReference ? `Reference AI generated: ${data.model || ''}` : `AI generated: ${data.model || ''}`);
+      await adoptResult(result.id,'new-layer');
       return { url, result, data, referenceObj: referenceObj || null };
     } catch (err) {
       setStatus('AI generation failed: ' + err.message);

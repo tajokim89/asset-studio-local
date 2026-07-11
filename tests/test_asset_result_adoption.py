@@ -43,11 +43,24 @@ def test_public_atomic_adopt_api_and_three_modes_exist():
 def test_preconditions_decode_budgets_and_no_provider_call():
     adopt = body("adoptResult")
     preflight = body("preflightResultImage")
-    for token in ("succeeded", "rejected", "adopted", "qaSummary", "normalizedContract", "artifacts"):
+    for token in ("succeeded", "rejected", "adopted", "normalizedContract", "artifacts"):
         assert token in adopt
     for token in ("data:", "image/png", "image/jpeg", "arrayBuffer", "createImageBitmap", "pixels", "timeout"):
         assert token in preflight
     assert "fetch(" not in adopt and "/api/" not in adopt
+
+
+def test_generated_results_are_not_blocked_by_qa_and_success_reveals_new_layer():
+    adopt = body("adoptResult")
+    assert "qaStatus" not in adopt
+    assert "resultWalkQaGate" not in adopt
+    assert "selectedLayerId=img.id" in adopt
+    assert "setRightPanelTab('layers')" in adopt
+    assert "AI 생성 이미지가 새 레이어로 추가되었습니다." in adopt
+    generate = body("generateAiAsset")
+    retry = body("retryAssetResult")
+    assert "await adoptResult(result.id,'new-layer')" in generate
+    assert "await adoptResult(next.id,'new-layer')" in retry
 
 
 def test_compact_provenance_serializes_only_references():
@@ -57,12 +70,10 @@ def test_compact_provenance_serializes_only_references():
     assert "sourceRequest:" not in adopt and "normalizedContract:" not in adopt
 
 
-def test_accessible_mode_control_and_adopt_buttons_are_styled():
-    assert 'id="assetResultAdoptMode"' in HTML
-    for mode in ("new-layer", "replace-source", "library"):
-        assert f'value="{mode}"' in HTML
-    assert "button('채택','adopt'" in JS
-    assert ".asset-result-adopt" in CSS
+def test_result_tray_has_no_manual_adoption_control():
+    assert 'id="assetResultAdoptMode"' not in HTML
+    assert "button('채택','adopt'" not in JS
+    assert "manual-walk-pass" not in JS
 
 
 def test_rollback_and_exactly_one_history_commit_are_explicit():
