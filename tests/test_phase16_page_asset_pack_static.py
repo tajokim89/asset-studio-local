@@ -7,9 +7,9 @@ JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 
 def test_phase16_page_asset_pack_ui_exists():
     required = [
-        "phase17-directional-chroma",
+        "src/main.js?v=20260710.8",
         "runPixelSamplePack",
-        "Idle/Walk/UI 샘플팩",
+        "샘플팩 생성",
         "선택한 이미지 레이어를 기준 이미지로 사용",
     ]
     for token in required:
@@ -29,10 +29,11 @@ def test_phase16_sample_pack_logic_exists():
 
 
 def test_phase16_remove_bg_returns_cutout_before_grid_preview():
+    workflow = JS.split("async function runPixelWorkflow()", 1)[1].split("async function runDirectionalPixelWorkflow", 1)[0]
     assert "return { url, cutout, data }" in JS
-    assert "const cleaned = await removeBgSelected('chroma_green'" in JS
-    assert "finalImg = cleaned.cutout" in JS
-    assert JS.index("const cleaned = await removeBgSelected('chroma_green'") < JS.index("await detectGridSpriteSlices()")
+    assert "const cleaned = await removeBgSelected('chroma_green'" in workflow
+    assert "finalImg = cleaned.cutout" in workflow
+    assert workflow.index("const cleaned = await removeBgSelected('chroma_green'") < workflow.index("spriteSlices = buildGridSpriteSlices()")
 
 
 def test_phase16_data_urls_are_not_cache_busted():

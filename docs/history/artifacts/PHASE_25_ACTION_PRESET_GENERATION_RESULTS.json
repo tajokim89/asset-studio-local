@@ -1,0 +1,631 @@
+{
+  "generated_at": 1783555094.341711,
+  "result_path": "/Users/tajokim/asset-studio-local/PHASE_25_ACTION_PRESET_GENERATION_RESULTS.json",
+  "contact_sheet": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_action_presets_contact_sheet.png",
+  "total": 8,
+  "successes": 8,
+  "alpha_passes": 8,
+  "frame_passes": 8,
+  "cleanup_passes": 8,
+  "items": [
+    {
+      "action": "idle",
+      "animation_mode": "idle4",
+      "frames": 4,
+      "prompt": "small hooded dungeon cleanup worker with brass goggles and short tool, consistent dark fantasy pixel character, same identity every frame\nidle animation, 4-frame subtle breathing loop: 1 neutral stance; 2 subtle breath up; 3 neutral stance; 4 subtle breath down\nsingle horizontal sprite sheet, one row only, evenly spaced cells, wide empty #00FF00 chroma green gutters, every body part, weapon, held object, shadow, and silhouette fully inside its own cell, 15 percent empty margin in each cell; no VFX, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, or motion trails because effects are separate game assets composited in-game\nrefined 32-bit pixel art, dark muted palette, clean silhouette, game-ready sprite, hard pixel edges, no text, no numbers, no watermark\nbackground must be flat exact #00FF00 chroma green edge-to-edge before postprocess; no visible rectangular cell boxes, no dark green residue, no chroma spill, no halo, no fringe",
+      "started_at": 1783554639.482496,
+      "response": {
+        "success": true,
+        "url": "/assets/generated/generated_1783554674_openai_codex_gpt-image-2-medium_20260709_085111_bdf33dbc.png",
+        "path": "/Users/tajokim/asset-studio-local/assets/generated/generated_1783554674_openai_codex_gpt-image-2-medium_20260709_085111_bdf33dbc.png",
+        "model": "gpt-image-2-medium",
+        "provider": "openai-codex",
+        "background_mode": "chroma_green",
+        "qa": {
+          "width": 2172,
+          "height": 724,
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "corner_alpha": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "green_pixels": 0,
+          "cleanup_qa": {
+            "pass": true,
+            "residual_green_pixels": 0,
+            "residual_dark_border_pixels": 0,
+            "opaque_pixels": 177421,
+            "corner_alpha": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "direction_qa": {
+            "status": "pass",
+            "reason": "single_direction_trim",
+            "target_direction": "S",
+            "component_count": 4,
+            "bbox": [
+              179,
+              200,
+              2044,
+              518
+            ],
+            "note": "multiple opaque components preserved; no direction-slot crop performed"
+          },
+          "action": "idle",
+          "method": "chroma-global+residue-cleanup+single-direction-trim"
+        },
+        "method": "generate+chroma-global+residue-cleanup+single-direction-trim"
+      },
+      "elapsed_sec": 34.96,
+      "success": true,
+      "cleanup_pass": true,
+      "local_path": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_idle_idle4_1783554674.png",
+      "image_qa": {
+        "size": [
+          2172,
+          724
+        ],
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "green_pixels": 0,
+        "opaque_pixels": 177421,
+        "frame_opaque_pixels": [
+          45197,
+          44378,
+          45201,
+          42645
+        ],
+        "frame_count_expected": 4,
+        "frame_count_observed_by_split": 4,
+        "nonempty_frames": 4,
+        "alpha_pass": true,
+        "frame_pass": true
+      }
+    },
+    {
+      "action": "walk4",
+      "animation_mode": "walk4",
+      "frames": 4,
+      "prompt": "small hooded dungeon cleanup worker with brass goggles and short tool, consistent dark fantasy pixel character, same identity every frame\nwalk cycle, 4-frame walking animation: 1 contact A; 2 passing A; 3 contact B; 4 passing B, real alternating legs and arms\nsingle horizontal sprite sheet, one row only, evenly spaced cells, wide empty #00FF00 chroma green gutters, every body part, weapon, held object, shadow, and silhouette fully inside its own cell, 15 percent empty margin in each cell; no VFX, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, or motion trails because effects are separate game assets composited in-game\nrefined 32-bit pixel art, dark muted palette, clean silhouette, game-ready sprite, hard pixel edges, no text, no numbers, no watermark\nbackground must be flat exact #00FF00 chroma green edge-to-edge before postprocess; no visible rectangular cell boxes, no dark green residue, no chroma spill, no halo, no fringe",
+      "started_at": 1783554674.5762072,
+      "response": {
+        "success": true,
+        "url": "/assets/generated/generated_1783554708_openai_codex_gpt-image-2-medium_20260709_085145_b2e4fcfc.png",
+        "path": "/Users/tajokim/asset-studio-local/assets/generated/generated_1783554708_openai_codex_gpt-image-2-medium_20260709_085145_b2e4fcfc.png",
+        "model": "gpt-image-2-medium",
+        "provider": "openai-codex",
+        "background_mode": "chroma_green",
+        "qa": {
+          "width": 2172,
+          "height": 724,
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "corner_alpha": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "green_pixels": 0,
+          "cleanup_qa": {
+            "pass": true,
+            "residual_green_pixels": 0,
+            "residual_dark_border_pixels": 0,
+            "opaque_pixels": 223777,
+            "corner_alpha": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "direction_qa": {
+            "status": "skipped",
+            "target_direction": "S"
+          },
+          "action": "walk",
+          "method": "chroma-global+residue-cleanup"
+        },
+        "method": "generate+chroma-global+residue-cleanup"
+      },
+      "elapsed_sec": 34.17,
+      "success": true,
+      "cleanup_pass": true,
+      "local_path": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_walk4_walk4_1783554708.png",
+      "image_qa": {
+        "size": [
+          2172,
+          724
+        ],
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "green_pixels": 0,
+        "opaque_pixels": 223777,
+        "frame_opaque_pixels": [
+          56759,
+          56355,
+          54779,
+          55884
+        ],
+        "frame_count_expected": 4,
+        "frame_count_observed_by_split": 4,
+        "nonempty_frames": 4,
+        "alpha_pass": true,
+        "frame_pass": true
+      }
+    },
+    {
+      "action": "walk6",
+      "animation_mode": "walk6",
+      "frames": 6,
+      "prompt": "small hooded dungeon cleanup worker with brass goggles and short tool, consistent dark fantasy pixel character, same identity every frame\nsmooth walk cycle, 6-frame walking animation: 1 contact A; 2 down A; 3 passing A; 4 contact B; 5 down B; 6 passing B, real alternating legs and arms\nsingle horizontal sprite sheet, one row only, evenly spaced cells, wide empty #00FF00 chroma green gutters, every body part, weapon, held object, shadow, and silhouette fully inside its own cell, 15 percent empty margin in each cell; no VFX, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, or motion trails because effects are separate game assets composited in-game\nrefined 32-bit pixel art, dark muted palette, clean silhouette, game-ready sprite, hard pixel edges, no text, no numbers, no watermark\nbackground must be flat exact #00FF00 chroma green edge-to-edge before postprocess; no visible rectangular cell boxes, no dark green residue, no chroma spill, no halo, no fringe",
+      "started_at": 1783554983.224813,
+      "response": {
+        "success": true,
+        "url": "/assets/generated/generated_1783555021_openai_codex_gpt-image-2-medium_20260709_085658_7005afa0.png",
+        "path": "/Users/tajokim/asset-studio-local/assets/generated/generated_1783555021_openai_codex_gpt-image-2-medium_20260709_085658_7005afa0.png",
+        "model": "gpt-image-2-medium",
+        "provider": "openai-codex",
+        "background_mode": "chroma_green",
+        "qa": {
+          "width": 2172,
+          "height": 724,
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "corner_alpha": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "green_pixels": 0,
+          "cleanup_qa": {
+            "pass": false,
+            "residual_green_pixels": 0,
+            "residual_dark_border_pixels": 1,
+            "opaque_pixels": 246517,
+            "corner_alpha": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "direction_qa": {
+            "status": "skipped",
+            "target_direction": "S"
+          },
+          "action": "walk",
+          "method": "chroma-global+residue-cleanup"
+        },
+        "method": "generate+chroma-global+residue-cleanup"
+      },
+      "elapsed_sec": 38.12,
+      "success": true,
+      "cleanup_pass": true,
+      "local_path": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_walk6_walk6_1783555021_retry2.png",
+      "image_qa": {
+        "size": [
+          2172,
+          724
+        ],
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "green_pixels": 0,
+        "opaque_pixels": 246517,
+        "frame_opaque_pixels": [
+          40757,
+          41346,
+          40423,
+          41243,
+          40934,
+          41814
+        ],
+        "frame_count_expected": 6,
+        "frame_count_observed_by_split": 6,
+        "nonempty_frames": 6,
+        "alpha_pass": true,
+        "frame_pass": true
+      }
+    },
+    {
+      "action": "attack",
+      "animation_mode": "attack4",
+      "frames": 4,
+      "prompt": "small hooded dungeon cleanup worker with brass goggles and short tool, consistent dark fantasy pixel character, same identity every frame\nattack animation, 4 frames: 1 ready pose; 2 wind-up weapon pulled back; 3 clean body/weapon strike pose; 4 recovery, no slash arc or hit spark\nsingle horizontal sprite sheet, one row only, evenly spaced cells, wide empty #00FF00 chroma green gutters, every body part, weapon, held object, shadow, and silhouette fully inside its own cell, 15 percent empty margin in each cell; no VFX, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, or motion trails because effects are separate game assets composited in-game\nrefined 32-bit pixel art, dark muted palette, clean silhouette, game-ready sprite, hard pixel edges, no text, no numbers, no watermark\nbackground must be flat exact #00FF00 chroma green edge-to-edge before postprocess; no visible rectangular cell boxes, no dark green residue, no chroma spill, no halo, no fringe",
+      "started_at": 1783554743.846407,
+      "response": {
+        "success": true,
+        "url": "/assets/generated/generated_1783554781_openai_codex_gpt-image-2-medium_20260709_085258_2c883574.png",
+        "path": "/Users/tajokim/asset-studio-local/assets/generated/generated_1783554781_openai_codex_gpt-image-2-medium_20260709_085258_2c883574.png",
+        "model": "gpt-image-2-medium",
+        "provider": "openai-codex",
+        "background_mode": "chroma_green",
+        "qa": {
+          "width": 2172,
+          "height": 724,
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "corner_alpha": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "green_pixels": 0,
+          "cleanup_qa": {
+            "pass": true,
+            "residual_green_pixels": 0,
+            "residual_dark_border_pixels": 0,
+            "opaque_pixels": 208841,
+            "corner_alpha": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "direction_qa": {
+            "status": "skipped",
+            "target_direction": "S"
+          },
+          "action": "attack",
+          "method": "chroma-global+residue-cleanup"
+        },
+        "method": "generate+chroma-global+residue-cleanup"
+      },
+      "elapsed_sec": 37.38,
+      "success": true,
+      "cleanup_pass": true,
+      "local_path": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_attack_attack4_1783554781.png",
+      "image_qa": {
+        "size": [
+          2172,
+          724
+        ],
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "green_pixels": 0,
+        "opaque_pixels": 208841,
+        "frame_opaque_pixels": [
+          51398,
+          51938,
+          54551,
+          50954
+        ],
+        "frame_count_expected": 4,
+        "frame_count_observed_by_split": 4,
+        "nonempty_frames": 4,
+        "alpha_pass": true,
+        "frame_pass": true
+      }
+    },
+    {
+      "action": "jump",
+      "animation_mode": "jump4",
+      "frames": 4,
+      "prompt": "small hooded dungeon cleanup worker with brass goggles and short tool, consistent dark fantasy pixel character, same identity every frame\njump animation, 4 frames: 1 crouch anticipation; 2 takeoff; 3 airborne peak; 4 landing recovery\nsingle horizontal sprite sheet, one row only, evenly spaced cells, wide empty #00FF00 chroma green gutters, every body part, weapon, held object, shadow, and silhouette fully inside its own cell, 15 percent empty margin in each cell; no VFX, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, or motion trails because effects are separate game assets composited in-game\nrefined 32-bit pixel art, dark muted palette, clean silhouette, game-ready sprite, hard pixel edges, no text, no numbers, no watermark\nbackground must be flat exact #00FF00 chroma green edge-to-edge before postprocess; no visible rectangular cell boxes, no dark green residue, no chroma spill, no halo, no fringe",
+      "started_at": 1783554781.353133,
+      "response": {
+        "success": true,
+        "url": "/assets/generated/generated_1783554820_openai_codex_gpt-image-2-medium_20260709_085337_9a149b86.png",
+        "path": "/Users/tajokim/asset-studio-local/assets/generated/generated_1783554820_openai_codex_gpt-image-2-medium_20260709_085337_9a149b86.png",
+        "model": "gpt-image-2-medium",
+        "provider": "openai-codex",
+        "background_mode": "chroma_green",
+        "qa": {
+          "width": 2172,
+          "height": 724,
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "corner_alpha": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "green_pixels": 0,
+          "cleanup_qa": {
+            "pass": true,
+            "residual_green_pixels": 0,
+            "residual_dark_border_pixels": 0,
+            "opaque_pixels": 158521,
+            "corner_alpha": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "direction_qa": {
+            "status": "skipped",
+            "target_direction": "S"
+          },
+          "action": "jump",
+          "method": "chroma-global+residue-cleanup"
+        },
+        "method": "generate+chroma-global+residue-cleanup"
+      },
+      "elapsed_sec": 38.85,
+      "success": true,
+      "cleanup_pass": true,
+      "local_path": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_jump_jump4_1783554820.png",
+      "image_qa": {
+        "size": [
+          2172,
+          724
+        ],
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "green_pixels": 0,
+        "opaque_pixels": 158521,
+        "frame_opaque_pixels": [
+          38950,
+          39763,
+          40300,
+          39508
+        ],
+        "frame_count_expected": 4,
+        "frame_count_observed_by_split": 4,
+        "nonempty_frames": 4,
+        "alpha_pass": true,
+        "frame_pass": true
+      }
+    },
+    {
+      "action": "cast",
+      "animation_mode": "cast4",
+      "frames": 4,
+      "prompt": "small hooded dungeon cleanup worker with brass goggles and short tool, consistent dark fantasy pixel character, same identity every frame\ncast animation, 4 frames: 1 ready pose; 2 hand/stance anticipation; 3 clean casting/release body pose; 4 recover, no magic glow or particles\nsingle horizontal sprite sheet, one row only, evenly spaced cells, wide empty #00FF00 chroma green gutters, every body part, weapon, held object, shadow, and silhouette fully inside its own cell, 15 percent empty margin in each cell; no VFX, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, or motion trails because effects are separate game assets composited in-game\nrefined 32-bit pixel art, dark muted palette, clean silhouette, game-ready sprite, hard pixel edges, no text, no numbers, no watermark\nbackground must be flat exact #00FF00 chroma green edge-to-edge before postprocess; no visible rectangular cell boxes, no dark green residue, no chroma spill, no halo, no fringe",
+      "started_at": 1783554820.33006,
+      "response": {
+        "success": true,
+        "url": "/assets/generated/generated_1783554862_openai_codex_gpt-image-2-medium_20260709_085418_0cc19067.png",
+        "path": "/Users/tajokim/asset-studio-local/assets/generated/generated_1783554862_openai_codex_gpt-image-2-medium_20260709_085418_0cc19067.png",
+        "model": "gpt-image-2-medium",
+        "provider": "openai-codex",
+        "background_mode": "chroma_green",
+        "qa": {
+          "width": 2089,
+          "height": 753,
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "corner_alpha": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "green_pixels": 0,
+          "cleanup_qa": {
+            "pass": true,
+            "residual_green_pixels": 0,
+            "residual_dark_border_pixels": 0,
+            "opaque_pixels": 227685,
+            "corner_alpha": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "direction_qa": {
+            "status": "skipped",
+            "target_direction": "S"
+          },
+          "action": "cast",
+          "method": "chroma-global+residue-cleanup"
+        },
+        "method": "generate+chroma-global+residue-cleanup"
+      },
+      "elapsed_sec": 41.79,
+      "success": true,
+      "cleanup_pass": true,
+      "local_path": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_cast_cast4_1783554862.png",
+      "image_qa": {
+        "size": [
+          2089,
+          753
+        ],
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "green_pixels": 0,
+        "opaque_pixels": 227685,
+        "frame_opaque_pixels": [
+          56987,
+          59342,
+          55183,
+          56173
+        ],
+        "frame_count_expected": 4,
+        "frame_count_observed_by_split": 4,
+        "nonempty_frames": 4,
+        "alpha_pass": true,
+        "frame_pass": true
+      }
+    },
+    {
+      "action": "hurt",
+      "animation_mode": "hurt4",
+      "frames": 4,
+      "prompt": "small hooded dungeon cleanup worker with brass goggles and short tool, consistent dark fantasy pixel character, same identity every frame\nhurt animation, 4 frames: 1 normal pose; 2 impact flinch; 3 recoil; 4 recovery\nsingle horizontal sprite sheet, one row only, evenly spaced cells, wide empty #00FF00 chroma green gutters, every body part, weapon, held object, shadow, and silhouette fully inside its own cell, 15 percent empty margin in each cell; no VFX, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, or motion trails because effects are separate game assets composited in-game\nrefined 32-bit pixel art, dark muted palette, clean silhouette, game-ready sprite, hard pixel edges, no text, no numbers, no watermark\nbackground must be flat exact #00FF00 chroma green edge-to-edge before postprocess; no visible rectangular cell boxes, no dark green residue, no chroma spill, no halo, no fringe",
+      "started_at": 1783554862.246264,
+      "response": {
+        "success": true,
+        "url": "/assets/generated/generated_1783554900_openai_codex_gpt-image-2-medium_20260709_085456_32979d49.png",
+        "path": "/Users/tajokim/asset-studio-local/assets/generated/generated_1783554900_openai_codex_gpt-image-2-medium_20260709_085456_32979d49.png",
+        "model": "gpt-image-2-medium",
+        "provider": "openai-codex",
+        "background_mode": "chroma_green",
+        "qa": {
+          "width": 2172,
+          "height": 724,
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "corner_alpha": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "green_pixels": 0,
+          "cleanup_qa": {
+            "pass": true,
+            "residual_green_pixels": 0,
+            "residual_dark_border_pixels": 0,
+            "opaque_pixels": 235994,
+            "corner_alpha": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "direction_qa": {
+            "status": "skipped",
+            "target_direction": "S"
+          },
+          "action": "hurt",
+          "method": "chroma-global+residue-cleanup"
+        },
+        "method": "generate+chroma-global+residue-cleanup"
+      },
+      "elapsed_sec": 37.96,
+      "success": true,
+      "cleanup_pass": true,
+      "local_path": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_hurt_hurt4_1783554900.png",
+      "image_qa": {
+        "size": [
+          2172,
+          724
+        ],
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "green_pixels": 0,
+        "opaque_pixels": 235994,
+        "frame_opaque_pixels": [
+          60757,
+          58331,
+          57760,
+          59146
+        ],
+        "frame_count_expected": 4,
+        "frame_count_observed_by_split": 4,
+        "nonempty_frames": 4,
+        "alpha_pass": true,
+        "frame_pass": true
+      }
+    },
+    {
+      "action": "death",
+      "animation_mode": "death4",
+      "frames": 4,
+      "prompt": "small hooded dungeon cleanup worker with brass goggles and short tool, consistent dark fantasy pixel character, same identity every frame\ndeath animation, 4 frames: 1 alive impact; 2 collapse; 3 down; 4 dead still\nsingle horizontal sprite sheet, one row only, evenly spaced cells, wide empty #00FF00 chroma green gutters, every body part, weapon, held object, shadow, and silhouette fully inside its own cell, 15 percent empty margin in each cell; no VFX, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, or motion trails because effects are separate game assets composited in-game\nrefined 32-bit pixel art, dark muted palette, clean silhouette, game-ready sprite, hard pixel edges, no text, no numbers, no watermark\nbackground must be flat exact #00FF00 chroma green edge-to-edge before postprocess; no visible rectangular cell boxes, no dark green residue, no chroma spill, no halo, no fringe",
+      "started_at": 1783554900.329813,
+      "response": {
+        "success": true,
+        "url": "/assets/generated/generated_1783554943_openai_codex_gpt-image-2-medium_20260709_085540_bdbfd21d.png",
+        "path": "/Users/tajokim/asset-studio-local/assets/generated/generated_1783554943_openai_codex_gpt-image-2-medium_20260709_085540_bdbfd21d.png",
+        "model": "gpt-image-2-medium",
+        "provider": "openai-codex",
+        "background_mode": "chroma_green",
+        "qa": {
+          "width": 2172,
+          "height": 724,
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "corner_alpha": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "green_pixels": 0,
+          "cleanup_qa": {
+            "pass": true,
+            "residual_green_pixels": 0,
+            "residual_dark_border_pixels": 0,
+            "opaque_pixels": 177263,
+            "corner_alpha": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "direction_qa": {
+            "status": "skipped",
+            "target_direction": "S"
+          },
+          "action": "death",
+          "method": "chroma-global+residue-cleanup"
+        },
+        "method": "generate+chroma-global+residue-cleanup"
+      },
+      "elapsed_sec": 43.61,
+      "success": true,
+      "cleanup_pass": true,
+      "local_path": "/Users/tajokim/asset-studio-local/assets/generated/phase25_action_presets/phase25_death_death4_1783554943.png",
+      "image_qa": {
+        "size": [
+          2172,
+          724
+        ],
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "green_pixels": 0,
+        "opaque_pixels": 177263,
+        "frame_opaque_pixels": [
+          53727,
+          49658,
+          39979,
+          33899
+        ],
+        "frame_count_expected": 4,
+        "frame_count_observed_by_split": 4,
+        "nonempty_frames": 4,
+        "alpha_pass": true,
+        "frame_pass": true
+      }
+    }
+  ]
+}

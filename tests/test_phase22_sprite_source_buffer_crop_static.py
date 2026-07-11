@@ -27,4 +27,4 @@ def test_sprite_slice_crop_scales_local_slice_to_natural_source_buffer():
 
 
 def test_cache_busts_sprite_crop_fix():
-    assert "phase22-source-buffer-sprite-crop" in INDEX
+    assert "src/main.js?v=20260710.8" in INDEX

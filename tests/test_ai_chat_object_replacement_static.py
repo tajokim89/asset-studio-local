@@ -7,7 +7,7 @@ SERVER = (ROOT / "server.py").read_text(encoding="utf-8")
 
 
 def test_object_replacement_button_is_usable_without_mask():
-    assert 'id="generateReplacement" class="primary">오브젝트 생성/앵커 배치' in INDEX
+    assert 'id="generateReplacement" class="primary">선택 영역 오브젝트 교체' in INDEX
     assert 'id="generateReplacement" class="primary" disabled' not in INDEX
     assert "const hasReplacementMask = !!bbox;" in JS
     assert "마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다." in JS

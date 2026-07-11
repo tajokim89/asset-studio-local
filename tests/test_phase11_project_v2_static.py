@@ -6,7 +6,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 
 def test_phase11_cache_bust_and_v2_save_hooks_exist():
-    assert "phase15-pixel-workflow" in INDEX
+    assert "pixel-workflow-panel" in INDEX
     for token in [
         "async function buildProjectV2()",
         "app: 'asset-studio-local'",
@@ -75,9 +75,12 @@ def test_phase11_loads_v2_and_keeps_legacy_v1_loader():
         "function loadLegacyProjectV1(project)",
         "function loadProjectFileObject(project)",
         "project?.app === 'asset-studio-local' && project.version === 2",
-        "history = entries.map",
+        "const validatedEntries=entries.map",
+        "history = validatedEntries.map",
         "historyIndex = clamp(idx, 0, history.length - 1)",
         "applyEditorState(editor.state || {})",
+        "function updateCanvasTransform()",
+        "updateCanvasStageSize();",
         "Legacy v1 프로젝트를 불러왔습니다.",
     ]:
         assert token in JS

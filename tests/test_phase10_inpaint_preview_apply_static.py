@@ -6,7 +6,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 
 def test_phase10_cache_bust_and_preview_controls_exist():
-    assert "phase15-pixel-workflow" in INDEX
+    assert "pixel-workflow-panel" in INDEX
     for token in [
         'id="inpaintPreviewPanel"',
         'id="inpaintPreviewImg"',
@@ -49,7 +49,7 @@ def test_phase10_replacement_preserves_original_and_records_history():
     fn = JS.split("async function applyPendingInpaintAsReplacement()", 1)[1].split("async function retryPendingInpaint()", 1)[0]
     for token in [
         "target.visible = false",
-        "target._phase4PreservedOriginal = true",
+        "target._preservedOriginal = true",
         "addFullCanvasImageDataUrl",
         "saveHistory()",
         "원본은 숨김 보존됨",

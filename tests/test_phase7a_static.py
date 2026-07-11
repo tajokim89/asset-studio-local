@@ -13,8 +13,10 @@ def test_phase7a_history_helpers_and_serialization():
         "function undoHistory()",
         "function redoHistory()",
         "function isEditableTextField",
-        "$('undoBtn').onclick = undoHistory",
-        "$('redoBtn').onclick = redoHistory",
+        "function reportHistoryError(error)",
+        "const handleHistoryAction=action=>()=>action().catch(reportHistoryError)",
+        "$('undoBtn').onclick = handleHistoryAction(undoHistory)",
+        "$('redoBtn').onclick = handleHistoryAction(redoHistory)",
         "canvas.toDatalessJSON(SERIALIZED_PROPS)",
     ]:
         assert token in JS
@@ -35,8 +37,8 @@ def test_phase7a_pan_zoom_shortcuts_exist():
         "['+','=','-','0'].includes(e.key)",
     ]:
         assert token in JS
-    assert "styles/app.css?v=phase17-directional-chroma" in INDEX
-    assert "src/main.js?v=phase17-directional-chroma" in INDEX
+    assert "styles/app.css?v=20260710.6" in INDEX
+    assert "src/main.js?v=20260710.8" in INDEX
     assert ".workspace.is-panning" in CSS
 
 

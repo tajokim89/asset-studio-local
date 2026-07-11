@@ -25,14 +25,18 @@ def test_phase21_locks_source_direction_generation_to_left_side_plus_flips():
     assert "Do not output an 8-direction sheet" in prompt
 
 
-def test_phase21_action_matrix_defines_idle_walk_attack_hit_death_contracts():
-    assert list(SPRITE_ACTION_MATRIX) == ["idle", "walk", "attack", "hit", "death"]
-    assert SPRITE_ACTION_MATRIX["idle"]["frames"] == 1
+def test_phase21_action_matrix_defines_idle_walk_attack_hurt_death_contracts():
+    assert list(SPRITE_ACTION_MATRIX) == ["idle", "walk", "attack", "jump", "cast", "hurt", "death"]
+    assert SPRITE_ACTION_MATRIX["idle"]["frames"] == 4
     assert SPRITE_ACTION_MATRIX["walk"]["frames"] == 4
     assert SPRITE_ACTION_MATRIX["attack"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["hit"]["frames"] == 2
-    assert SPRITE_ACTION_MATRIX["death"]["frames"] == 6
-    assert SPRITE_ACTION_MATRIX["walk"]["columns"] == ["idle", "stepA", "idle", "stepB"]
+    assert SPRITE_ACTION_MATRIX["jump"]["frames"] == 4
+    assert SPRITE_ACTION_MATRIX["cast"]["frames"] == 4
+    assert SPRITE_ACTION_MATRIX["hurt"]["frames"] == 4
+    assert SPRITE_ACTION_MATRIX["death"]["frames"] == 4
+    assert SPRITE_ACTION_MATRIX["walk"]["columns"] == ["neutral-cross-1", "left-swing-cross", "neutral-cross-2", "right-swing-cross"]
+    assert "simple RPG-style in-place crossover walk cycle" in SPRITE_ACTION_MATRIX["walk"]["acceptance"]
+    assert "legs never pass/cross through each other" in SPRITE_ACTION_MATRIX["walk"]["acceptance"]
     assert SPRITE_ACTION_MATRIX["death"]["terminal"] is True
 
 
@@ -51,7 +55,8 @@ def test_phase21_action_prompt_is_one_direction_action_strip_not_all_directions(
     assert "use the accepted SW static reference as frame 1 identity anchor" in prompt
     assert "Column order must be exactly: ready, windup, strike, recover" in prompt
     assert "Keep all frames in evenly spaced cells on one horizontal row for this direction" in prompt
-    assert "Do not change identity, equipment, palette, proportions, pivot, or feet baseline" in prompt
+    assert "Global reference identity rule" in prompt
+    assert "complete full-frame poses" in prompt
     assert "flat exact RGB(0,255,0) / #00FF00 chroma-key background" in prompt
 
 
@@ -60,4 +65,4 @@ def test_phase21_action_matrix_ui_payload_is_serializable_and_complete():
     assert payload["directions"] == CANONICAL_8DIR_ORDER
     assert payload["source_directions"] == MIRRORED_8DIR_SOURCE_DIRECTIONS
     assert payload["mirror_map"] == {"E": "W", "SE": "SW", "NE": "NW"}
-    assert set(payload["actions"]) == {"idle", "walk", "attack", "hit", "death"}
+    assert set(payload["actions"]) == {"idle", "walk", "attack", "jump", "cast", "hurt", "death"}

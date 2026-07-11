@@ -36,6 +36,6 @@ def test_direct_inpaint_uses_selected_image_source_and_one_to_one_patch_metadata
     assert '"patch_height": bbox["height"]' in SERVER
 
 
-def test_ui_explains_reference_based_b_flow_and_chroma_fallback():
-    assert "선택 이미지 crop + 마스크를 AI에 같이 보내" in INDEX
-    assert "마스크가 없을 때만 #00FF00" in INDEX
+def test_ui_explains_masked_replacement_and_unmasked_new_layer_flow():
+    assert "마스크/선택 영역이 있으면 그 부분만 교체합니다." in INDEX
+    assert "마스크가 있으면 교체 배치, 없으면 새 오브젝트 레이어로 생성합니다." in INDEX

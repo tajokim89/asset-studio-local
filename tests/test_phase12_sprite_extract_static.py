@@ -7,7 +7,7 @@ JS = (ROOT / "src" / "main.js").read_text()
 
 def test_phase12_sprite_extract_ui_exists():
     for token in [
-        "phase15-pixel-workflow",
+        "pixel-workflow-panel",
         "스프라이트 도구",
         'id="spriteMinArea"',
         'id="detectSprites"',
@@ -64,7 +64,7 @@ def test_phase12_extract_layer_and_png_hooks_exist():
 
 def test_phase12b_batch_zip_export_ui_exists():
     for token in [
-        "phase15-pixel-workflow",
+        "pixel-workflow-panel",
         'id="exportAllSpritesZip"',
         "전체 조각 ZIP",
     ]:
@@ -86,7 +86,7 @@ def test_phase12b_batch_zip_export_logic_exists():
 
 def test_phase12c_grid_slice_ui_exists():
     for token in [
-        "phase15-pixel-workflow",
+        "pixel-workflow-panel",
         "고정 그리드 자르기",
         'id="gridCols"',
         'id="gridRows"',
@@ -138,4 +138,6 @@ def test_phase12d_guides_render_from_layer_origin_but_store_relative_coords():
     assert "top: origin.top + slice.y" in render_fn
     assert "slice.x = Math.round((guide.left || 0) - origin.left)" in sync_fn
     assert "slice.y = Math.round((guide.top || 0) - origin.top)" in sync_fn
-    assert "ctx.drawImage(img, box.x, box.y" in crop_fn
+    assert "const scaleX = naturalW / Math.max(1, bounds.w)" in crop_fn
+    assert "const scaleY = naturalH / Math.max(1, bounds.h)" in crop_fn
+    assert "ctx.drawImage(img, sx, sy, sw, sh, 0, 0, el.width, el.height)" in crop_fn

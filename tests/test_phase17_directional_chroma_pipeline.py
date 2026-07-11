@@ -1,5 +1,6 @@
 import base64
 import io
+import re
 from pathlib import Path
 
 from PIL import Image
@@ -10,6 +11,34 @@ JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 SERVER = (ROOT / "server.py").read_text(encoding="utf-8")
 
 
+def _function_body(name: str) -> str:
+    match = re.search(rf"\bfunction\s+{re.escape(name)}\s*\([^)]*\)\s*\{{", JS)
+    assert match, f"Expected JavaScript function {name}()"
+    opening = match.end() - 1
+    depth = 0
+    quote = None
+    escaped = False
+    for index in range(opening, len(JS)):
+        char = JS[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in "'\"`":
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return JS[opening + 1:index]
+    raise AssertionError(f"Unclosed JavaScript function {name}()")
+
+
 def test_phase17_directional_character_controls_exist():
     for token in [
         'id="pixelDirectionMode"',
@@ -17,8 +46,8 @@ def test_phase17_directional_character_controls_exist():
         'value="8dir"',
         'id="pixelTargetDirection"',
         'Target W/left',
-        '8방향 Idle 생성',
-        '8방향 Walk 생성',
+        '8방향 Idle',
+        '8방향 Walk',
         'id="pixelReferenceDirection"',
         'value="S"',
         'value="NW"',
@@ -41,7 +70,7 @@ def test_phase17_directional_prompt_and_payload_are_explicit():
         "W/left true side profile",
         "8-direction",
         "N, NE, E, SE, S, SW, W, NW",
-        "idle -> stepA -> idle -> stepB",
+        "neutral crossover -> LEFT leg swing-cross -> same neutral crossover -> RIGHT leg swing-cross",
         "reference_direction",
         "direction_mode",
         "animation_mode",
@@ -54,13 +83,19 @@ def test_phase17_directional_prompt_and_payload_are_explicit():
 
 
 def test_phase17_pixel_generate_button_calls_generation_without_legacy_hidden_button():
-    handler = JS.split("if ($('generatePixelAsset'))", 1)[1].split("if ($('runPixelWorkflow'))", 1)[0]
-    assert "generateAiAsset().catch" in handler
-    assert "$('generateBtn')?.click()" not in handler
-    assert "if ($('generateBtn')) $('generateBtn').onclick" in JS
-    assert "let prompt = ($('aiPrompt')?.value || '').trim();" in JS
-    assert "if (!prompt) prompt = buildPixelAssetPrompt().trim();" in JS
-    assert "const generateBtn = $('generateBtn') || $('generatePixelAsset');" in JS
+    handler = JS.split("if ($('generatePixelAsset')) $('generatePixelAsset').onclick", 1)[1].split("if ($('generateFrontIdleFromSelected'))", 1)[0]
+    generate = _function_body("generateAiAsset")
+    assert re.search(r"syncPixelAssetPrompt\s*\(\s*\)\s*;\s*generateAiAsset\s*\(\s*\)\s*\.catch", handler)
+    assert not re.search(r"generateBtn[^;]*\.click\s*\(", handler)
+
+    core_control = re.search(r"<textarea\b[^>]*\bid=['\"]assetCorePrompt['\"][^>]*>", INDEX, re.IGNORECASE)
+    assert core_control, "The authoritative shared core prompt must be a visible textarea"
+    assert not re.search(r"\bhidden\b|\btype=['\"]hidden['\"]", core_control.group(0), re.IGNORECASE)
+    assert re.search(r"corePrompt\s*=\s*\([^;\n]*\$\(['\"]assetCorePrompt['\"]\)[^;\n]*\.trim\s*\(", generate)
+    assert re.search(r"const\s+prompt\s*=\s*corePrompt", generate)
+    assert "buildAssetFamilyPrompt" not in generate
+    assert "aiPrompt" not in generate
+    assert not re.search(r"\$\(['\"]generateBtn['\"]\)\s*\?\s*\.click", generate)
 
 
 def test_phase17_server_reference_prompt_includes_direction_contract():
