@@ -1167,6 +1167,67 @@ Phase 2 완료 조건:
 - Unity Sprite Editor/pivot: <https://docs.unity3d.com/Manual/sprite/sprite-editor/sprite-editor-window-reference.html>
 - Godot Sprite2D: <https://docs.godotengine.org/en/stable/classes/class_sprite2d.html>
 - Tiled Working with Objects: <https://doc.mapeditor.org/en/stable/manual/objects/>
+
+## 24. 2026-07-11 최신 authoritative update — Asset Family Production Overhaul 완료
+
+이 절은 위의 과거 계획/FAIL 기록보다 최신이다. 기능 개발은 원본이 아니라 다음 worktree에서 완료됐다.
+
+```text
+개발 worktree: /Users/tajokim/asset-studio-work
+개발 branch: work/autonomous-goal
+사용자용 snapshot: /Users/tajokim/asset-studio-user
+원본 보존: /Users/tajokim/asset-studio-local
+개발 검증 URL: http://127.0.0.1:4185/
+```
+
+### 완료 범위
+
+`docs/plans/2026-07-10-asset-family-production-overhaul.md`의 A1–J4 전체 Goal을 완료했다.
+
+- family authoring/payload/prompt/postprocess 격리
+- actor/effect/tile/UI/object preview·QA·production export
+- Result tray select/compare/adopt/reject
+- Project V2 Result/style 보존·복원
+- style profile/family override
+- strict 공통 QA envelope와 deterministic/optional visual router
+- unified export center
+- 독립 ZIP import/round-trip verifier
+
+과거 이 문서 12절의 effect FAIL은 이번 overhaul에서 common-canvas, trim/source size/offset/pivot manifest와 독립 round-trip을 구현해 해소됐다.
+
+### 최종 증거
+
+```text
+Full pytest: 896 passed, 53 scoped warnings
+Python compile: PASS
+Node syntax: PASS
+Git diff check: PASS
+Browser console errors: 0
+Browser download proof: tile-package.zip, 4424 bytes,
+  asset-studio.tile-package/v1, inventory 6, reparse PASS
+```
+
+최종 보고서:
+
+- `docs/history/milestones/ASSET_FAMILY_FINAL_INTEGRATION_REPORT.md`
+- `docs/history/milestones/ASSET_FAMILY_PHASE_5_REPORT.md`
+- `docs/history/milestones/ASSET_FAMILY_PHASE_4_REPORT.md`
+
+독립 다운로드 verifier:
+
+```bash
+cd /Users/tajokim/asset-studio-work
+python scripts/verify_family_export.py <downloaded-family-package.zip>
+```
+
+### 정직성 및 안전 경계
+
+- 실제 유료/외부 이미지 생성 provider smoke는 수행하지 않았다.
+- optional visual provider는 승인·scope·1회 budget과 테스트 더블까지만 검증했다.
+- deterministic Actor QA는 실제 opposite-foot alternation을 보증하지 않으므로 visual approval gate를 유지한다.
+- 사용자용/원본 worktree는 개발 변경 없이 보존했다.
+- commit/push/reset/clean/stash는 수행하지 않았다.
+- 현재 변경은 dirty/uncommitted 상태다. 사용자 명시 승인 전 commit/push하지 않는다.
 - Tiled Custom Properties: <https://doc.mapeditor.org/en/stable/manual/custom-properties/>
 
 Sections 18~23과 Sections 12~17을 함께 읽어야 전체 Phase 2 설계가 된다. 전자는 네 패밀리 전체 제작 구조이고, 후자는 그중 effect sequence와 자동 조각 분리의 세부 규격이다.

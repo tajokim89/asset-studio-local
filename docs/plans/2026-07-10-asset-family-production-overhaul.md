@@ -990,7 +990,7 @@ Evidence:
 
 ## Task H3 — Profile save/load와 project preservation
 
-- [ ] **H3 완료**
+- [x] **H3 완료**
 
 **Objective:** profile과 family drafts가 project save/load에 보존되고 legacy project도 열린다.
 
@@ -998,7 +998,7 @@ Evidence:
 
 ## Task H4 — Phase 4 review/report
 
-- [ ] **H4 완료**
+- [x] **H4 완료**
 
 **Output:** `docs/history/milestones/ASSET_FAMILY_PHASE_4_REPORT.md`
 
@@ -1008,7 +1008,7 @@ Evidence:
 
 ## Task I1 — QA result schema와 provider router RED tests
 
-- [ ] **I1 완료**
+- [x] **I1 완료**
 
 **Objective:** family별 QA가 공통 verdict envelope와 family metrics를 반환한다.
 
@@ -1020,7 +1020,7 @@ Evidence:
 
 ## Task I2 — Deterministic QA providers
 
-- [ ] **I2 완료**
+- [x] **I2 완료**
 
 **Objective:** 모델 판단 이전에 deterministic geometry/alpha/metadata checks를 family별 구현한다.
 
@@ -1030,7 +1030,7 @@ Evidence:
 
 ## Task I3 — Optional visual QA provider integration
 
-- [ ] **I3 완료**
+- [x] **I3 완료**
 
 **Objective:** provider가 가능할 때 family-specific visual rubric으로 결과를 평가하고 deterministic metrics와 합친다.
 
@@ -1040,7 +1040,7 @@ Evidence:
 
 ## Task I4 — Unified family export center
 
-- [ ] **I4 완료**
+- [x] **I4 완료**
 
 **Objective:** 선택 result의 family를 읽어 올바른 export options와 manifest를 제공한다.
 
@@ -1056,7 +1056,7 @@ Evidence:
 
 ## Task I5 — Import/round-trip verification
 
-- [ ] **I5 완료**
+- [x] **I5 완료**
 
 **Objective:** 실제 browser 다운로드 산출물을 다시 파싱해 schema와 픽셀/offset/coordinates를 검증한다.
 
@@ -1064,7 +1064,7 @@ Evidence:
 
 ## Task I6 — Phase 5 report
 
-- [ ] **I6 완료**
+- [x] **I6 완료**
 
 **Output:** `docs/history/milestones/ASSET_FAMILY_PHASE_5_REPORT.md`
 
@@ -1074,7 +1074,7 @@ Evidence:
 
 ## Task J1 — Full independent integration review
 
-- [ ] **J1 완료**
+- [x] **J1 완료**
 
 Fresh reviewer가 전체 task delta를 검사한다.
 
@@ -1096,7 +1096,7 @@ Fresh reviewer가 전체 task delta를 검사한다.
 
 ## Task J2 — Final automated verification
 
-- [ ] **J2 완료**
+- [x] **J2 완료**
 
 ```bash
 cd /Users/tajokim/asset-studio-local
@@ -1115,7 +1115,7 @@ git diff --check
 
 ## Task J3 — Final browser verification
 
-- [ ] **J3 완료**
+- [x] **J3 완료**
 
 실제 UI에서 최소 다음을 검증한다.
 
@@ -1139,7 +1139,7 @@ git diff --check
 
 ## Task J4 — Final report와 handoff 갱신
 
-- [ ] **J4 완료**
+- [x] **J4 완료**
 
 **Files:**
 - Create: `docs/history/milestones/ASSET_FAMILY_FINAL_INTEGRATION_REPORT.md`

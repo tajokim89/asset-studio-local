@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import io
 import json
@@ -14,7 +15,7 @@ import time
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
@@ -46,6 +47,406 @@ RUNTIME_DEPENDENCIES = {
     "PIL": "pillow>=12.1.0",
     "numpy": "numpy>=2.3.0",
 }
+
+_QA_SCHEMA = "asset-studio.family-qa/v1"
+_QA_EKEYS = ("schema_version", "request_id", "result_id", "timestamp", "family", "subtype", "route", "verdict", "reasons", "metrics", "warnings", "artifact_refs", "provider", "deterministic", "visual")
+_QA_RKEYS = ("status", "verdict", "reasons", "metrics", "warnings")
+_QA_PKEYS = ("id", "method", "version")
+_QA_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_QA_SEMVER = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
+_QA_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
+_QA_ROUTES = {
+    ("sprite", "character"): ("actor_motion", "geometry"),
+    ("effect", "sequence"): ("effect_sequence", "sequence"),
+    ("tile", "autotile"): ("tile_topology_repeat", "topology-repeat"),
+    ("ui", "button"): ("ui_nine_slice_state", "nine-slice-state"),
+    ("object", "interactable"): ("object_placement_state", "placement-state"),
+}
+_QA_CONTRACTS = {
+    "actor_motion": {"animation_mode", "direction_mode", "target_direction", "reference_direction", "frame_count", "walk_frames", "chroma_mode", "preservation", "equipment", "gait", "no_baked_vfx"},
+    "effect_sequence": {"sequence_mode", "effect_category", "frame_count", "rows", "columns", "gap", "loop", "fps", "pivot", "size_basis", "trim_policy"},
+    "tile_topology_repeat": {"tile_size", "mode", "rows", "columns", "margin", "spacing", "seamless", "topology", "inner_corners", "outer_corners", "transitions", "terrain_types", "variants", "metadata"},
+    "ui_nine_slice_state": {"source_size", "sizing_mode", "slice_margins", "content_safe_area", "states", "text_free"},
+    "object_placement_state": {"usage", "view", "placement", "states", "variants", "collision", "interaction", "custom_properties"},
+}
+
+
+def _qa_copy(value, *, metrics=False, depth=0, seen=None, budget=None):
+    """Bounded, cycle-safe JSON copy; metric numbers exclude bool/non-finite."""
+    if seen is None:
+        seen, budget = set(), [0]
+    budget[0] += 1
+    if depth > 24 or budget[0] > 5000:
+        raise ValueError("QA value is too deep or large")
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        if metrics:
+            raise TypeError("metric boolean is forbidden")
+        return value
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise ValueError("number must be finite")
+        return value
+    if isinstance(value, str):
+        if len(value) > 4096 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise ValueError("invalid string")
+        return value
+    if not isinstance(value, (dict, list)):
+        raise TypeError("value must be JSON-compatible")
+    ident = id(value)
+    if ident in seen:
+        raise ValueError("cyclic QA value")
+    seen.add(ident)
+    try:
+        if isinstance(value, list):
+            if len(value) > 256:
+                raise ValueError("list too large")
+            return [_qa_copy(v, metrics=metrics, depth=depth + 1, seen=seen, budget=budget) for v in value]
+        if len(value) > 128 or any(not isinstance(k, str) or not _QA_TOKEN.fullmatch(k) for k in value):
+            raise ValueError("invalid mapping")
+        return {k: _qa_copy(v, metrics=metrics, depth=depth + 1, seen=seen, budget=budget) for k, v in value.items()}
+    finally:
+        seen.remove(ident)
+
+
+def _qa_exact(value, keys, name):
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise ValueError(f"{name} must have exact canonical keys")
+
+
+def _qa_strings(value, name):
+    if not isinstance(value, list) or len(value) > 128:
+        raise TypeError(f"{name} must be a bounded list")
+    if any(not isinstance(v, str) or not v or len(v) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in v) for v in value):
+        raise ValueError(f"invalid {name}")
+    return list(value)
+
+
+def _qa_provider(value):
+    _qa_exact(value, _QA_PKEYS, "provider")
+    if any(not isinstance(value[k], str) for k in _QA_PKEYS) or not _QA_TOKEN.fullmatch(value["id"]) or not _QA_TOKEN.fullmatch(value["method"]) or not _QA_SEMVER.fullmatch(value["version"]):
+        raise ValueError("invalid provider")
+    return {k: value[k] for k in _QA_PKEYS}
+
+
+def _qa_refs(value):
+    refs = _qa_strings(value, "artifact_refs")
+    if len(refs) != len(set(refs)):
+        raise ValueError("duplicate artifact ref")
+    for ref in refs:
+        decoded = unquote(ref)
+        parsed = urlparse(ref)
+        if parsed.scheme:
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username is not None or parsed.password is not None:
+                raise ValueError("unsafe artifact URL")
+        elif Path(decoded).is_absolute() or ".." in Path(decoded).parts or "\\" in decoded:
+            raise ValueError("unsafe artifact path")
+    return refs
+
+
+def _qa_result(value, name):
+    _qa_exact(value, _QA_RKEYS, name)
+    if value["status"] not in {"COMPLETE", "NOT_RUN", "UNAVAILABLE"} or value["verdict"] not in {"PASS", "FAIL", "PARTIAL"}:
+        raise ValueError(f"invalid {name}")
+    if (value["status"] == "COMPLETE") != (value["verdict"] in {"PASS", "FAIL"}):
+        raise ValueError(f"inconsistent {name} status/verdict")
+    return {"status": value["status"], "verdict": value["verdict"], "reasons": _qa_strings(value["reasons"], name + ".reasons"), "metrics": _qa_copy(value["metrics"], metrics=True), "warnings": _qa_strings(value["warnings"], name + ".warnings")}
+
+
+def normalize_family_qa_verdict(value) -> dict:
+    """Strictly validate and detach a canonical family-QA envelope."""
+    _qa_copy(value)
+    _qa_exact(value, _QA_EKEYS, "envelope")
+    if value["schema_version"] != _QA_SCHEMA or value["family"] not in {"sprite", "effect", "tile", "ui", "object"} or value["verdict"] not in {"PASS", "FAIL", "PARTIAL"}:
+        raise ValueError("invalid QA discriminator")
+    for key in ("request_id", "result_id", "subtype", "route"):
+        if not isinstance(value[key], str) or not _QA_TOKEN.fullmatch(value[key]):
+            raise ValueError("invalid " + key)
+    if not isinstance(value["timestamp"], str) or not _QA_UTC.fullmatch(value["timestamp"]):
+        raise ValueError("invalid UTC timestamp")
+    from datetime import datetime
+    datetime.fromisoformat(value["timestamp"].replace("Z", "+00:00"))
+    provider = _qa_provider(value["provider"])
+    selected = _QA_ROUTES.get((value["family"], value["subtype"]))
+    if selected is None or selected[0] != value["route"] or selected[1] != provider["method"]:
+        raise ValueError("family/subtype/route/provider mismatch")
+    deterministic = _qa_result(value["deterministic"], "deterministic")
+    visual = _qa_result(value["visual"], "visual")
+    expected = "FAIL" if "FAIL" in {deterministic["verdict"], visual["verdict"]} else ("PASS" if deterministic["verdict"] == visual["verdict"] == "PASS" else "PARTIAL")
+    if value["verdict"] != expected or (visual["status"] != "COMPLETE" and value["verdict"] == "PASS"):
+        raise ValueError("inconsistent top-level verdict")
+    reasons = list(deterministic["reasons"]) + ["visual_provider_not_run" if r == "provider_not_requested" else r for r in visual["reasons"]]
+    metrics = dict(deterministic["metrics"]); metrics.update(visual["metrics"])
+    warnings = list(dict.fromkeys(list(deterministic["warnings"]) + list(visual["warnings"]) + (["deterministic_only"] if visual["status"] != "COMPLETE" else [])))
+    if value["reasons"] != reasons or value["metrics"] != metrics or value["warnings"] != warnings:
+        raise ValueError("inconsistent top-level aggregation")
+    return {"schema_version": _QA_SCHEMA, "request_id": value["request_id"], "result_id": value["result_id"], "timestamp": value["timestamp"], "family": value["family"], "subtype": value["subtype"], "route": value["route"], "verdict": value["verdict"], "reasons": _qa_strings(value["reasons"], "reasons"), "metrics": _qa_copy(value["metrics"], metrics=True), "warnings": _qa_strings(value["warnings"], "warnings"), "artifact_refs": _qa_refs(value["artifact_refs"]), "provider": provider, "deterministic": deterministic, "visual": visual}
+
+
+def _qa_int(value, name, *, minimum=1):
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}")
+    return value
+
+
+def _qa_enum(value, allowed, name):
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"invalid {name}")
+    return value
+
+
+def _qa_list(value, name, *, nonempty=False, strings=False):
+    if not isinstance(value, list) or len(value) > 256 or (nonempty and not value):
+        raise ValueError(f"{name} must be a bounded list")
+    if strings and any(not isinstance(v, str) or not v for v in value):
+        raise ValueError(f"invalid {name}")
+    return value
+
+
+def _qa_point(value, name):
+    _qa_exact(value, ("x", "y"), name)
+    for axis in ("x", "y"):
+        number = value[axis]
+        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or not 0 <= number <= 1:
+            raise ValueError(f"{name}.{axis} must be normalized")
+
+
+def _validate_family_contract(route, contract):
+    if not isinstance(contract, dict) or set(contract) != _QA_CONTRACTS[route]:
+        raise ValueError("wrong family contract")
+    if route == "actor_motion":
+        _qa_enum(contract["animation_mode"], {"idle", "walk", "walk4", "walk6", "attack", "jump", "cast", "hurt", "death"}, "animation_mode")
+        _qa_enum(contract["direction_mode"], {"single", "4dir", "8dir"}, "direction_mode")
+        directions = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+        _qa_enum(contract["target_direction"], directions, "target_direction"); _qa_enum(contract["reference_direction"], directions, "reference_direction")
+        frames = _qa_int(contract["frame_count"], "frame_count"); walk = _qa_int(contract["walk_frames"], "walk_frames")
+        if contract["animation_mode"].startswith("walk") and frames != walk:
+            raise ValueError("walk frame_count/walk_frames mismatch")
+        _qa_enum(contract["chroma_mode"], {"outer", "global", "none"}, "chroma_mode")
+        for key in ("preservation", "equipment", "gait"):
+            if not isinstance(contract[key], dict): raise ValueError(f"{key} must be a mapping")
+        if not isinstance(contract["no_baked_vfx"], bool): raise ValueError("no_baked_vfx must be boolean")
+    elif route == "effect_sequence":
+        _qa_enum(contract["sequence_mode"], {"sheet", "sequence", "static"}, "sequence_mode")
+        for key in ("frame_count", "rows", "columns", "fps"): _qa_int(contract[key], key)
+        _qa_int(contract["gap"], "gap", minimum=0)
+        if contract["frame_count"] > contract["rows"] * contract["columns"]: raise ValueError("frame_count exceeds grid capacity")
+        if contract["sequence_mode"] == "static" and contract["frame_count"] != 1: raise ValueError("static effect must have one frame")
+        _qa_enum(contract["loop"], {"loop", "one-shot", "ping-pong"}, "loop")
+        _qa_enum(contract["trim_policy"], {"full-cell", "trim"}, "trim_policy"); _qa_point(contract["pivot"], "pivot")
+        for key in ("effect_category", "size_basis"):
+            if not isinstance(contract[key], str) or not contract[key]: raise ValueError(f"invalid {key}")
+    elif route == "tile_topology_repeat":
+        _qa_exact(contract["tile_size"], ("width", "height"), "tile_size")
+        for key in ("width", "height"): _qa_int(contract["tile_size"][key], "tile_size." + key)
+        for key in ("rows", "columns"): _qa_int(contract[key], key)
+        for key in ("margin", "spacing"): _qa_int(contract[key], key, minimum=0)
+        _qa_enum(contract["mode"], {"autotile", "atlas", "terrain", "repeat"}, "mode")
+        _qa_enum(contract["topology"], {"corner", "edge", "corner+edge", "blob", "wang-4", "wang-8"}, "topology")
+        for key in ("seamless", "inner_corners", "outer_corners"):
+            if not isinstance(contract[key], bool): raise ValueError(f"{key} must be boolean")
+        for key in ("transitions", "terrain_types", "variants"): _qa_list(contract[key], key, strings=(key == "terrain_types"))
+        if not isinstance(contract["metadata"], dict): raise ValueError("metadata must be a mapping")
+    elif route == "ui_nine_slice_state":
+        _qa_exact(contract["source_size"], ("width", "height"), "source_size")
+        width = _qa_int(contract["source_size"]["width"], "source_size.width"); height = _qa_int(contract["source_size"]["height"], "source_size.height")
+        _qa_enum(contract["sizing_mode"], {"fixed", "nine-slice"}, "sizing_mode")
+        for name in ("slice_margins", "content_safe_area"):
+            _qa_exact(contract[name], ("top", "right", "bottom", "left"), name)
+            for key in ("top", "right", "bottom", "left"): _qa_int(contract[name][key], name + "." + key, minimum=0)
+            if contract[name]["left"] + contract[name]["right"] > width or contract[name]["top"] + contract[name]["bottom"] > height: raise ValueError(f"{name} does not fit source_size")
+        states = _qa_list(contract["states"], "states", nonempty=True, strings=True)
+        if len(states) != len(set(states)): raise ValueError("duplicate UI states")
+        if not isinstance(contract["text_free"], bool): raise ValueError("text_free must be boolean")
+    else:
+        for key in ("usage", "view"):
+            if not isinstance(contract[key], str) or not contract[key]: raise ValueError(f"invalid {key}")
+        placement = contract["placement"]; _qa_exact(placement, ("pivot", "ground_point", "y_sort_point", "snap_points"), "placement")
+        for key in ("pivot", "ground_point", "y_sort_point"): _qa_point(placement[key], key)
+        for point in _qa_list(placement["snap_points"], "snap_points"):
+            if not isinstance(point, dict) or set(point) not in ({"x", "y"}, {"id", "x", "y"}): raise ValueError("invalid snap point shape")
+            _qa_point({"x": point["x"], "y": point["y"]}, "snap_point")
+        for key in ("states", "variants"): _qa_list(contract[key], key, nonempty=(key == "states"))
+        for key in ("collision", "interaction", "custom_properties"):
+            if not isinstance(contract[key], dict): raise ValueError(f"{key} must be a mapping")
+
+
+def _inspect_qa_artifacts(route, contract, refs):
+    metrics, reasons, remote = {}, [], False
+    png_seen = False
+    metadata = None
+    for ref in refs:
+        parsed = urlparse(ref)
+        if parsed.scheme:
+            remote = True; continue
+        path = (ROOT / unquote(ref)).resolve()
+        if ROOT.resolve() not in path.parents and path != ROOT.resolve(): raise ValueError("artifact escaped root")
+        if not path.is_file(): reasons.append("artifact_missing:" + ref); continue
+        if path.suffix.lower() == ".json":
+            try: json.loads(path.read_text(encoding="utf-8")); metrics["metadata_json_valid"] = 1
+            except (OSError, UnicodeError, json.JSONDecodeError): reasons.append("metadata_json_invalid:" + ref)
+        if path.suffix.lower() != ".png": continue
+        png_seen = True
+        try:
+            from PIL import Image
+            with Image.open(path) as image:
+                image.load(); rgba = image.convert("RGBA"); width, height = rgba.size
+                alpha_histogram = rgba.getchannel("A").histogram()
+                opaque = width * height - alpha_histogram[0]
+        except Exception: reasons.append("png_invalid:" + ref); continue
+        metrics.update({"artifact_width": width, "artifact_height": height, "alpha_coverage": opaque / (width * height)})
+        bbox = rgba.getchannel("A").getbbox()
+        if bbox: metrics.update({"alpha_bounds_x":bbox[0], "alpha_bounds_y":bbox[1], "alpha_bounds_width":bbox[2]-bbox[0], "alpha_bounds_height":bbox[3]-bbox[1]})
+        if opaque == 0: reasons.append("alpha_empty:" + ref)
+        if route == "ui_nine_slice_state" and (width, height) != (contract["source_size"]["width"], contract["source_size"]["height"]): reasons.append("ui_source_geometry_mismatch")
+        elif route == "tile_topology_repeat":
+            tw, th = contract["tile_size"]["width"], contract["tile_size"]["height"]
+            ew = 2 * contract["margin"] + contract["columns"] * tw + (contract["columns"] - 1) * contract["spacing"]
+            eh = 2 * contract["margin"] + contract["rows"] * th + (contract["rows"] - 1) * contract["spacing"]
+            metrics.update({"expected_width": ew, "expected_height": eh})
+            if (width, height) != (ew, eh): reasons.append("tile_atlas_geometry_mismatch")
+        elif route == "effect_sequence":
+            gap = contract["gap"]
+            if (width - gap * (contract["columns"] - 1)) <= 0 or (height - gap * (contract["rows"] - 1)) <= 0 or (width - gap * (contract["columns"] - 1)) % contract["columns"] or (height - gap * (contract["rows"] - 1)) % contract["rows"]: reasons.append("effect_grid_geometry_mismatch")
+        elif route == "actor_motion" and width % contract["frame_count"]: reasons.append("actor_frame_geometry_mismatch")
+        # Family semantics are pixel facts only: inventory, alpha, differences,
+        # seams and declared metadata.  No aesthetic/pose inference is made.
+        if route == "actor_motion" and width % contract["frame_count"] == 0:
+            fw=width//contract["frame_count"]; cells=[rgba.crop((i*fw,0,(i+1)*fw,height)) for i in range(contract["frame_count"])]
+            nonempty=sum(bool(c.getchannel("A").getbbox()) for c in cells); distinct=len({c.tobytes() for c in cells})
+            metrics.update({"frame_width":fw,"frame_height":height,"frame_count":len(cells),"nonempty_frame_count":nonempty,"distinct_frame_count":distinct})
+            reasons += [f"actor_motion_frame_empty:{i}" for i,c in enumerate(cells) if not c.getchannel("A").getbbox()]
+            if contract["animation_mode"] != "idle" and len(cells)>1 and distinct<2: reasons.append("actor_motion_frames_identical")
+        elif route == "effect_sequence" and "effect_grid_geometry_mismatch" not in reasons:
+            gap=contract["gap"]; cw=(width-gap*(contract["columns"]-1))//contract["columns"]; ch=(height-gap*(contract["rows"]-1))//contract["rows"]
+            cells=[]
+            for i in range(contract["frame_count"]):
+                r,c=divmod(i,contract["columns"]); cells.append(rgba.crop((c*(cw+gap),r*(ch+gap),c*(cw+gap)+cw,r*(ch+gap)+ch)))
+            metrics.update({"cell_width":cw,"cell_height":ch,"nonempty_frame_count":sum(bool(c.getchannel("A").getbbox()) for c in cells),"distinct_frame_count":len({c.tobytes() for c in cells})})
+            reasons += [f"effect_required_cell_empty:{i}" for i,c in enumerate(cells) if not c.getchannel("A").getbbox()]
+            if len(cells)>1 and len({c.tobytes() for c in cells})<2: reasons.append("effect_progression_unchanged")
+        elif route == "ui_nine_slice_state":
+            m=contract["slice_margins"]; metrics.update({"content_width":width-m["left"]-m["right"],"content_height":height-m["top"]-m["bottom"]})
+        elif route == "object_placement_state" and len(contract["states"])>1 and width*height<=1: reasons.append("object_multistate_footprint_too_small")
+        if route == "tile_topology_repeat" and (width,height)==(metrics.get("expected_width"),metrics.get("expected_height")):
+            tw,th=contract["tile_size"]["width"],contract["tile_size"]["height"]; cells=[]; seam_bad=0; seam_n=0
+            for r in range(contract["rows"]):
+                for c in range(contract["columns"]):
+                    x=contract["margin"]+c*(tw+contract["spacing"]); y=contract["margin"]+r*(th+contract["spacing"]); cell=rgba.crop((x,y,x+tw,y+th)); cells.append(cell)
+                    if contract["seamless"]:
+                        seam_n+=2; seam_bad+=cell.crop((0,0,1,th)).tobytes()!=cell.crop((tw-1,0,tw,th)).tobytes(); seam_bad+=cell.crop((0,0,tw,1)).tobytes()!=cell.crop((0,th-1,tw,th)).tobytes()
+            metrics.update({"nonempty_tile_count":sum(bool(c.getchannel("A").getbbox()) for c in cells),"distinct_tile_count":len({c.tobytes() for c in cells}),"seam_comparisons":seam_n,"seam_mismatches":seam_bad,"rule_coverage":0})
+            if seam_bad: reasons.append("tile_repeat_seam_mismatch")
+        sibling = path.with_suffix(".json")
+        if sibling.is_file():
+            try:
+                metadata=json.loads(sibling.read_text(encoding="utf-8")); metrics["adjacent_metadata_valid"] = 1
+                prefixes={"effect_sequence":"metadata_","ui_nine_slice_state":"ui_metadata_","object_placement_state":"object_metadata_"}
+                keys={"effect_sequence":("frame_count","rows","columns","pivot"),"ui_nine_slice_state":("source_size","states","slice_margins","content_safe_area"),"object_placement_state":("states","placement","collision")}.get(route,())
+                for key in keys:
+                    if metadata.get(key)!=contract[key]: reasons.append(prefixes[route]+key+"_mismatch")
+                if route=="tile_topology_repeat":
+                    rules=metadata.get("rules") or metadata.get("terrain_types") or []
+                    metrics["rule_coverage"]=len(rules)/(contract["rows"]*contract["columns"])
+            except (OSError, UnicodeError, json.JSONDecodeError): reasons.append("adjacent_metadata_invalid")
+        if route=="tile_topology_repeat" and metrics.get("distinct_tile_count",0)<2 and metrics.get("rule_coverage",0)<1: reasons.append("tile_topology_unproven")
+    if not png_seen and not remote: reasons.append("png_artifact_missing")
+    if remote: return {"status": "UNAVAILABLE", "verdict": "PARTIAL", "reasons": ["mixed_or_remote_artifact_not_inspectable"], "metrics": metrics, "warnings": []}
+    return {"status": "COMPLETE", "verdict": "FAIL" if reasons else "PASS", "reasons": reasons, "metrics": metrics, "warnings": ["remote_artifact_not_inspected"] if remote else []}
+
+
+_QA_VISUAL_RUBRICS = {
+    "actor_motion": {
+        "version": "1.0.0",
+        "criteria": "identity and equipment continuity; declared direction fidelity; readable motion progression; actual opposite-limb alternation must be visibly evidenced for walking, and labels alone are not evidence",
+    },
+    "effect_sequence": {
+        "version": "1.0.0",
+        "criteria": "frame-to-frame progression, effect readability, timing coherence, and stable pivot without unrelated actors or props",
+    },
+    "tile_topology_repeat": {
+        "version": "1.0.0",
+        "criteria": "repeat seam fitness, topology and corner coverage, terrain transition readability, and consistent pixel language",
+    },
+    "ui_nine_slice_state": {
+        "version": "1.0.0",
+        "criteria": "nine-slice corner and border fidelity, safe-area usability, and clear consistent visual states without baked text",
+    },
+    "object_placement_state": {
+        "version": "1.0.0",
+        "criteria": "grounded placement, pivot and interaction readability, state continuity, collision plausibility, and stable object identity",
+    },
+}
+
+
+def route_family_qa(request, providers=None, *, visual_provider=None, visual_approval=None, visual_call_budget=0) -> dict:
+    """Validate artifacts and optionally run one explicitly approved visual QA call."""
+    _qa_copy(request); _qa_exact(request, ("request_id", "family", "subtype", "contract", "artifact_refs", "provider"), "request")
+    if not isinstance(request["request_id"], str) or not _QA_TOKEN.fullmatch(request["request_id"]): raise ValueError("invalid request_id")
+    selected = _QA_ROUTES.get((request["family"], request["subtype"]))
+    if selected is None: raise ValueError("unsupported family/subtype")
+    route, method = selected; contract = _qa_copy(request["contract"]); _validate_family_contract(route, contract)
+    refs = _qa_refs(request["artifact_refs"]); provider = _qa_provider(request["provider"])
+    if provider != {"id": "builtin-deterministic", "method": method, "version": "1.0.0"}: raise ValueError("provider/route mismatch")
+    deterministic = _inspect_qa_artifacts(route, contract, refs)
+    if providers is not None:
+        if not isinstance(providers, dict) or set(providers) - {provider["id"]}: raise ValueError("invalid provider registry")
+        custom = providers.get(provider["id"])
+        if custom is not None:
+            if not callable(custom): raise TypeError("provider must be callable")
+            deterministic = _qa_result(custom(contract), "deterministic")
+    artifacts=[]
+    for ref in refs:
+        if urlparse(ref).scheme: artifacts.append({"ref":ref,"digest":None}); continue
+        p=(ROOT/unquote(ref)).resolve(); h=hashlib.sha256(); total=0
+        if p.is_file():
+            with p.open("rb") as stream:
+                while total < MAX_REQUEST_BYTES:
+                    chunk=stream.read(min(65536,MAX_REQUEST_BYTES-total))
+                    if not chunk: break
+                    h.update(chunk); total += len(chunk)
+            artifacts.append({"ref":ref,"digest":h.hexdigest(),"bytes_hashed":total})
+        else: artifacts.append({"ref":ref,"digest":None})
+    canonical = json.dumps({"request_id":request["request_id"],"contract": contract, "artifact_refs": refs, "artifacts":artifacts, "provider": provider}, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    digest = hashlib.sha256(canonical.encode()).hexdigest()[:20]
+    from datetime import datetime, timezone
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    visual = {"status": "NOT_RUN", "verdict": "PARTIAL", "reasons": ["provider_not_requested"], "metrics": {}, "warnings": []}
+    if visual_provider is not None:
+        if visual_approval is None:
+            visual = {"status": "NOT_RUN", "verdict": "PARTIAL", "reasons": ["visual_approval_required"], "metrics": {}, "warnings": []}
+        else:
+            expected_approval = {"approved": True, "scope": route, "max_calls": 1}
+            if visual_approval != expected_approval or isinstance(visual_call_budget, bool) or visual_call_budget != 1:
+                raise ValueError("visual QA requires exact route-scoped approval and one-call budget")
+            if not callable(visual_provider):
+                visual = {"status": "UNAVAILABLE", "verdict": "PARTIAL", "reasons": ["visual_provider_unavailable"], "metrics": {}, "warnings": []}
+            else:
+                payload = {
+                    "schema_version": "asset-studio.family-visual-qa-request/v1",
+                    "route": route,
+                    "family": request["family"],
+                    "subtype": request["subtype"],
+                    "rubric": _qa_copy(_QA_VISUAL_RUBRICS[route]),
+                    "contract": _qa_copy(contract),
+                    "deterministic_metrics": _qa_copy(deterministic["metrics"], metrics=True),
+                    "artifact_refs": list(refs),
+                }
+                try:
+                    response = visual_provider(payload)
+                    visual = _qa_result(response, "visual")
+                    if visual["status"] != "COMPLETE":
+                        raise ValueError("visual provider must return a completed assessment")
+                except Exception:
+                    visual = {"status": "UNAVAILABLE", "verdict": "PARTIAL", "reasons": ["visual_provider_failed"], "metrics": {}, "warnings": []}
+    verdict = "FAIL" if "FAIL" in {deterministic["verdict"], visual["verdict"]} else ("PASS" if deterministic["verdict"] == visual["verdict"] == "PASS" else "PARTIAL")
+    visual_reasons = ["visual_provider_not_run" if reason == "provider_not_requested" else reason for reason in visual["reasons"]]
+    reasons = list(deterministic["reasons"]) + visual_reasons
+    metrics = dict(deterministic["metrics"]); metrics.update(visual["metrics"])
+    warnings = list(dict.fromkeys(list(deterministic["warnings"]) + list(visual["warnings"]) + (["deterministic_only"] if visual["status"] != "COMPLETE" else [])))
+    envelope = {"schema_version": _QA_SCHEMA, "request_id": request["request_id"], "result_id": "qa-res-" + request["request_id"] + "-" + digest, "timestamp": timestamp, "family": request["family"], "subtype": request["subtype"], "route": route, "verdict": verdict, "reasons": reasons, "metrics": metrics, "warnings": warnings, "artifact_refs": refs, "provider": provider, "deterministic": deterministic, "visual": visual}
+    return normalize_family_qa_verdict(envelope)
 
 
 def check_runtime_dependencies() -> None:

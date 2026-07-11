@@ -6202,6 +6202,72 @@ async function objectElementImageData(element){const W=element.naturalWidth||ele
 async function exportObjectPackageZip(){const button=$('exportObjectPackageZip');if(button)button.disabled=true;try{if(currentAssetFamily()!=='object')throw new Error('object export is only available in the object family');const object=canvas.getActiveObject(),source=object?._element,metadata=object?.objectFamilyMetadata;if(!source||metadata?.asset_family!=='object')throw new Error('Object result image metadata required');const contract=metadata.family_contract,resultStates=metadata.object_result?.states||[],baseElement=metadata.object_result?.image||source,basePlan={width:baseElement.naturalWidth||baseElement.width,height:baseElement.naturalHeight||baseElement.height},statePlan=resultStates.map(state=>({id:state?.id,imageData:{width:state?.image?.naturalWidth||state?.image?.width,height:state?.image?.naturalHeight||state?.image?.height}})),shadowElement=metadata.object_result?.shadow?.image,shadowPlan=shadowElement?{imageData:{width:shadowElement.naturalWidth||shadowElement.width,height:shadowElement.naturalHeight||shadowElement.height}}:null;checkObjectExportBudget(basePlan,contract,{states:statePlan,icon:{mode:$('objectPreviewIconMode')?.value||'contain',width:64,height:64},shadow:shadowPlan});const normalizedContract=normalizeObjectPreviewContract(contract),base=await objectElementImageData(baseElement);const states=[];for(const state of resultStates)if(state?.image)states.push({id:state.id,imageData:await objectElementImageData(state.image)});const shadow=shadowElement?{imageData:await objectElementImageData(shadowElement)}:null,result=buildObjectExportPackage(base,normalizedContract,{states,icon:{mode:$('objectPreviewIconMode')?.value||'contain',width:64,height:64},shadow});downloadBlob(result.zipBlob,result.zipName);if($('objectExportSummary'))$('objectExportSummary').textContent=`PASS · ${result.manifest.states.length} states · ${result.files.length} files`;return result;}catch(e){if($('objectExportSummary'))$('objectExportSummary').textContent=`FAIL · ${e.message}`;setStatus(`오브젝트 ZIP 내보내기 실패: ${e.message}`);throw e;}finally{if(button)button.disabled=false;}}
 if($('exportObjectPackageZip'))$('exportObjectPackageZip').onclick=()=>exportObjectPackageZip().catch(()=>{});
 window.__assetStudioDebug={...(window.__assetStudioDebug||{}),checkObjectExportBudget,objectNearestDerivative,buildObjectExportPackage,exportObjectPackageZip};
+
+function familyExportDescriptor(result){
+  if(!result||typeof result!=='object'||result.status!=='succeeded')throw new Error('family export requires a succeeded selected result');
+  const key=`${result.family}/${result.type}`, routes={
+    'sprite/character':['actor',['sheets','frames','fps','pivot']],
+    'sprite/monster':['actor',['sheets','frames','fps','pivot']],
+    'sprite/npc':['actor',['sheets','frames','fps','pivot']],
+    'sprite/effect':['effect',['full-cell','trim','fps','pivot']],
+    'tile/terrain':['tile',['atlas','rules','collision','navigation']],
+    'tile/tile':['tile',['atlas','rules','collision','navigation']],
+    'tile/tileset':['tile',['atlas','rules','collision','navigation']],
+    'tile/autotile':['tile',['atlas','rules','collision','navigation']],
+    'tile/map':['tile',['atlas','rules','collision','navigation']],
+    'ui/button':['ui',['states','nine-slice','safe-area']],
+    'ui/panel':['ui',['states','nine-slice','safe-area']],
+    'ui/icon':['ui',['states','nine-slice','safe-area']],
+    'ui/ui_panel':['ui',['states','nine-slice','safe-area']],
+    'object/interactable':['object',['states','pivot','ground','collision','interaction']],
+    'object/prop':['object',['states','pivot','ground','collision','interaction']],
+    'object/decoration':['object',['states','pivot','ground','collision','interaction']],
+    'object/item':['object',['states','pivot','ground','collision','interaction']],
+  }, selected=routes[key];
+  if(!selected)throw new Error(`unsupported family export route: ${key}`);
+  return {schema_version:'asset-studio.family-export-center/v1',result_id:String(result.id||''),family:result.family,subtype:result.type,route:selected[0],options:selected[1].slice()};
+}
+
+function buildUnifiedFamilyExportPackage(result,source,options={},builders={}){
+  const descriptor=familyExportDescriptor(result);
+  if(!source||typeof source!=='object'||!options||typeof options!=='object'||Array.isArray(options))throw new Error('family export source/options required');
+  const defaults={actor:typeof buildActorExportPackage==='function'?buildActorExportPackage:null,effect:typeof buildEffectExportPackage==='function'?buildEffectExportPackage:null,tile:typeof buildTileExportPackage==='function'?buildTileExportPackage:null,ui:typeof buildUiExportPackage==='function'?buildUiExportPackage:null,object:typeof buildObjectExportPackage==='function'?buildObjectExportPackage:null}, impl=builders[descriptor.route]||defaults[descriptor.route];
+  if(typeof impl!=='function')throw new Error(`family export builder unavailable: ${descriptor.route}`);
+  const allowed={actor:new Set(['visualApproval']),effect:new Set(['mode']),tile:new Set(['assetType']),ui:new Set(),object:new Set(['states','icon','shadow'])}[descriptor.route];
+  if(Object.keys(options).some(key=>!allowed.has(key)))throw new Error(`cross-family export option for ${descriptor.route}`);
+  let output;
+  if(descriptor.route==='actor')output=impl(source.frames,source.contract,options.visualApproval??null);
+  else if(descriptor.route==='effect')output=impl(source.imageData,source.gridContract||source.contract,options.mode||'full-cell',{});
+  else if(descriptor.route==='tile')output=impl(source.imageData,source.contract,options.assetType||result.type);
+  else if(descriptor.route==='ui')output=impl(source.imageData,source.contract);
+  else output=impl(source.imageData,source.contract,options);
+  if(!output||typeof output!=='object'||!output.manifest||output.manifest.family!==descriptor.route)throw new Error('family export builder returned mismatched manifest');
+  return {...output,exportCenter:descriptor};
+}
+
+window.__assetStudioDebug={...(window.__assetStudioDebug||{}),familyExportDescriptor,buildUnifiedFamilyExportPackage};
+
+function syncFamilyExportCenter(){
+  const summary=$('familyExportCenterSummary'),button=$('exportSelectedFamilyPackage'),mode=$('familyExportMode');
+  if(!summary||!button)return;
+  const selectedId=assetResultStore.state().selectedId,result=selectedId?assetResultStore.get(selectedId):null;
+  if(!result){summary.textContent='Result Tray에서 성공 결과를 선택하세요.';button.disabled=true;if(mode)mode.disabled=true;return;}
+  try{const descriptor=familyExportDescriptor(result);summary.textContent=`${descriptor.family}/${descriptor.subtype} → ${descriptor.route} · ${descriptor.options.join(' · ')}`;button.disabled=false;if(mode)mode.disabled=descriptor.route!=='effect';}
+  catch(error){summary.textContent=`내보내기 불가 · ${error.message}`;button.disabled=true;if(mode)mode.disabled=true;}
+}
+
+async function exportSelectedFamilyResult(){
+  const selectedId=assetResultStore.state().selectedId,result=selectedId?assetResultStore.get(selectedId):null,descriptor=familyExportDescriptor(result);
+  if(result.family!==currentAssetFamily())throw new Error('선택 Result의 family 탭으로 전환한 뒤 내보내세요.');
+  if(descriptor.route==='actor')return exportActorPackageZip();
+  if(descriptor.route==='effect')return exportEffectSequenceZip($('familyExportMode')?.value||'full-cell');
+  if(descriptor.route==='tile')return exportTilePackageZip();
+  if(descriptor.route==='ui')return exportUiStatePackageZip();
+  return exportObjectPackageZip();
+}
+assetResultStore.subscribe(syncFamilyExportCenter);syncFamilyExportCenter();
+if($('exportSelectedFamilyPackage'))$('exportSelectedFamilyPackage').onclick=()=>exportSelectedFamilyResult().catch(error=>setStatus(`Family export 실패: ${error.message}`));
+window.__assetStudioDebug={...(window.__assetStudioDebug||{}),syncFamilyExportCenter,exportSelectedFamilyResult};
 if ($('buildPixelPrompt')) $('buildPixelPrompt').onclick = syncPixelAssetPrompt;
 if ($('generatePixelAsset')) $('generatePixelAsset').onclick = () => { syncPixelAssetPrompt(); generateAiAsset().catch(err => { console.error(err); alert(`도트 에셋 생성 실패: ${err.message}`); setStatus(`도트 에셋 생성 실패: ${err.message}`); }); };
 if ($('generateFrontIdleFromSelected')) $('generateFrontIdleFromSelected').onclick = () => generateFrontIdleFromSelected();
