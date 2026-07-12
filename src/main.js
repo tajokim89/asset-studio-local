@@ -354,11 +354,24 @@ async function adoptResult(id, mode) {
   finally { adoptionInFlight.delete(id); }
 }
 
-function assetResultFromGeneration(payload, data) {
+function compactAssetResultPayload(payload, referenceObj = null) {
+  const compact = JSON.parse(JSON.stringify(payload));
+  const embeddedReference = typeof compact.reference_image === 'string' && compact.reference_image.startsWith('data:image/');
+  if (embeddedReference) {
+    const source = referenceObj?._originalSrc || referenceObj?.getSrc?.() || compact.reference_asset_url || '';
+    delete compact.reference_image;
+    compact.reference_image_omitted = true;
+    if (typeof source === 'string' && source && !source.startsWith('data:')) compact.reference_asset_url = source;
+  }
+  return compact;
+}
+
+function assetResultFromGeneration(payload, data, referenceObj = null) {
   const url = data.url;
   const artifacts = Array.isArray(data.artifacts) && data.artifacts.length ? data.artifacts : [{kind:'image',url}];
+  const storedPayload = compactAssetResultPayload(payload, referenceObj);
   return createAssetResult({ family:payload.asset_family, type:payload.asset_type, status:'succeeded',
-    preview:{url}, sourceRequest:payload, normalizedContract:payload, qaSummary:data.qa || null,
+    preview:{url}, sourceRequest:storedPayload, normalizedContract:storedPayload, qaSummary:data.qa || null,
     artifacts, adopted:false, rejected:false, error:null });
 }
 
@@ -427,8 +440,18 @@ function renderAssetResultTray() {
 }
 
 async function retryAssetResult(id) {
+  if (!isRecipeRegistryReady()) throw blockAssetGeneration();
   const previous=assetResultStore.get(id); if(!previous) throw new Error('Unknown result');
-  const payload=previous.sourceRequest, endpoint=payload.reference_image?'/api/generate-reference':'/api/generate';
+  const selection=migrateLegacyAssetSelection(assetRecipeRegistryState.registry,previous.family,previous.type);
+  if(selection.channel!=='production')throw new Error('Only Production recipe results can be retried');
+  const payload=JSON.parse(JSON.stringify(previous.sourceRequest));
+  if(!payload||payload.asset_family!==previous.family||payload.asset_type!==previous.type)throw new Error('Result retry source request is incompatible with its recipe');
+  if(payload.reference_image_omitted){
+    if(!payload.reference_asset_url)throw new Error('기준 이미지 원본을 찾을 수 없어 재시도할 수 없습니다. 기준 레이어에서 다시 생성하세요.');
+    payload.reference_image=await srcToDataUrl(payload.reference_asset_url);
+    delete payload.reference_image_omitted;
+  }
+  const endpoint=payload.reference_image?'/api/generate-reference':'/api/generate';
   const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}), data=await res.json();
   if(!res.ok||!data.success) throw new Error(data.error||'generation failed');
   const next=assetResultFromGeneration(payload,data); assetResultStore.add(next); assetResultStore.select(next.id); await adoptResult(next.id,'new-layer'); return next;
@@ -546,9 +569,240 @@ function setStatus(msg) {
   $('status').textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
 }
 
+let generationProgressTimer = null;
+let generationProgressStartedAt = 0;
+
+function ensureGenerationProgressUi() {
+  if ($('assetGenerationProgress')) return $('assetGenerationProgress');
+  const button = $('familyGenerateAi');
+  if (!button) return null;
+  const panel = document.createElement('div');
+  panel.id = 'assetGenerationProgress';
+  panel.className = 'asset-generation-progress hidden';
+  panel.setAttribute('role', 'status');
+  panel.setAttribute('aria-live', 'polite');
+  panel.innerHTML = '<div id="assetGenerationProgressText">생성 대기</div><progress id="assetGenerationProgressBar"></progress><div id="assetGenerationProgressElapsed" class="small">경과 0초</div>';
+  button.parentNode.insertBefore(panel, button);
+  return panel;
+}
+
+function renderGenerationElapsed() {
+  const elapsed = Math.max(0, Math.floor((Date.now() - generationProgressStartedAt) / 1000));
+  if ($('assetGenerationProgressElapsed')) $('assetGenerationProgressElapsed').textContent = `경과 ${elapsed}초 · 모델 내부 진행률은 제공되지 않습니다`;
+}
+
+function beginGenerationProgress(stage) {
+  const panel = ensureGenerationProgressUi();
+  if (!panel) return;
+  clearInterval(generationProgressTimer);
+  generationProgressStartedAt = Date.now();
+  panel.classList.remove('hidden', 'failed', 'complete');
+  panel.setAttribute('aria-busy', 'true');
+  const bar = $('assetGenerationProgressBar');
+  if (bar) bar.removeAttribute('value');
+  updateGenerationProgress(stage);
+  renderGenerationElapsed();
+  generationProgressTimer = setInterval(renderGenerationElapsed, 1000);
+}
+
+function updateGenerationProgress(stage) {
+  if ($('assetGenerationProgressText')) $('assetGenerationProgressText').textContent = stage;
+}
+
+function finishGenerationProgress(success, stage) {
+  clearInterval(generationProgressTimer);
+  generationProgressTimer = null;
+  renderGenerationElapsed();
+  const panel = ensureGenerationProgressUi();
+  if (!panel) return;
+  panel.setAttribute('aria-busy', 'false');
+  panel.classList.toggle('complete', success);
+  panel.classList.toggle('failed', !success);
+  const bar = $('assetGenerationProgressBar');
+  if (bar) bar.value = success ? 100 : 0;
+  updateGenerationProgress(stage);
+}
+
+function ensureAdvancedReferenceUi() {
+  const controls = $('pixelReferenceControls');
+  if (!controls || $('pixelAdvancedReference')) return;
+  const details = document.createElement('details');
+  details.id = 'pixelAdvancedReference';
+  details.className = 'advanced-box';
+  const summary = document.createElement('summary');
+  summary.textContent = '고급: 기준 이미지 해석·배경 제거';
+  details.appendChild(summary);
+  controls.parentNode.insertBefore(details, controls);
+  details.appendChild(controls);
+  const label = controls.querySelector('label');
+  if (label) label.textContent = '크로마 제거 범위';
+  const referenceSelect = $('pixelReferenceDirection');
+  if (referenceSelect) {
+    referenceSelect.value = 'AUTO';
+    referenceSelect.classList.add('hidden');
+    referenceSelect.setAttribute('aria-hidden', 'true');
+    referenceSelect.tabIndex = -1;
+  }
+  const globalOption = $('pixelChromaMode')?.querySelector('option[value="global"]');
+  const outerOption = $('pixelChromaMode')?.querySelector('option[value="outer"]');
+  if (globalOption) globalOption.textContent = '모든 초록색 제거';
+  if (outerOption) outerOption.textContent = '바깥과 연결된 배경만 제거';
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = '기준 이미지 방향은 첨부된 그림에서 자동 판독합니다. 캐릭터 자체에 초록색이 있으면 바깥 배경만 제거를 사용하세요.';
+  controls.appendChild(hint);
+}
+
+function inferReferenceDirection() {
+  return 'AUTO';
+}
+
+ensureGenerationProgressUi();
+ensureAdvancedReferenceUi();
+
+async function refreshProviderHealth() {
+  const badge = $('providerStatus');
+  if (!badge) return null;
+  try {
+    const response = await fetch('/api/provider-health');
+    if (!response.ok) throw new Error('provider health unavailable');
+    const health = await response.json();
+    badge.dataset.state = health.available ? 'ready' : 'unavailable';
+    badge.textContent = health.available ? 'Hermes 준비됨' : 'Hermes 설정 필요';
+    const reasons = {
+      hermes_not_installed: 'Hermes Agent 또는 openai-codex 이미지 플러그인을 찾지 못했습니다.',
+      auth_or_dependency_missing: 'Hermes에서 Codex 인증을 완료해야 합니다.',
+      provider_load_failed: 'Hermes 이미지 플러그인을 불러오지 못했습니다.',
+    };
+    badge.title = health.available
+      ? `${health.display_name || 'Hermes'} · ${health.default_model || '기본 이미지 모델'}`
+      : (reasons[health.reason] || 'Hermes 이미지 생성 환경을 확인하세요.');
+    return health;
+  } catch (_error) {
+    badge.dataset.state = 'unavailable';
+    badge.textContent = 'Hermes 연결 실패';
+    badge.title = 'Asset Studio 백엔드의 Hermes 상태를 확인하지 못했습니다.';
+    return null;
+  }
+}
+
+let actorWalk4State = null;
+let actorWalk4PreviewTimer = null;
+
+async function actorApi(path, payload = null) {
+  const options = payload === null ? {} : { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) };
+  const response = await fetch(path, options);
+  const data = await response.json();
+  if (!response.ok || data.success !== true) throw new Error(data.error || `actor request failed: ${response.status}`);
+  return data;
+}
+
+function renderActorWalk4Review(url, message) {
+  $('actorWalk4Review')?.classList.remove('hidden');
+  if ($('actorWalk4Preview')) $('actorWalk4Preview').src = url;
+  if ($('actorWalk4Progress')) $('actorWalk4Progress').textContent = message;
+  $('actorWalk4Assemble')?.classList.add('hidden');
+}
+
+async function generateActorWalk4Master() {
+  const prompt = String($('assetCorePrompt')?.value || '').trim();
+  if (!prompt) throw new Error('먼저 생성할 캐릭터 설명을 입력하세요.');
+  const health = await refreshProviderHealth();
+  if (!health?.available) throw new Error($('providerStatus')?.title || 'Hermes 설정이 필요합니다.');
+  const blueprintSet = await actorApi('/api/actor-walk4-blueprints');
+  setStatus('Walk4 방향 마스터 생성 중 · Hermes GPT Image');
+  const master = await actorApi('/api/generate-actor-master', {
+    prompt, direction:'SE', background_mode:'chroma_green',
+    negative:'duplicate character, extra limbs, malformed hands, malformed feet, cropped body, text, watermark',
+  });
+  actorWalk4State = { prompt, blueprints:blueprintSet.blueprints, beats:blueprintSet.beats, master, masterApproved:false, frames:[], current:null, currentSlot:0 };
+  renderActorWalk4Review(master.url, '마스터 확인 · 외형, 손 2개, 발 2개, SE 방향을 확인한 뒤 승인하세요.');
+  setStatus('Walk4 마스터 생성 완료 · 승인 전 다음 호출은 차단됨');
+}
+
+async function generateActorWalk4Frame() {
+  const state = actorWalk4State;
+  if (!state?.masterApproved) throw new Error('마스터 승인이 필요합니다.');
+  const blueprint = state.blueprints[state.currentSlot];
+  if (!blueprint) throw new Error('생성할 walk 프레임이 없습니다.');
+  const masterDataUrl = await srcToDataUrl(state.master.url);
+  const continuityDataUrl = state.frames[0]?.url ? await srcToDataUrl(state.frames[0].url) : null;
+  setStatus(`Walk4 ${state.currentSlot + 1}/4 · ${state.beats[state.currentSlot]} 생성 중`);
+  const payload = {
+    prompt:state.prompt,
+    identity_spec:state.master.identity_spec,
+    direction:'SE', action:'walk', frame_index:blueprint.frame_index,
+    direction_master:masterDataUrl, pose_blueprint:blueprint,
+    background_mode:'chroma_green', output_profile_id:'generic-pixel-actor-v1',
+    negative:'identity drift, costume drift, extra limbs, malformed hands, malformed feet, detached joints, text, watermark',
+  };
+  if (continuityDataUrl) payload.continuity_reference = continuityDataUrl;
+  state.current = await actorApi('/api/generate-actor-frame', payload);
+  renderActorWalk4Review(state.current.url, `프레임 ${state.currentSlot + 1}/4 · ${state.beats[state.currentSlot]} · 손·발·외형·접지를 확인하세요.`);
+  setStatus(`Walk4 ${state.currentSlot + 1}/4 생성 완료 · 승인 전 다음 호출은 차단됨`);
+}
+
+async function approveActorWalk4Current() {
+  const state = actorWalk4State;
+  if (!state) throw new Error('먼저 마스터를 생성하세요.');
+  if (!state.masterApproved) {
+    state.masterApproved = true;
+    await generateActorWalk4Frame();
+    return;
+  }
+  if (!state.current) throw new Error('승인할 프레임이 없습니다.');
+  state.frames.push({ ...state.current, visual_qa:'PASS', beat:state.beats[state.currentSlot] });
+  state.current = null;
+  state.currentSlot += 1;
+  if (state.currentSlot < 4) {
+    await generateActorWalk4Frame();
+    return;
+  }
+  if ($('actorWalk4Progress')) $('actorWalk4Progress').textContent = '4/4 승인 완료 · 시트 조립 준비됨';
+  $('actorWalk4Assemble')?.classList.remove('hidden');
+  setStatus('Walk4 4프레임 승인 완료 · 추가 생성 없이 조립 가능');
+}
+
+async function retryActorWalk4Current() {
+  const state = actorWalk4State;
+  if (!state || !state.masterApproved) {
+    await generateActorWalk4Master();
+    return;
+  }
+  await generateActorWalk4Frame();
+}
+
+async function assembleActorWalk4() {
+  const state = actorWalk4State;
+  if (!state || state.frames.length !== 4) throw new Error('승인된 walk 프레임 4장이 필요합니다.');
+  const frames = [];
+  for (const frame of state.frames) frames.push({ image:await srcToDataUrl(frame.url), visual_qa:'PASS' });
+  const result = await actorApi('/api/assemble-actor-walk4', { frames, cell_size:512, padding:16 });
+  state.assembly = result;
+  const stage = $('actorWalk4Animation');
+  if (stage) {
+    stage.classList.remove('hidden');
+    stage.innerHTML = '<img alt="walk4 animation frame"><span></span>';
+    let index = 0;
+    clearInterval(actorWalk4PreviewTimer);
+    const draw = () => { const image=stage.querySelector('img'), label=stage.querySelector('span'); if(image)image.src=result.frame_urls[index]; if(label)label.textContent=`${index + 1}/4 · ${state.beats[index]}`; index=(index+1)%4; };
+    draw(); actorWalk4PreviewTimer = setInterval(draw, 160);
+  }
+  addGallery(result.sheet_url, 'walk4 approved sheet');
+  setStatus('Walk4 시트 조립 및 애니메이션 미리보기 완료');
+}
+
+$('actorWalk4Start')?.addEventListener('click', () => generateActorWalk4Master().catch(error => { console.error(error); alert(error.message); setStatus(`Walk4 실패 · ${error.message}`); }));
+$('actorWalk4Approve')?.addEventListener('click', () => approveActorWalk4Current().catch(error => { console.error(error); alert(error.message); setStatus(`Walk4 실패 · ${error.message}`); }));
+$('actorWalk4Retry')?.addEventListener('click', () => retryActorWalk4Current().catch(error => { console.error(error); alert(error.message); setStatus(`Walk4 실패 · ${error.message}`); }));
+$('actorWalk4Assemble')?.addEventListener('click', () => assembleActorWalk4().catch(error => { console.error(error); alert(error.message); setStatus(`Walk4 조립 실패 · ${error.message}`); }));
+
 function directionLabelsForMode(mode = $('pixelDirectionMode')?.value || 'single') {
-  if (mode === '8dir') return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  if (mode === '4dir') return ['S', 'W', 'E', 'N'];
+  const profileDirections = actorOutputProfileState.status === 'ready'
+    ? actorOutputProfileState.profile.directions.map(direction => direction.code)
+    : ['S', 'W', 'E', 'N'];
+  if (mode === '8dir') return profileDirections.slice(0, 8);
+  if (mode === '4dir') return profileDirections.slice(0, 4);
   return [($('pixelTargetDirection')?.value || 'S')];
 }
 
@@ -567,6 +821,224 @@ const ASSET_FAMILY_SUBTYPES = {
 };
 const ASSET_SUBTYPE_LABELS = {
   character:'캐릭터', monster:'몬스터', npc:'NPC', effect:'이펙트', floor:'바닥', wall:'벽', corner:'모서리', door:'문/통로', terrain:'지형', decal:'데칼', autotile:'오토타일', tileset:'타일셋', main_panel:'메인 패널', inner_panel:'내부 패널', popup:'팝업', card:'카드', button:'버튼', slot:'슬롯', badge:'상태 배지', hud_chip:'HUD 칩', gauge:'게이지', icon:'아이콘', cursor:'커서/선택 표시', item:'아이템', equipment:'장비', weapon:'무기', loot:'전리품', furniture:'가구', machine:'기계/도구', prop:'환경 소품', interactable:'상호작용 오브젝트', destructible:'파괴 상태 오브젝트',
+};
+const RECIPE_GENERATION_CONTROL_IDS = [
+  'familyGenerateAi', 'generateBtn', 'generatePixelAsset',
+  'generateFrontIdleFromSelected', 'runPixelWorkflow', 'runPixelSamplePack',
+  'generate8DirIdle', 'generate8DirWalk', 'runDirectionalPixelPack',
+];
+let assetRecipeRegistryState = { status:'loading', registry:null, production:{}, known:{} };
+let actorOutputProfileState = { status:'loading', profile:null, actions:new Map() };
+const ACTOR_ACTION_ALIASES = { idle4:'idle', walk4:'walk', walk6:'walk', attack4:'attack', jump4:'jump', cast4:'cast', hurt4:'hurt', death4:'death', death6:'death', hit:'hurt', hit2:'hurt' };
+
+function validateActorOutputProfile(profile) {
+  const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+  const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
+  if (!profile || profile.schema_version !== 'asset-studio.output-profile/v1' || !identifier(profile.id) || profile.family !== 'actor') throw new Error('Invalid actor output profile');
+  if (!profile.frame || !Number.isSafeInteger(profile.frame.width) || !Number.isSafeInteger(profile.frame.height) || profile.frame.width < 1 || profile.frame.height < 1) throw new Error('Invalid actor frame contract');
+  if (!Array.isArray(profile.directions) || !profile.directions.length || !Array.isArray(profile.actions) || !profile.actions.length) throw new Error('Invalid actor output profile collections');
+  const directionIds = new Set(), directionCodes = new Set();
+  for (const direction of profile.directions) {
+    if (!identifier(direction?.id) || !/^[A-Z]{1,3}$/.test(direction?.code || '') || directionIds.has(direction.id) || directionCodes.has(direction.code)) throw new Error('Invalid actor direction recipe');
+    directionIds.add(direction.id); directionCodes.add(direction.code);
+  }
+  const actions = new Map();
+  for (const action of profile.actions) {
+    if (!identifier(action?.id) || actions.has(action.id) || !Number.isSafeInteger(action.frame_count) || action.frame_count < 1 || !positive(action.fps) || typeof action.loop !== 'boolean' || typeof action.terminal !== 'boolean' || !Array.isArray(action.beats) || action.beats.length !== action.frame_count || action.beats.some(beat => typeof beat !== 'string' || !beat.trim()) || typeof action.prompt_contract !== 'string' || !action.prompt_contract.trim() || typeof action.acceptance !== 'string' || !action.acceptance.trim()) throw new Error('Invalid actor action recipe');
+    actions.set(action.id, action);
+  }
+  return { profile, actions };
+}
+
+function actorActionRecipe(anim = 'idle') {
+  if (actorOutputProfileState.status !== 'ready') return null;
+  const raw = String(anim || 'idle').toLowerCase();
+  return actorOutputProfileState.actions.get(ACTOR_ACTION_ALIASES[raw] || raw) || null;
+}
+
+function applyActorOutputProfileUi() {
+  if (actorOutputProfileState.status !== 'ready') return;
+  const profile = actorOutputProfileState.profile;
+  const actionSelect = $('pixelAnimationPreset');
+  if (actionSelect) {
+    const previous = ACTOR_ACTION_ALIASES[actionSelect.value] || actionSelect.value;
+    actionSelect.innerHTML = profile.actions.map(action => `<option value="${action.id}">${action.id.replaceAll('_', ' ')}</option>`).join('');
+    actionSelect.value = actorOutputProfileState.actions.has(previous) ? previous : profile.actions[0].id;
+  }
+  const targetSelect = $('pixelTargetDirection');
+  if (targetSelect) {
+    const previous = targetSelect.value;
+    targetSelect.innerHTML = profile.directions.map(direction => `<option value="${direction.code}">${direction.code}</option>`).join('');
+    targetSelect.value = profile.directions.some(direction => direction.code === previous) ? previous : profile.directions[0].code;
+  }
+  const modeSelect = $('pixelDirectionMode');
+  if (modeSelect?.options) {
+    for (const option of Array.from(modeSelect.options)) {
+      const needed = option.value === '8dir' ? 8 : (option.value === '4dir' ? 4 : 1);
+      option.disabled = profile.directions.length < needed;
+    }
+    if (modeSelect.selectedOptions?.[0]?.disabled) modeSelect.value = profile.directions.length >= 4 ? '4dir' : 'single';
+  }
+  const action = actorActionRecipe(actionSelect?.value || profile.actions[0].id);
+  if ($('pixelWalkFrames') && action) {
+    $('pixelWalkFrames').value = String(action.frame_count);
+    $('pixelWalkFrames').disabled = true;
+  }
+  const directionalPack = $('runDirectionalPixelPack');
+  if (directionalPack) directionalPack.hidden = profile.directions.length < 8;
+}
+
+async function loadActorOutputProfile(profileId) {
+  const response = await fetch(`/api/output-profiles/${encodeURIComponent(profileId)}`, { headers:{ Accept:'application/json' } });
+  if (!response.ok) throw new Error('Actor output profile unavailable');
+  const validated = validateActorOutputProfile(await response.json());
+  actorOutputProfileState = { status:'ready', ...validated };
+  applyActorOutputProfileUi();
+  return validated.profile;
+}
+
+function validateAndBuildRecipeViews(registry) {
+  const fail = () => { throw new Error('Invalid recipe registry'); };
+  const plain = value => value && typeof value === 'object' && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+  const exact = (value, keys) => plain(value) && Object.keys(value).length === keys.length && Object.keys(value).every(key => keys.includes(key));
+  const text = (value, maximum=4096) => typeof value === 'string' && value.trim().length > 0 && value.length <= maximum;
+  const identifier = value => text(value,128) && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+  const topKeys = ['schema_version','quality_rubric_version','recipes','legacy_subtypes'];
+  const recipeKeys = ['id','title','description','channel','readiness','family','transport','generation_strategy','reference_policy','default_output_profile_id','export_capability','golden_job_ids','required_stages'];
+  const legacyKeys = ['legacy_id','family','type','classification','recipe_id','variant','migration_action','reason'];
+  const requiredStages = ['generate','local_qa','visual_qa','user_approval','edit','export'];
+  if (!exact(registry, topKeys) || registry.schema_version !== 'asset-studio.asset-recipes/v1' || registry.quality_rubric_version !== 'quality-rubric-v1' || !Array.isArray(registry.recipes) || registry.recipes.length === 0 || !Array.isArray(registry.legacy_subtypes)) fail();
+
+  const recipes = new Map(), transportKeys = new Set(), goldenJobIds = new Set();
+  for (const recipe of registry.recipes) {
+    const capability = recipe?.export_capability;
+    const profileResolved = identifier(recipe.default_output_profile_id);
+    if (!exact(recipe, recipeKeys) || !identifier(recipe.id) || !text(recipe.title,256) || !text(recipe.description) || !['production','lab'].includes(recipe.channel) || !['contract_only','ready'].includes(recipe.readiness) || !identifier(recipe.family) || !exact(recipe.transport, ['family','type']) || !identifier(recipe.transport.family) || !identifier(recipe.transport.type) || !identifier(recipe.generation_strategy) || !['none','optional','identity_master'].includes(recipe.reference_policy) || (recipe.default_output_profile_id !== null && !profileResolved) || (recipe.readiness === 'ready' && !profileResolved) || !exact(capability, ['route','options']) || !['actor','effect','tile','ui','object'].includes(capability.route) || capability.route !== recipe.family || !Array.isArray(capability.options) || capability.options.length === 0 || capability.options.some(option => !identifier(option)) || new Set(capability.options).size !== capability.options.length || !Array.isArray(recipe.golden_job_ids) || recipe.golden_job_ids.some(job => !identifier(job)) || new Set(recipe.golden_job_ids).size !== recipe.golden_job_ids.length || (recipe.channel === 'production' && recipe.golden_job_ids.length === 0) || !Array.isArray(recipe.required_stages) || recipe.required_stages.length !== requiredStages.length || recipe.required_stages.some((stage,index) => stage !== requiredStages[index]) || recipes.has(recipe.id)) fail();
+    const transportKey = `${recipe.transport.family}.${recipe.transport.type}`;
+    if (transportKeys.has(transportKey) || recipe.golden_job_ids.some(job => goldenJobIds.has(job))) fail();
+    transportKeys.add(transportKey);
+    recipe.golden_job_ids.forEach(job => goldenJobIds.add(job));
+    recipes.set(recipe.id, recipe);
+  }
+
+  const production = Object.create(null), known = Object.create(null), legacyKeysSeen = new Set(), canonicalProductionRecipeIds = new Set();
+  const actions = { production:'use_recipe', alias:'normalize_alias', lab:'keep_lab', retired:'remove' };
+  for (const legacy of registry.legacy_subtypes) {
+    if (!exact(legacy, legacyKeys) || !identifier(legacy.family) || !identifier(legacy.type) || !identifier(legacy.legacy_id) || legacy.legacy_id !== `${legacy.family}.${legacy.type}` || !Object.prototype.hasOwnProperty.call(actions, legacy.classification) || legacy.migration_action !== actions[legacy.classification] || !text(legacy.reason,1024) || legacyKeysSeen.has(legacy.legacy_id)) fail();
+    legacyKeysSeen.add(legacy.legacy_id);
+    const recipe = legacy.recipe_id === null ? null : recipes.get(legacy.recipe_id);
+    if (legacy.recipe_id !== null && (!identifier(legacy.recipe_id) || !recipe)) fail();
+    if (legacy.variant !== null && !identifier(legacy.variant)) fail();
+    if (legacy.classification === 'production' || legacy.classification === 'alias') {
+      if (!recipe || recipe.channel !== 'production' || recipe.transport.family !== legacy.family || !identifier(legacy.variant)) fail();
+    }
+    if (legacy.classification === 'production') {
+      if (recipe.transport.family !== legacy.family || recipe.transport.type !== legacy.type) fail();
+      canonicalProductionRecipeIds.add(recipe.id);
+    }
+    if (legacy.classification === 'lab' && recipe && (recipe.channel !== 'lab' || recipe.transport.family !== legacy.family)) fail();
+    if (legacy.classification === 'retired' && (legacy.recipe_id !== null || legacy.variant !== null)) fail();
+    if (legacy.classification !== 'retired') (known[legacy.family] ||= []).push(legacy.type);
+    if (legacy.classification === 'production') (production[legacy.family] ||= []).push(legacy.type);
+  }
+  for (const recipe of recipes.values()) {
+    if (recipe.channel === 'production' && !canonicalProductionRecipeIds.has(recipe.id)) fail();
+  }
+  return { production, known };
+}
+
+function migrateLegacyAssetSelection(registry, family, type) {
+  validateAndBuildRecipeViews(registry);
+  const legacy = registry.legacy_subtypes.find(item => item.family === family && item.type === type);
+  if (!legacy || legacy.classification === 'retired') throw new Error('Unsupported legacy asset selection');
+  if (legacy.classification === 'lab') {
+    const recipe = legacy.recipe_id === null ? null : registry.recipes.find(item => item.id === legacy.recipe_id);
+    return { classification:'lab', channel:'lab', recipe_id:legacy.recipe_id, transport:recipe ? { ...recipe.transport } : { family, type }, variant:legacy.variant };
+  }
+  const recipe = registry.recipes.find(item => item.id === legacy.recipe_id);
+  return { classification:legacy.classification, channel:'production', recipe_id:recipe.id, transport:{ ...recipe.transport }, variant:legacy.variant };
+}
+
+function recipeGenerationSubtypesForFamily(family) {
+  return assetRecipeRegistryState.status === 'ready' ? (assetRecipeRegistryState.production[family] || []) : [];
+}
+
+function legacyAssetSubtypesForFamily(family) {
+  return ASSET_FAMILY_SUBTYPES[family] || [];
+}
+
+function projectAssetSubtypesForFamily(family) {
+  return assetRecipeRegistryState.status === 'ready' ? (assetRecipeRegistryState.known[family] || []) : legacyAssetSubtypesForFamily(family);
+}
+
+function defaultProjectSubtype(family) {
+  return projectAssetSubtypesForFamily(family)[0] || legacyAssetSubtypesForFamily(family)[0] || '';
+}
+
+function isRecipeRegistryReady() {
+  return assetRecipeRegistryState.status === 'ready';
+}
+
+function setRecipeGenerationControlsEnabled(enabled) {
+  for (const id of RECIPE_GENERATION_CONTROL_IDS) {
+    const control = $(id);
+    if (control) control.disabled = !enabled;
+  }
+}
+
+function blockAssetGeneration() {
+  const message = 'AI 생성 레시피가 준비되지 않았습니다.';
+  setStatus(`${message} 캔버스 편집 기능은 계속 사용할 수 있습니다.`);
+  return new Error(message);
+}
+
+function applyRecipeRegistryToGenerationUi() {
+  const ready = isRecipeRegistryReady();
+  const productionCount = ready
+    ? Object.values(assetRecipeRegistryState.production).reduce((total, values) => total + values.length, 0)
+    : 0;
+  const generationReady = ready && productionCount > 0;
+  setRecipeGenerationControlsEnabled(generationReady);
+  document.querySelectorAll('#assetFamilyTabs [data-asset-family]').forEach(tab => {
+    const available = generationReady && recipeGenerationSubtypesForFamily(tab.dataset.assetFamily).length > 0;
+    tab.disabled = !available;
+    tab.hidden = !available;
+    tab.setAttribute('aria-disabled', String(!available));
+  });
+  if (!ready) {
+    renderAssetSubtypeOptions(null);
+    return;
+  }
+  const family = recipeGenerationSubtypesForFamily(selectedAssetFamily).length
+    ? selectedAssetFamily
+    : Object.keys(assetRecipeRegistryState.production)[0];
+  if (family) setAssetFamily(family);
+}
+
+const loadAssetRecipeRegistry = async () => {
+  assetRecipeRegistryState = { status:'loading', registry:null, production:{}, known:{} };
+  applyRecipeRegistryToGenerationUi();
+  setStatus('AI 생성 레시피를 불러오는 중입니다. 캔버스 편집 기능은 사용할 수 있습니다.');
+  try {
+    const response = await fetch('/api/recipes', { headers:{ Accept:'application/json' } });
+    if (!response.ok) throw new Error('Recipe registry unavailable');
+    const registry = await response.json();
+    const views = validateAndBuildRecipeViews(registry);
+    const actorRecipe = registry.recipes.find(recipe => recipe.id === 'actor-animation' && recipe.channel === 'production');
+    if (!actorRecipe?.default_output_profile_id) throw new Error('Actor output profile unavailable');
+    await loadActorOutputProfile(actorRecipe.default_output_profile_id);
+    assetRecipeRegistryState = { status:'ready', registry, production:views.production, known:views.known };
+    applyRecipeRegistryToGenerationUi();
+    const count = Object.values(views.production).reduce((total, values) => total + values.length, 0);
+    setStatus(`AI 생성 레시피 준비 완료 · 검증된 메뉴 ${count}개`);
+    return registry;
+  } catch (_) {
+    actorOutputProfileState = { status:'failed', profile:null, actions:new Map() };
+    assetRecipeRegistryState = { status:'failed', registry:null, production:{}, known:{} };
+    applyRecipeRegistryToGenerationUi();
+    setStatus('레시피를 불러오지 못해 AI 생성이 비활성화되었습니다. 캔버스 편집 기능은 계속 사용할 수 있습니다.');
+    return null;
+  }
 };
 let selectedAssetFamily = 'sprite';
 const ASSET_FAMILY_CREATION_COPY = {
@@ -594,7 +1066,7 @@ let projectV2Identity = null;
 
 function defaultProjectFamilyDraft(family) {
   const output=ASSET_FAMILY_OUTPUT_DEFAULTS[family];
-  return {subtype:ASSET_FAMILY_SUBTYPES[family][0],controls:{assetCorePrompt:'',assetOutputWidth:String(output.width),assetOutputHeight:String(output.height),assetBackground:output.background}};
+  return {subtype:defaultProjectSubtype(family),controls:{assetCorePrompt:'',assetOutputWidth:String(output.width),assetOutputHeight:String(output.height),assetBackground:output.background}};
 }
 
 function validateProjectFamilyDrafts(input) {
@@ -604,7 +1076,7 @@ function validateProjectFamilyDrafts(input) {
   const out={};let bytes=0;
   for(const family of PROJECT_FAMILIES){
     const draft=input[family], allowed=new Set([...PROJECT_DRAFT_SHARED_CONTROLS,...PROJECT_DRAFT_FAMILY_CONTROLS[family]]);
-    if(!plain(draft)||Object.keys(draft).some(k=>!['subtype','controls'].includes(k))||!ASSET_FAMILY_SUBTYPES[family].includes(draft.subtype)||!plain(draft.controls))throw new Error(`Invalid familyDrafts.${family}`);
+    if(!plain(draft)||Object.keys(draft).some(k=>!['subtype','controls'].includes(k))||!projectAssetSubtypesForFamily(family).includes(draft.subtype)||!plain(draft.controls))throw new Error(`Invalid familyDrafts.${family}`);
     if(Object.keys(draft.controls).some(id=>!allowed.has(id)))throw new Error(`Invalid familyDrafts.${family}: control allow-list`);
     const controls={};
     for(const [id,value] of Object.entries(draft.controls)){
@@ -634,7 +1106,7 @@ function serializeProjectFamilyDrafts() {
       else if(stored&&id==='assetBackground')value=stored.background;
       if(typeof value==='string'||typeof value==='boolean')controls[id]=value;
     }
-    result[family]={subtype:family===currentAssetFamily()?(currentAssetSubtype()||ASSET_FAMILY_SUBTYPES[family][0]):(stored?.subtype||ASSET_FAMILY_SUBTYPES[family][0]),controls};
+    result[family]={subtype:family===currentAssetFamily()?(currentAssetSubtype()||defaultProjectSubtype(family)):(stored?.subtype||defaultProjectSubtype(family)),controls};
   }
   return validateProjectFamilyDrafts(result);
 }
@@ -657,38 +1129,42 @@ const controlChecked = (id, fallback = false) => $(id) ? !!$(id).checked : fallb
 let assetGenerationInFlight = null;
 
 function currentAssetFamily() {
-  return ASSET_FAMILY_SUBTYPES[selectedAssetFamily] ? selectedAssetFamily : null;
+  return PROJECT_FAMILIES.includes(selectedAssetFamily) ? selectedAssetFamily : null;
 }
 
 function currentAssetSubtype() {
   const family = currentAssetFamily();
   const subtype = $('assetSubtype')?.value;
-  return family && ASSET_FAMILY_SUBTYPES[family].includes(subtype) ? subtype : null;
+  const known = family ? projectAssetSubtypesForFamily(family) : [];
+  if (known.includes(subtype)) return subtype;
+  const storedSubtype = family ? assetFamilyDrafts.get(family)?.subtype : null;
+  return known.includes(storedSubtype) ? storedSubtype : null;
 }
 
 function renderAssetSubtypeOptions(family, preferred = '') {
   family = family || currentAssetFamily();
   const select = $('assetSubtype');
   if (!select) return;
-  const values = ASSET_FAMILY_SUBTYPES[family] || ASSET_FAMILY_SUBTYPES.sprite;
+  const values = family ? recipeGenerationSubtypesForFamily(family) : [];
   select.replaceChildren(...values.map(value => {
     const option = document.createElement('option');
     option.value = value;
     option.textContent = ASSET_SUBTYPE_LABELS[value] || value;
     return option;
   }));
-  select.value = values.includes(preferred) ? preferred : values[0];
+  select.disabled = values.length === 0;
+  if (values.length) select.value = values.includes(preferred) ? preferred : values[0];
 }
 
 function saveAssetCreationDraft(family = currentAssetFamily()) {
-  if (!$('assetCorePrompt')) return;
+  if (!PROJECT_FAMILIES.includes(family) || !$('assetCorePrompt')) return;
   const defaults = ASSET_FAMILY_OUTPUT_DEFAULTS[family] || ASSET_FAMILY_OUTPUT_DEFAULTS.sprite;
   const draft={
     core: controlValue('assetCorePrompt', ''),
     width: $('assetOutputWidth')?.dataset.projectHydratedValue??controlValue('assetOutputWidth', String(defaults.width)),
     height: $('assetOutputHeight')?.dataset.projectHydratedValue??controlValue('assetOutputHeight', String(defaults.height)),
     background: controlValue('assetBackground', defaults.background),
-    subtype:currentAssetSubtype()||ASSET_FAMILY_SUBTYPES[family][0],
+    subtype:currentAssetSubtype()||defaultProjectSubtype(family),
   };
   for(const id of PROJECT_DRAFT_FAMILY_CONTROLS[family]||[]){const element=$(id);if(element)draft[id]=element.type==='checkbox'?!!element.checked:String(element.value);}
   assetFamilyDrafts.set(family,draft);
@@ -718,6 +1194,7 @@ function updateAssetFamilyUi() {
   });
   const actor = ['character', 'monster', 'npc'].includes(subtype);
   const effect = subtype === 'effect';
+  $('actorWalk4Workflow')?.classList.toggle('hidden', !actor || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk4');
   ['pixelMotionControls', 'pixelDirectionControls', 'pixelReferenceControls', 'pixelFrameControls', 'pixelLegacyDirectionControls', 'pixelAdvancedBatch'].forEach(id => $(id)?.classList.toggle('hidden', !actor));
   $('effectControls')?.classList.toggle('hidden', !effect);
   $('effectSequencePreviewPanel')?.classList.toggle('hidden', !effect);
@@ -746,8 +1223,9 @@ function legacyAssetTypeForFamily(family, subtype) {
 }
 
 function setAssetFamily(family, subtype = '') {
-  if (!ASSET_FAMILY_SUBTYPES[family]) return;
-  saveAssetCreationDraft(currentAssetFamily());
+  if (!recipeGenerationSubtypesForFamily(family).length) return;
+  const currentFamily = currentAssetFamily();
+  if (currentFamily) saveAssetCreationDraft(currentFamily);
   selectedAssetFamily = family;
   renderAssetSubtypeOptions(family, subtype);
   restoreAssetCreationDraft(family);
@@ -786,13 +1264,22 @@ function buildSpriteContract(subtype) {
   const actorTypes = ['character', 'monster', 'npc'];
   if (!actorTypes.includes(subtype)) throw new Error('Invalid sprite asset subtype');
   const rawAction = controlValue('pixelAnimationPreset', 'idle');
+  const action = actorActionRecipe(rawAction);
+  if (!action || actorOutputProfileState.status !== 'ready') throw new Error('Actor output profile is not ready');
   return {
-    animation_mode: rawAction.startsWith('walk') ? 'walk' : rawAction,
+    output_profile_id: actorOutputProfileState.profile.id,
+    animation_mode: action.id,
     direction_mode: controlValue('pixelDirectionMode', 'single'),
-    frame_count: pixelPresetFrameCount(rawAction),
+    frame_count: action.frame_count,
+    fps: action.fps,
+    loop: action.loop,
+    terminal: action.terminal,
+    beats: [...action.beats],
+    frame: { ...actorOutputProfileState.profile.frame },
+    pivot: { ...action.pivot },
     target_direction: controlValue('pixelTargetDirection', 'S'),
-    reference_direction: controlValue('pixelReferenceDirection', 'S'),
-    walk_frames: pixelPresetFrameCount(rawAction), chroma_mode: controlValue('pixelChromaMode', 'global'),
+    reference_direction: inferReferenceDirection(),
+    walk_frames: action.frame_count, chroma_mode: controlValue('pixelChromaMode', 'global'),
     preservation: { identity_lock: true, equipment_lock: true, palette: controlValue('pixelPalette', ''), root_foot_lock: true, silhouette_lock: true },
     no_baked_vfx: true,
   };
@@ -925,7 +1412,7 @@ function assetFamilyPreset() {
 function buildAssetGenerationPayload(base = {}) {
   const family = currentAssetFamily();
   const subtype = currentAssetSubtype();
-  if (!family || !ASSET_FAMILY_SUBTYPES[family]?.includes(subtype)) throw new Error('Invalid asset family or subtype');
+  if (!family || !recipeGenerationSubtypesForFamily(family).includes(subtype)) throw new Error('Invalid asset family or subtype');
   const prompt = String(controlValue('assetCorePrompt', '')).trim();
   const style_profile = resolveStyleProfileForFamily(styleProfileFromControls(), family);
   const requestedBackground = controlValue('assetBackground', 'chroma_green');
@@ -952,7 +1439,8 @@ $('assetFamilyTabs')?.addEventListener('click', event => {
 });
 $('assetFamilyTabs')?.addEventListener('keydown', event => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-  const tabs = [...document.querySelectorAll('#assetFamilyTabs [role="tab"]')];
+  const tabs = [...document.querySelectorAll('#assetFamilyTabs [role="tab"]')].filter(tab => !tab.disabled);
+  if (!tabs.length) return;
   const current = Math.max(0, tabs.indexOf(document.activeElement));
   const next = event.key === 'Home' ? 0 : (event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length);
   event.preventDefault();
@@ -992,12 +1480,14 @@ const PIXEL_ANIMATION_PRESET_DEFAULT_FRAMES = {
 };
 
 function pixelAnimationDefaultFrames(anim = effectivePixelAnimationPreset()) {
+  const recipe = actorActionRecipe(anim);
+  if (recipe) return recipe.frame_count;
   return PIXEL_ANIMATION_PRESET_DEFAULT_FRAMES[anim] || 4;
 }
 
 function canonicalActionForAnim(anim) {
-  if (anim === 'walk4' || anim === 'walk6') return 'walk';
-  return ({ idle:'idle', attack:'attack', jump:'jump', cast:'cast', hurt:'hurt', death:'death', ui_static:'ui_static' })[anim] || anim;
+  const raw = String(anim || 'idle').toLowerCase();
+  return ACTOR_ACTION_ALIASES[raw] || raw;
 }
 
 const SPRITE_ANIMATION_CORE_LOCKS = [
@@ -1017,6 +1507,8 @@ function spriteAnimationCoreLockContract() {
 }
 
 function actionFrameBeats(anim, frames = pixelAnimationDefaultFrames(anim)) {
+  const recipe = actorActionRecipe(anim);
+  if (recipe) return recipe.beats.map((beat, i) => `${i + 1}. ${beat}`).join('; ');
   const beats = {
     idle: ['neutral stance', 'subtle breath up', 'neutral stance', 'subtle breath down'],
     walk4: ['neutral crossover/passing stance', 'LEFT leg swing-cross; RIGHT leg planted support', 'neutral crossover/passing stance reused', 'RIGHT leg swing-cross; LEFT leg planted support'],
@@ -1032,6 +1524,8 @@ function actionFrameBeats(anim, frames = pixelAnimationDefaultFrames(anim)) {
 
 function actionVisualAcceptanceGate(anim) {
   const action = canonicalActionForAnim(anim);
+  const recipe = actorActionRecipe(action);
+  if (recipe) return `${spriteAnimationCoreLockContract()} Whitelist visual acceptance gate for ${action}: PASS only if ${recipe.acceptance} Otherwise mark FAIL.`;
   const gates = {
     idle: 'Whitelist visual acceptance gate for idle: PASS only if the sheet reads as an idle/breathing loop: standing in place, planted feet, same facing direction, same pivot/baseline, and only small torso/shoulder/head breathing motion across neutral, breath-up, neutral, breath-down beats. If the dominant readable action is not idle breathing, mark FAIL.',
     walk: 'Whitelist visual acceptance gate for walk: PASS only if the sheet reads as a simple RPG 4-frame crossover walk for the referenced actor: frames 1 and 3 are visually near-identical neutral transition poses with feet close beneath the pelvis. Frame 2: LEFT leg is the lifted swing leg crossing from behind to just ahead beside the RIGHT leg, while RIGHT leg is the planted stance/support leg. Frame 4: RIGHT leg is the lifted swing leg crossing from behind to just ahead beside the LEFT leg, while LEFT leg is the planted stance/support leg. In both crossing frames the swing foot passes beside and visibly overlaps/crosses the planted support leg beneath the pelvis; front/back depth ordering of the legs reverses between frames 2 and 4. Crossing is a natural depth pass, not swapped anatomical left/right identity or an X-locked pose. Root/pivot anchor, head/torso reference center, scale, and contact baseline stay locked; pelvis/root center remains at exactly 50% of each cell width and the same y-coordinate; counter-motion is secondary. Mark FAIL if frames 1 and 3 drift apart, if only one limb/contact point moves, if the same swing foot is repeated in both crossing frames, if the same side boot is enlarged/lifted in both crossing frames, if the legs never pass/cross through each other, if feet/contact points are hidden, if there is progressive left/right root drift, if bbox-centering would be needed to hide drift, or if motion reads as idle tapping, hopping, skating, dancing, a static split stance, or anything other than walking.',
@@ -1074,6 +1568,7 @@ function syncPixelAssetWorkflowUi({ silent = false } = {}) {
   const type = $('pixelAssetType')?.value || 'character';
   const actor = isPixelActorAssetType(type);
   const effect = isPixelEffectAssetType(type);
+  $('actorWalk4Workflow')?.classList.toggle('hidden', !actor || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk4');
   const motionIds = ['pixelMotionControls', 'pixelDirectionControls', 'pixelReferenceControls', 'pixelFrameControls', 'pixelLegacyDirectionControls'];
   motionIds.forEach(id => $(id)?.classList.toggle('hidden', !actor));
   $('pixelStaticModeNotice')?.classList.toggle('hidden', actor);
@@ -1086,7 +1581,7 @@ function syncPixelAssetWorkflowUi({ silent = false } = {}) {
     if ($('pixelAnimationPreset')) $('pixelAnimationPreset').value = 'ui_static';
     if ($('pixelDirectionMode')) $('pixelDirectionMode').value = 'single';
     if ($('pixelTargetDirection')) $('pixelTargetDirection').value = 'S';
-    if ($('pixelReferenceDirection')) $('pixelReferenceDirection').value = 'S';
+    if ($('pixelReferenceDirection')) $('pixelReferenceDirection').value = 'AUTO';
     if ($('pixelWalkFrames')) $('pixelWalkFrames').value = '1';
   } else {
     if ($('pixelAnimationPreset')?.value === 'ui_static') $('pixelAnimationPreset').value = lastActorAnimationPreset || 'idle';
@@ -1120,17 +1615,19 @@ function syncPixelAssetWorkflowUi({ silent = false } = {}) {
 function buildDirectionalSpriteSheetContract(anim = effectivePixelAnimationPreset()) {
   const mode = $('pixelDirectionMode')?.value || 'single';
   const dirs = directionLabelsForMode(mode);
-  const refDir = $('pixelReferenceDirection')?.value || 'S';
+  const refDir = inferReferenceDirection();
   const targetDir = $('pixelTargetDirection')?.value || 'S';
   const frameCount = anim === 'ui_static' ? 1 : requestedPixelFrameCount();
   const columns = frameCount;
   const directionLine = mode === '8dir'
     ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
     : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single target via one-direction generation. Generate exactly one target direction: ${directionLabel(targetDir)}. Do not generate a direction-candidate sheet, contact sheet, multi-direction atlas, or alternate direction candidates. Do not output all 8 directions; the app requests each direction separately. Screen-space directions: SW/W turn toward screen-left, SE/E turn toward screen-right.`);
-  const actionLabel = ({ idle:'idle/breathing', walk4:'walk cycle', walk6:'walk cycle', attack:'attack', jump:'jump', cast:'cast', hurt:'hurt reaction', death:'death/collapse', ui_static:'static asset' })[anim] || anim;
+  const actionRecipe = actorActionRecipe(anim);
+  const actionLabel = actionRecipe?.id.replaceAll('_', ' ') || ({ idle:'idle/breathing', walk4:'walk cycle', walk6:'walk cycle', attack:'attack', jump:'jump', cast:'cast', hurt:'hurt reaction', death:'death/collapse', ui_static:'static asset' })[anim] || anim;
+  const actionContract = actionRecipe?.prompt_contract || `${actionLabel} motion must read clearly in the declared frame order`;
   const frameLine = anim === 'ui_static'
     ? 'Static contract: exactly one clean isolated asset frame.'
-    : `${actionLabel} columns: exactly ${frameCount} frames per requested direction, evenly spaced in one horizontal row; frame beats: ${actionFrameBeats(anim, frameCount)}; Walk contract: neutral contact, left-foot stride, neutral contact, right-foot stride; fixed identity and equipment, fixed root baseline, no fake camera motion or whole-body translation. Global reference identity rule: one accepted reference identity is the standard for the whole action set; every frame must be a complete coherent full-frame pose, not a cut/paste/part-slide edit; ${spriteAnimationCoreLockContract()}`;
+    : `${actionLabel} columns: exactly ${frameCount} frames per requested direction, evenly spaced in one horizontal row; frame beats: ${actionFrameBeats(anim, frameCount)}; action contract: ${actionContract}. Global reference identity rule: one accepted reference identity is the standard for the whole action set; every frame must be a complete coherent full-frame pose, not a cut/paste/part-slide edit; ${spriteAnimationCoreLockContract()}`;
   const gridLine = mode === 'single'
     ? `Sheet grid: 1 row x ${columns} columns. The visible character must face ${directionLabel(targetDir)} in every cell.`
     : `Sheet grid: ${dirs.length} rows x ${columns} columns, evenly spaced cells, same scale and pivot in every cell.`;
@@ -1157,7 +1654,7 @@ function buildPixelAssetPrompt(corePrompt = '') {
     ? 'UI game asset, clean panel parts, reusable game UI component'
     : (effect ? 'effect-only game VFX asset for compositing, no caster/target/body/prop included' : `${type} game asset`);
   const frameCount = anim === 'ui_static' ? 1 : requestedPixelFrameCount();
-  const animLine = {
+  const legacyAnimLine = {
     idle: `idle animation, ${frameCount}-frame subtle breathing loop (${actionFrameBeats(anim, frameCount)}), evenly spaced sprite sheet cells`,
     walk4: `simple RPG crossover walk cycle, ${frameCount}-frame neutral-left-cross-neutral-right-cross animation (${actionFrameBeats(anim, frameCount)}). Frames 1 and 3 use the same neutral transition pose with feet close beneath the pelvis. Frame 2: LEFT leg is the lifted swing leg crossing from behind to just ahead beside the planted RIGHT stance/support leg. Frame 4 is the exact inverse: RIGHT leg is the lifted swing leg crossing beside the planted LEFT stance/support leg. The swing foot passes beside and visibly overlaps/crosses the planted support leg beneath the pelvis; leg front/back depth ordering reverses between frames 2 and 4. For S/front-facing, character LEFT = screen-right and character RIGHT = screen-left: frame 2 swing boot on screen-right, frame 4 swing boot on screen-left. Screen coordinates are final: column 2 only screen-right boot advances with knee crossing inward; column 4 only screen-left boot advances with knee crossing inward. Below-belt phases must be opposite/mirrored; reject the same-side front boot in both. Keep pelvis/root center at exactly 50% of each cell width and the same y-coordinate. Natural depth pass only, no X-locked legs or anatomical side swap. Fixed root/pivot anchor, stable head/torso center and contact baseline, coherent counter-motion, no one-limb fake, evenly spaced sprite sheet cells`,
     walk6: `smooth walk cycle, ${frameCount}-frame walking animation (${actionFrameBeats(anim, frameCount)}), fixed root/pivot anchor, stable head/torso reference center and contact baseline, actor-appropriate alternating support/contact phases, connected passing beats, coherent counter-motion, no one-limb fake across all 6 frames, evenly spaced sprite sheet cells`,
@@ -1168,6 +1665,10 @@ function buildPixelAssetPrompt(corePrompt = '') {
     death: `death animation, ${frameCount} frames (${actionFrameBeats(anim, frameCount)}), readable alive/collapse/down/dead-still collapse beats, evenly spaced sprite sheet cells`,
     ui_static: `${type} static single asset, no animation frames, crisp reusable game component`,
   }[anim] || `${frameCount}-frame animation frames`;
+  const actionRecipe = actor ? actorActionRecipe(anim) : null;
+  const animLine = actionRecipe
+    ? `${actionRecipe.prompt_contract} Exactly ${actionRecipe.frame_count} frames in this order: ${actionFrameBeats(actionRecipe.id, actionRecipe.frame_count)}.`
+    : legacyAnimLine;
   const styleLine = `${style.replaceAll('_', ' ')}, refined pixel art, not chunky NES, clean silhouette, game-ready production quality`;
   const directionalContract = actor ? buildDirectionalSpriteSheetContract(anim) : (effect ? 'Effect asset contract: exactly one isolated reusable game VFX asset, no character/monster/object body, no caster, no target, no floor/environment, no UI frame. The effect must be centered with transparent/chroma margin and be ready to composite over selected or standalone assets.' : 'Static asset contract: exactly one isolated reusable game asset, no animation, no direction sheet, no alternate poses.');
   const outputLine = actor
@@ -1239,6 +1740,7 @@ function updateGridCellSizeFromSelectedLayer({ renderExisting = false } = {}) {
 
 function applyPixelWorkflowGridDefaults(targetImg = null) {
   const effect = isPixelEffectAssetType();
+  const actorAction = !effect ? actorActionRecipe(effectivePixelAnimationPreset()) : null;
   const frames = requestedPixelFrameCount();
   const dirs = directionLabelsForMode();
   const rows = effect ? Math.max(1, +($('effectRows')?.value || 1)) : Math.max(1, dirs.length);
@@ -1258,10 +1760,16 @@ function applyPixelWorkflowGridDefaults(targetImg = null) {
   if ($('gridGapX')) $('gridGapX').value = String(gap);
   if ($('gridGapY')) $('gridGapY').value = String(gap);
   if ($('animFrameCount')) $('animFrameCount').value = String(frames);
-  if ($('animFps')) $('animFps').value = effect ? String(Math.max(1, +($('effectFps')?.value || 12))) : ($('pixelAnimationPreset')?.value?.startsWith('walk') ? '10' : '8');
-  if (effect && $('animMode')) {
-    const effectLoop = $('effectLoop')?.value || 'one-shot';
-    $('animMode').value = effectLoop === 'ping-pong' ? 'pingpong' : (effectLoop === 'loop' ? 'loop' : 'once');
+  if ($('animFps')) $('animFps').value = effect
+    ? String(Math.max(1, +($('effectFps')?.value || 12)))
+    : String(actorAction?.fps || 8);
+  if ($('animMode')) {
+    if (effect) {
+      const effectLoop = $('effectLoop')?.value || 'one-shot';
+      $('animMode').value = effectLoop === 'ping-pong' ? 'pingpong' : (effectLoop === 'loop' ? 'loop' : 'once');
+    } else {
+      $('animMode').value = actorAction?.loop ? 'loop' : 'once';
+    }
   }
   return { frames, rows, columns, frameW, frameH, autoSized: !!size };
 }
@@ -2172,6 +2680,18 @@ function extractImageDataComponents(imgData, minArea = 48, options = {}) {
   return slices.sort((a, b) => (a.y - b.y) || (a.x - b.x));
 }
 
+function normalizeDetectedSpriteSlices(slices, bounds) {
+  if (!slices.length) return slices;
+  const width = Math.max(...slices.map(slice => slice.width));
+  const height = Math.max(...slices.map(slice => slice.height));
+  return slices.map(slice => {
+    const centerX = slice.x + slice.width / 2;
+    const x = clamp(Math.round(centerX - width / 2), 0, Math.max(0, bounds.w - width));
+    const y = clamp(slice.y, 0, Math.max(0, bounds.h - height));
+    return { ...slice, x, y, width, height, area:width*height, contentBounds:{ x:slice.x, y:slice.y, width:slice.width, height:slice.height } };
+  });
+}
+
 async function detectSpriteSlices() {
   const target = activeSpriteTarget();
   if (!target) { spriteSummary('이미지 레이어를 선택해야 합니다.'); setStatus('스프라이트 추출: 이미지 레이어 선택 필요'); return []; }
@@ -2232,6 +2752,10 @@ async function detectSpriteSlices() {
   const configuredAsFrameSheet = gridExpected > 1 && (rows === 1 || +($('animFrameCount')?.value || 0) === gridExpected);
   if (configuredAsFrameSheet && spriteSlices.length !== gridExpected) {
     return fallbackToGrid(`프레임 수 불일치 감지(${spriteSlices.length}개 탐지)`);
+  }
+  if (configuredAsFrameSheet) {
+    spriteSlices.sort((a, b) => (a.x - b.x) || (a.y - b.y));
+    spriteSlices = normalizeDetectedSpriteSlices(spriteSlices, bounds);
   }
 
   selectedSpriteSliceId = spriteSlices[0]?.id || null;
@@ -2926,21 +3450,56 @@ function currentAnimationSpriteSlices(frameCount = Math.max(1, +($('animFrameCou
   return buildGridSpriteSlices().slice(0, frameCount);
 }
 
+function detectFrameHeadAnchor(img) {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently:true });
+  ctx.drawImage(img, 0, 0);
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  let left=canvas.width, top=canvas.height, right=-1, bottom=-1;
+  for (let y=0;y<canvas.height;y++) for (let x=0;x<canvas.width;x++) {
+    if (pixels[(y*canvas.width+x)*4+3] < 8) continue;
+    left=Math.min(left,x);right=Math.max(right,x);top=Math.min(top,y);bottom=Math.max(bottom,y);
+  }
+  if (right < left || bottom < top) return { x:canvas.width/2, y:0 };
+  const headBottom = Math.min(bottom, top + Math.max(1, Math.round((bottom-top+1)*.22)));
+  let weight=0, sumX=0, sumY=0;
+  for (let y=top;y<=headBottom;y++) for (let x=left;x<=right;x++) {
+    const alpha=pixels[(y*canvas.width+x)*4+3];
+    if (alpha < 8) continue;
+    weight+=alpha;sumX+=x*alpha;sumY+=y*alpha;
+  }
+  return weight ? { x:sumX/weight, y:sumY/weight } : { x:(left+right)/2, y:top };
+}
+
 async function buildAnimationFramesFromGrid() {
   if (!activeSpriteTarget()) throw new Error('이미지 레이어 선택 필요');
   const frameCount = Math.max(1, +($('animFrameCount')?.value || 4));
   const frames = currentAnimationSpriteSlices(frameCount);
   if (!frames.length) throw new Error('프레임 조각 없음 · 먼저 자동 조각 찾기 또는 그리드 미리보기를 실행하세요');
-  const urls = [];
+  const decodedFrames = [];
   for (const slice of frames) {
     const dataUrl = await spriteSliceDataUrl(slice);
     const img = await loadHtmlImage(dataUrl);
+    decodedFrames.push({ img, width:slice.width, height:slice.height, head:detectFrameHeadAnchor(img) });
+  }
+  const maxFrameWidth = Math.max(...decodedFrames.map(frame => frame.width));
+  const maxFrameHeight = Math.max(...decodedFrames.map(frame => frame.height));
+  const commonHeadAnchor = {
+    x: Math.max(...decodedFrames.map(frame => frame.head.x)),
+    y: Math.max(...decodedFrames.map(frame => frame.head.y)),
+  };
+  const urls = [];
+  for (const frame of decodedFrames) {
     const frameCanvas = document.createElement('canvas');
-    frameCanvas.width = slice.width;
-    frameCanvas.height = slice.height;
+    frameCanvas.width = maxFrameWidth;
+    frameCanvas.height = maxFrameHeight;
     const ctx = frameCanvas.getContext('2d');
     ctx.clearRect(0, 0, frameCanvas.width, frameCanvas.height);
-    ctx.drawImage(img, 0, 0);
+    const x = clamp(Math.round(commonHeadAnchor.x - frame.head.x), 0, maxFrameWidth - frame.width);
+    const y = clamp(Math.round(commonHeadAnchor.y - frame.head.y), 0, maxFrameHeight - frame.height);
+    ctx.drawImage(frame.img, x, y);
     urls.push(frameCanvas.toDataURL('image/png'));
   }
   return urls;
@@ -3348,6 +3907,27 @@ function loadImageForCanvas(url) {
   });
 }
 
+function buildReplacementObjectGenerationPayload(prompt,negative,contextName,backgroundMode='chroma_green') {
+  if(!isRecipeRegistryReady())throw blockAssetGeneration();
+  const selection=migrateLegacyAssetSelection(assetRecipeRegistryState.registry,'object','item');
+  if(selection.channel!=='production')throw new Error('Object generation requires a Production recipe');
+  const object=buildObjectContract();
+  object.identity.subtype=selection.variant||selection.transport.type;
+  const objectPrompt=`${prompt}\n\nGenerate ONLY the replacement/new object as an isolated transparent-friendly game asset. It may later be placed over ${contextName}. Do not include character, hand, body, scene, text, logo, watermark, or full image redraw. Match pixel/game asset style when possible. Negative: ${negative||'background, character body, text, watermark'}`;
+  return {
+    prompt:objectPrompt,
+    negative,
+    preset:'game',
+    aspect_ratio:'square',
+    background_mode:backgroundMode,
+    asset_family:selection.transport.family,
+    asset_type:selection.transport.type,
+    style_profile:resolveStyleProfileForFamily(styleProfileFromControls(),'object'),
+    output:{width:object.source.canvas.width,height:object.source.canvas.height,background:backgroundMode==='chroma_green'?'chroma_green':'transparent'},
+    object,
+  };
+}
+
 async function generateReplacementObject() {
   const prompt = ($('replaceObjectPrompt')?.value || '').trim();
   const negative = ($('replaceObjectNegative')?.value || '').trim();
@@ -3391,11 +3971,12 @@ async function generateReplacementObject() {
     }
 
     const contextName = target ? nameOf(target) : 'current canvas';
-    const objectPrompt = `${prompt}\n\nGenerate ONLY the replacement/new object as an isolated transparent-friendly game asset. It may later be placed over ${contextName}. Do not include character, hand, body, scene, text, logo, watermark, or full image redraw. Match pixel/game asset style when possible. Negative: ${negative || 'background, character body, text, watermark'}`;
+    const generationConfig = { background_mode: 'chroma_green' };
+    const generationPayload = buildReplacementObjectGenerationPayload(prompt,negative,contextName,generationConfig.background_mode);
     const gen = await fetch('/api/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ prompt: objectPrompt, preset: 'game', aspect_ratio: 'square', background_mode: 'chroma_green' })
+      body: JSON.stringify(generationPayload)
     });
     const genData = await gen.json();
     if (!gen.ok || !genData.success) throw new Error(genData.error || 'object generation failed');
@@ -6197,33 +6778,19 @@ async function exportObjectPackageZip(){const button=$('exportObjectPackageZip')
 if($('exportObjectPackageZip'))$('exportObjectPackageZip').onclick=()=>exportObjectPackageZip().catch(()=>{});
 window.__assetStudioDebug={...(window.__assetStudioDebug||{}),checkObjectExportBudget,objectNearestDerivative,buildObjectExportPackage,exportObjectPackageZip};
 
-function familyExportDescriptor(result){
+function familyExportDescriptor(result,registry=null){
   if(!result||typeof result!=='object'||result.status!=='succeeded')throw new Error('family export requires a succeeded selected result');
-  const key=`${result.family}/${result.type}`, routes={
-    'sprite/character':['actor',['sheets','frames','fps','pivot']],
-    'sprite/monster':['actor',['sheets','frames','fps','pivot']],
-    'sprite/npc':['actor',['sheets','frames','fps','pivot']],
-    'sprite/effect':['effect',['full-cell','trim','fps','pivot']],
-    'tile/terrain':['tile',['atlas','rules','collision','navigation']],
-    'tile/tile':['tile',['atlas','rules','collision','navigation']],
-    'tile/tileset':['tile',['atlas','rules','collision','navigation']],
-    'tile/autotile':['tile',['atlas','rules','collision','navigation']],
-    'tile/map':['tile',['atlas','rules','collision','navigation']],
-    'ui/button':['ui',['states','nine-slice','safe-area']],
-    'ui/panel':['ui',['states','nine-slice','safe-area']],
-    'ui/icon':['ui',['states','nine-slice','safe-area']],
-    'ui/ui_panel':['ui',['states','nine-slice','safe-area']],
-    'object/interactable':['object',['states','pivot','ground','collision','interaction']],
-    'object/prop':['object',['states','pivot','ground','collision','interaction']],
-    'object/decoration':['object',['states','pivot','ground','collision','interaction']],
-    'object/item':['object',['states','pivot','ground','collision','interaction']],
-  }, selected=routes[key];
-  if(!selected)throw new Error(`unsupported family export route: ${key}`);
-  return {schema_version:'asset-studio.family-export-center/v1',result_id:String(result.id||''),family:result.family,subtype:result.type,route:selected[0],options:selected[1].slice()};
+  const activeRegistry=registry||(typeof assetRecipeRegistryState!=='undefined'&&assetRecipeRegistryState?.status==='ready'?assetRecipeRegistryState.registry:null);
+  if(!activeRegistry)throw new Error('family export recipe registry unavailable');
+  const selection=migrateLegacyAssetSelection(activeRegistry,result.family,result.type);
+  if(selection.channel!=='production')throw new Error(`family export requires a production recipe: ${result.family}/${result.type}`);
+  const recipe=activeRegistry.recipes.find(item=>item.id===selection.recipe_id), capability=recipe?.export_capability;
+  if(!recipe||!capability)throw new Error(`family export capability unavailable: ${selection.recipe_id||'unknown'}`);
+  return {schema_version:'asset-studio.family-export-center/v1',result_id:String(result.id||''),family:result.family,subtype:result.type,recipe_id:recipe.id,route:capability.route,options:capability.options.slice()};
 }
 
-function buildUnifiedFamilyExportPackage(result,source,options={},builders={}){
-  const descriptor=familyExportDescriptor(result);
+function buildUnifiedFamilyExportPackage(result,source,options={},builders={},registry=null){
+  const descriptor=familyExportDescriptor(result,registry);
   if(!source||typeof source!=='object'||!options||typeof options!=='object'||Array.isArray(options))throw new Error('family export source/options required');
   const defaults={actor:typeof buildActorExportPackage==='function'?buildActorExportPackage:null,effect:typeof buildEffectExportPackage==='function'?buildEffectExportPackage:null,tile:typeof buildTileExportPackage==='function'?buildTileExportPackage:null,ui:typeof buildUiExportPackage==='function'?buildUiExportPackage:null,object:typeof buildObjectExportPackage==='function'?buildObjectExportPackage:null}, impl=builders[descriptor.route]||defaults[descriptor.route];
   if(typeof impl!=='function')throw new Error(`family export builder unavailable: ${descriptor.route}`);
@@ -6235,7 +6802,10 @@ function buildUnifiedFamilyExportPackage(result,source,options={},builders={}){
   else if(descriptor.route==='tile')output=impl(source.imageData,source.contract,options.assetType||result.type);
   else if(descriptor.route==='ui')output=impl(source.imageData,source.contract);
   else output=impl(source.imageData,source.contract,options);
-  if(!output||typeof output!=='object'||!output.manifest||output.manifest.family!==descriptor.route)throw new Error('family export builder returned mismatched manifest');
+  const manifestMatches=descriptor.route==='effect'
+    ? output?.manifest?.schema_version==='asset-studio.effect-sequence/v1'&&output.manifest.kind==='effect_sequence'
+    : output?.manifest?.family===descriptor.route;
+  if(!output||typeof output!=='object'||!manifestMatches)throw new Error('family export builder returned mismatched manifest');
   return {...output,exportCenter:descriptor};
 }
 
@@ -6273,6 +6843,7 @@ if ($('runDirectionalPixelPack')) $('runDirectionalPixelPack').onclick = () => r
 ['pixelFrameW','pixelFrameH','pixelAnimationPreset','pixelDirectionMode','pixelTargetDirection','pixelWalkFrames'].forEach(id => {
   if ($(id)) $(id).addEventListener('change', () => {
     if (id === 'pixelAnimationPreset' && $('pixelWalkFrames')) $('pixelWalkFrames').value = String(pixelAnimationDefaultFrames($('pixelAnimationPreset')?.value || 'idle'));
+    if (id === 'pixelAnimationPreset') $('actorWalk4Workflow')?.classList.toggle('hidden', !isPixelActorAssetType() || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk4');
     applyPixelWorkflowGridDefaults();
   });
 });
@@ -6362,6 +6933,7 @@ $('loadProject').onchange = e => {
 };
 
 function generateAiAsset() {
+  if (!isRecipeRegistryReady()) return Promise.reject(blockAssetGeneration());
   if (assetGenerationInFlight) return assetGenerationInFlight;
   const family = currentAssetFamily();
   const subtype = currentAssetSubtype();
@@ -6378,6 +6950,7 @@ function generateAiAsset() {
   const referenceObj = useReference ? selectedReferenceObj : null;
   const generateBtn = $('familyGenerateAi') || $('generateBtn') || $('generatePixelAsset');
   if (generateBtn) generateBtn.disabled = true;
+  beginGenerationProgress('1/3 · 요청 데이터 준비 중');
   setStatus(useReference ? '기준 이미지 기반 AI 에셋 생성 중...' : 'AI 에셋 생성 중...');
 
   const request = (async () => {
@@ -6399,27 +6972,32 @@ function generateAiAsset() {
         });
       }
       if (useReference) payload.reference_image = imageObjectToDataUrl(referenceObj);
+      updateGenerationProgress('2/3 · AI 이미지 생성 대기 중');
       const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'generation failed');
+      updateGenerationProgress('3/3 · 결과 검사 및 캔버스 적용 중');
       const url = withCacheBust(data.url);
       if ($('pixelQaSummary') && data.qa) {
         const dqa = data.qa.direction_qa || {};
         $('pixelQaSummary').textContent = `QA direction ${dqa.status || 'n/a'} ${dqa.target_direction || ''} slot ${dqa.selected_slot ?? '-'} · alpha ${data.qa.alpha_min}-${data.qa.alpha_max} · corners ${data.qa.corner_alpha?.join('/') || '-'} · green ${data.qa.green_pixels ?? '-'}`;
       }
       const artifacts = Array.isArray(data.artifacts) && data.artifacts.length ? data.artifacts : [{kind:'image',url}];
+      const storedPayload = compactAssetResultPayload(payload, referenceObj);
       const result = createAssetResult({ family:payload.asset_family, type:payload.asset_type, status:'succeeded',
-        preview:{url}, sourceRequest:payload, normalizedContract:payload, qaSummary:data.qa || null,
+        preview:{url}, sourceRequest:storedPayload, normalizedContract:storedPayload, qaSummary:data.qa || null,
         artifacts, adopted:false, rejected:false, error:null });
       assetResultStore.add(result);
       assetResultStore.select(result.id);
       await adoptResult(result.id,'new-layer');
+      finishGenerationProgress(true, '완료 · 결과가 캔버스에 적용됐습니다');
       return { url, result, data, referenceObj: referenceObj || null };
     } catch (err) {
+      finishGenerationProgress(false, `실패 · ${err.message}`);
       setStatus('AI generation failed: ' + err.message);
       throw err;
     } finally {
-      if (generateBtn) generateBtn.disabled = false;
+      if (generateBtn) generateBtn.disabled = !isRecipeRegistryReady();
     }
   })();
   assetGenerationInFlight = request;
@@ -6431,11 +7009,13 @@ function generateAiAsset() {
 
 function setFrontIdleGridForImage(img, frames = 4) {
   const defaults = applyPixelWorkflowGridDefaults(img);
+  const action = actorActionRecipe(effectivePixelAnimationPreset());
   if ($('gridRows')) $('gridRows').value = '1';
   if ($('gridCellH')) $('gridCellH').value = String(imageDisplayedSize(img)?.h || defaults.frameH);
   if ($('pixelFrameH')) $('pixelFrameH').value = $('gridCellH')?.value || String(defaults.frameH);
-  if ($('animFps')) $('animFps').value = '5';
-  if ($('animMode')) $('animMode').value = 'loop';
+  if ($('animFrameCount')) $('animFrameCount').value = String(action?.frame_count || frames);
+  if ($('animFps')) $('animFps').value = String(action?.fps || 8);
+  if ($('animMode')) $('animMode').value = action?.loop ? 'loop' : 'once';
 }
 
 function animationPresetSpec(presetRaw) {
@@ -6509,6 +7089,15 @@ function animationPresetSpec(presetRaw) {
       motion: 'no animation; one isolated game asset frame'
     }
   };
+  const action = actorActionRecipe(preset);
+  if (action) return {
+    key: action.id,
+    label: action.id.replaceAll('_', ' '),
+    frames: action.frame_count,
+    frameOrder: actionFrameBeats(action.id, action.frame_count),
+    motion: action.prompt_contract,
+    acceptance: actionVisualAcceptanceGate(action.id),
+  };
   return specs[preset] || specs.idle;
 }
 
@@ -6541,15 +7130,13 @@ Flat exact #00FF00 chroma green background edge-to-edge.
 No text, labels, numbers, watermark, mockup frame, scenery, extra characters, or sprite sheet.`;
   }
   const targetDirection = $('pixelTargetDirection')?.value || 'S';
-  const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
   const directionText = directionLabel(targetDirection);
-  const referenceText = directionLabel(referenceDirection);
   const frameText = spec.frames === 1
     ? 'Exactly one isolated sprite frame.'
     : `Exactly one horizontal row of ${spec.frames} evenly spaced frames.`;
   return `${baseSubject ? baseSubject + '\n\n' : ''}Create a ${spec.label.toLowerCase()} pixel-art sprite from the selected reference character.
 Target direction: ${directionText}. Keep the visible character facing this target direction in every frame.
-Reference image direction: ${referenceText}. Use it only for identity, costume, colors, proportions, pixel density, outline weight, and scale.
+Infer the supplied reference image's current facing from the image itself. Use the reference for identity, costume, colors, proportions, pixel density, outline weight, and scale, then rotate only as needed to reach the target direction.
 ${frameText}
 Frame order: ${spec.frameOrder}.
 Motion rule: ${spec.motion}.
@@ -6561,6 +7148,7 @@ Background cleanup contract: after removal there must be true transparent backgr
 }
 
 async function generateFrontIdleFromSelected() {
+  if (!isRecipeRegistryReady()) throw blockAssetGeneration();
   const referenceObj = selectedLayerObject();
   const type = $('pixelAssetType')?.value || 'character';
   const actor = isPixelActorAssetType(type);
@@ -6574,7 +7162,7 @@ async function generateFrontIdleFromSelected() {
   const preset = effectivePixelAnimationPreset();
   const spec = animationPresetSpec(preset);
   const targetDirection = $('pixelTargetDirection')?.value || 'S';
-  const referenceDirection = $('pixelReferenceDirection')?.value || 'S';
+  const referenceDirection = inferReferenceDirection();
   const prompt = buildSelectedActionSpritePrompt(referenceObj, spec);
   const effect = isPixelEffectAssetType(type);
   const statusPrefix = actor
@@ -6582,34 +7170,21 @@ async function generateFrontIdleFromSelected() {
     : `선택 이미지 스타일 기준 ${type} ${spec.label}`;
   const referenceImage = imageObjectToDataUrl(referenceObj);
   const effectNegative = 'caster, target, character, monster, object body, prop body, floor, environment, UI frame, text, numbers, watermark, white background, full scene, copied reference image';
-  const requestPayload = effect
-    ? buildAssetGenerationPayload({
-        reference_image: referenceImage,
-        prompt,
-        negative: effectNegative,
-        preset: 'effect',
-        aspect_ratio: 'square',
-        background_mode: 'chroma_green',
-        no_baked_vfx: false,
-      })
-    : {
-        reference_image: referenceImage,
-        prompt,
-        negative: actor ? 'wrong facing direction, alternate directions, turntable, contact sheet, multiple rows, labels, text, numbers, watermark, different character per frame, color drift, costume changes, white background, scenery, cropped feet, malformed limbs, fake walk cycle, same swing foot repeated in both crossing frames, same side boot enlarged/lifted in both crossing frames, legs never pass/cross through each other, static split stance, X-locked crossed legs, anatomical left/right identity swap, four unrelated walk poses, root slide, progressive left/right root drift, hopping, skating, dancing, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura' : 'animation frames, sprite sheet, character pose sheet, directional views, labels, text, numbers, watermark, white background, scenery, mockup frame, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura',
-        preset: type === 'effect' ? 'effect' : 'pixel',
-        aspect_ratio: 'square',
-        background_mode: 'chroma_green',
-        direction_mode: 'single',
-        target_direction: targetDirection,
-        reference_direction: referenceDirection,
-        animation_mode: spec.key,
-        frame_count: spec.frames,
-        chroma_mode: $('pixelChromaMode')?.value || 'global',
-        asset_type: type,
-        no_baked_vfx: true,
-      };
+  const requestPayload = buildAssetGenerationPayload({
+    reference_image: referenceImage,
+    prompt,
+    negative: effect
+      ? effectNegative
+      : (actor ? 'wrong facing direction, alternate directions, turntable, contact sheet, multiple rows, labels, text, numbers, watermark, different character per frame, color drift, costume changes, white background, scenery, cropped feet, malformed limbs, root slide, hopping, skating, dancing, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura' : 'animation frames, sprite sheet, character pose sheet, directional views, labels, text, numbers, watermark, white background, scenery, mockup frame, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura'),
+    preset: effect ? 'effect' : 'pixel',
+    aspect_ratio: 'square',
+    background_mode: 'chroma_green',
+    no_baked_vfx: !effect,
+  });
   try {
+    beginGenerationProgress('1/3 · 기준 이미지와 동작 요청 준비 중');
     setStatus(`${statusPrefix} 자동 생성 중...`);
+    updateGenerationProgress('2/3 · AI 이미지 생성 대기 중');
     const res = await fetch('/api/generate-reference', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -6617,6 +7192,7 @@ async function generateFrontIdleFromSelected() {
     });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'direction/action generation failed');
+    updateGenerationProgress('3/3 · 배경 제거·QA·미리보기 처리 중');
     const url = withCacheBust(data.url);
     const resultLabel = actor ? `${targetDirection} ${spec.label} ${spec.frames}f` : `${type} ${preset} ${spec.frames}f`;
     addGallery(url, data.method || data.model || resultLabel);
@@ -6636,9 +7212,11 @@ async function generateFrontIdleFromSelected() {
     }
     recordPixelAssetResult(url, data.method || data.model || resultLabel);
     setStatus(actor ? `${directionLabel(targetDirection)} ${spec.label} ${spec.frames}프레임 자동 생성 완료 · grid/preview 연결됨` : `${type} ${preset} 자동 생성 완료 · ${spec.frames}프레임 그리드 연결됨`);
+    finishGenerationProgress(true, '완료 · 결과와 애니메이션 미리보기가 준비됐습니다');
     return { url, img, data };
   } catch (err) {
     console.error(err);
+    finishGenerationProgress(false, `실패 · ${err.message}`);
     alert(`방향/동작 자동 생성 실패: ${err.message}`);
     setStatus(`방향/동작 자동 생성 실패: ${err.message}`);
     return null;
@@ -6939,7 +7517,7 @@ function svgData(label, bg, fg) {
 }
 addGallery(svgData('ICON','#7c5cff','#22c55e'), 'sample icon');
 addGallery(svgData('CARD','#111827','#f59e0b'), 'sample card');
-setAssetFamily('sprite', 'character');
+applyRecipeRegistryToGenerationUi();
 ensureDefaultDrawingLayer();
 setupPanelResize();
 updateMaskInfo();
@@ -6948,3 +7526,5 @@ saveHistory();
 fitView();
 setStatus('B안 오브젝트 치환 UI 적용됨. Mask로 영역을 잡고 새 오브젝트만 별도 레이어로 생성/배치하세요.');
 setWorkspaceMode('ai');
+refreshProviderHealth();
+loadAssetRecipeRegistry();

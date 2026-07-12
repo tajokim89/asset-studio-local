@@ -22,6 +22,7 @@ import server  # noqa: E402
 
 JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 HTML = (ROOT / "index.html").read_text(encoding="utf-8")
+REGISTRY = json.loads((ROOT / "contracts" / "asset-recipes.json").read_text(encoding="utf-8"))
 
 EFFECT_FIELDS = {
     "sequence_mode",
@@ -271,6 +272,9 @@ def browser_effect_runtime():
     functions = "\n\n".join(
         _function_source(name)
         for name in (
+            "validateAndBuildRecipeViews",
+            "recipeGenerationSubtypesForFamily",
+            "projectAssetSubtypesForFamily",
             "normalizeStyleProfile",
             "resolveStyleProfileForFamily",
             "styleProfileFromControls",
@@ -296,6 +300,9 @@ const $ = id => Object.prototype.hasOwnProperty.call(controls, id) ? controls[id
 const document = {{ getElementById: $ }};
 {_object_constant_source('DEFAULT_STYLE_PROFILE')}
 {_variable_source('canonicalProjectStyleProfile')}
+{_variable_source('assetRecipeRegistryState')}
+{_variable_source('assetFamilyDrafts')}
+{_variable_source('PROJECT_FAMILIES')}
 {_object_constant_source('ASSET_FAMILY_SUBTYPES')}
 {_object_constant_source('PIXEL_ANIMATION_PRESET_DEFAULT_FRAMES')}
 const PIXEL_ACTOR_ASSET_TYPES = new Set(['character', 'monster', 'npc']);
@@ -308,6 +315,12 @@ const spriteAnimationCoreLockContract = () => '';
 const buildDirectionalSpriteSheetContract = () => '';
 const directionLabel = value => value;
 {functions}
+const recipeRegistry = {json.dumps(REGISTRY)};
+const recipeViews = validateAndBuildRecipeViews(recipeRegistry);
+assetRecipeRegistryState = {{
+  status: 'ready', registry: recipeRegistry,
+  production: recipeViews.production, known: recipeViews.known,
+}};
 function setControls(values) {{
   for (const key of Object.keys(controls)) delete controls[key];
   for (const [key, value] of Object.entries(values)) controls[key] = {{ value: String(value) }};
@@ -561,9 +574,7 @@ def test_browser_sequence_uses_complete_b2_contract(browser_effect_runtime):
 
 
 def test_browser_effect_grid_capacity_is_canonicalized():
-    functions = "\n".join(_function_source(name) for name in (
-        "currentAssetSubtype", "buildSpriteContract",
-    ))
+    functions = _function_source("buildSpriteContract")
     helpers = "\n".join(
         _const_callable_source(name)
         for name in ("controlValue", "controlNumber", "clampFamilyNumber")

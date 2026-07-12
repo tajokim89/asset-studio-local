@@ -4,12 +4,41 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+if [[ -z "${HERMES_REPO:-}" ]]; then
+  if [[ -n "${HERMES_HOME:-}" && -f "$HERMES_HOME/hermes-agent/plugins/image_gen/openai-codex/__init__.py" ]]; then
+    HERMES_REPO="$HERMES_HOME/hermes-agent"
+  elif [[ -n "${HERMES_HOME:-}" && -f "$HERMES_HOME/plugins/image_gen/openai-codex/__init__.py" ]]; then
+    HERMES_REPO="$HERMES_HOME"
+  else
+    HERMES_REPO="$HOME/.hermes/hermes-agent"
+    HERMES_BIN="${HERMES_COMMAND:-$(command -v hermes 2>/dev/null || true)}"
+    if [[ -n "$HERMES_BIN" ]]; then
+      SEARCH_DIR="$(cd "$(dirname "$HERMES_BIN")" && pwd -P)"
+      for _ in 1 2 3 4 5 6; do
+        if [[ -f "$SEARCH_DIR/plugins/image_gen/openai-codex/__init__.py" ]]; then
+          HERMES_REPO="$SEARCH_DIR"
+          break
+        fi
+        if [[ -f "$SEARCH_DIR/hermes-agent/plugins/image_gen/openai-codex/__init__.py" ]]; then
+          HERMES_REPO="$SEARCH_DIR/hermes-agent"
+          break
+        fi
+        SEARCH_DIR="$(dirname "$SEARCH_DIR")"
+      done
+    fi
+  fi
+fi
+export HERMES_REPO
+export OPENAI_IMAGE_MODEL="${OPENAI_IMAGE_MODEL:-gpt-image-2-high}"
+
 PYTHON_BIN="${ASSET_STUDIO_PYTHON:-}"
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$ROOT/.venv/bin/python" ]]; then
     PYTHON_BIN="$ROOT/.venv/bin/python"
-  elif [[ -x "/Users/tajokim/.hermes/hermes-agent/venv/bin/python" ]]; then
-    PYTHON_BIN="/Users/tajokim/.hermes/hermes-agent/venv/bin/python"
+  elif [[ -x "$HERMES_REPO/venv/bin/python" ]]; then
+    PYTHON_BIN="$HERMES_REPO/venv/bin/python"
+  elif [[ -x "$HERMES_REPO/venv/Scripts/python.exe" ]]; then
+    PYTHON_BIN="$HERMES_REPO/venv/Scripts/python.exe"
   else
     PYTHON_BIN="$(command -v python3)"
   fi

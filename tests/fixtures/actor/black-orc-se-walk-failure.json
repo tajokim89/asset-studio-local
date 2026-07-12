@@ -1,0 +1,45 @@
+{
+  "schema_version": "asset-studio.actor-qa-regression/v1",
+  "artifact_ref": "assets/generated/black_orc_se_sample/black_orc_se_walk_6f.png",
+  "result_manifest_ref": "assets/generated/black_orc_se_sample/latest.json",
+  "artifact_sha256": "36697af4d5de6cc141ad53c39e5c6a760fd435f6e28b827ba3447aae8e9fc16d",
+  "frame_count": 6,
+  "manual_visual_annotations": {
+    "hand_integrity": {
+      "score": 1,
+      "defects": [
+        "Hand size, fist silhouette, and wrist attachment visibly morph between frames."
+      ]
+    },
+    "foot_integrity": {
+      "score": 1,
+      "defects": [
+        "Boot and foot length, orientation, and ankle attachment change inconsistently across the walk."
+      ]
+    },
+    "joint_coherence": {
+      "score": 1,
+      "defects": [
+        "Knee, ankle, wrist, and elbow relationships do not form one coherent articulated body over time."
+      ]
+    },
+    "limb_scale_consistency": {
+      "score": 2,
+      "defects": [
+        "Forearms, fists, lower legs, and boots change apparent scale between adjacent frames."
+      ]
+    },
+    "equipment_contact": {
+      "score": 2,
+      "defects": [
+        "Boots and clothing edges deform at their limb attachment points instead of staying fitted to the same character."
+      ]
+    },
+    "temporal_limb_continuity": {
+      "score": 1,
+      "defects": [
+        "The six frames read as separately redrawn limb configurations rather than a continuous SE walk cycle."
+      ]
+    }
+  }
+}

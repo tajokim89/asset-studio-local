@@ -17,6 +17,22 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from asset_studio.actor_assembler import ActorAssemblyError, assemble_actor_head_locked_frames
+from asset_studio.actor_blueprint import (
+    render_pose_blueprint_png,
+    render_pose_blueprint_prompt_png,
+    se_walk_blueprints,
+    validate_pose_blueprint,
+)
+from asset_studio.hermes_provider import HermesProviderAdapter
+from asset_studio.output_profiles import (
+    OutputProfileError,
+    action_recipe_for_profile,
+    load_output_profile_by_id,
+)
+from asset_studio.provider import ProviderRequest
+from asset_studio.recipes import RecipeRegistryError
+
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 UPLOADS = ASSETS / "uploads"
@@ -30,8 +46,88 @@ MAX_IMAGE_PIXELS = 16_777_216
 for p in (UPLOADS, GENERATED, PROCESSED, PROJECTS):
     p.mkdir(parents=True, exist_ok=True)
 
-HERMES_REPO = Path(os.environ.get("HERMES_REPO", "/Users/tajokim/.hermes/hermes-agent"))
-PROVIDER_PATH = HERMES_REPO / "plugins/image_gen/openai-codex/__init__.py"
+
+def load_recipe_registry() -> dict:
+    """Load the validated recipe registry without making server import fragile."""
+    from asset_studio.recipes import load_recipe_registry as load_registry
+
+    return load_registry()
+
+
+def recipe_generation_taxonomy(registry: dict | None = None) -> tuple[dict[str, set[str]], set[str]]:
+    """Return non-retired generation types and actor-compatible legacy aliases."""
+    registry = load_recipe_registry() if registry is None else registry
+    families: dict[str, set[str]] = {}
+    actor_types: set[str] = set()
+    for entry in registry["legacy_subtypes"]:
+        if entry["classification"] == "retired":
+            continue
+        families.setdefault(entry["family"], set()).add(entry["type"])
+        if entry["recipe_id"] == "actor-animation":
+            actor_types.add(entry["type"])
+    return families, actor_types
+
+
+def recipe_id_for_asset_selection(
+    family: str, subtype: str, registry: dict | None = None
+) -> str | None:
+    """Resolve a non-retired selection to its recipe without subtype route tables."""
+    registry = load_recipe_registry() if registry is None else registry
+    for entry in registry["legacy_subtypes"]:
+        if entry["family"] == family and entry["type"] == subtype:
+            if entry["classification"] == "retired":
+                break
+            return entry["recipe_id"]
+    raise RecipeRegistryError(f"unknown or retired asset selection {family!r}/{subtype!r}")
+
+
+HERMES_PROVIDER_RELATIVE = Path("plugins/image_gen/openai-codex/__init__.py")
+
+
+def _hermes_repo_from_candidate(candidate: Path) -> Path | None:
+    candidate = candidate.expanduser()
+    direct = candidate / HERMES_PROVIDER_RELATIVE
+    if direct.is_file():
+        return candidate
+    nested = candidate / "hermes-agent"
+    if (nested / HERMES_PROVIDER_RELATIVE).is_file():
+        return nested
+    return None
+
+
+def resolve_hermes_repo() -> Path:
+    """Locate the Hermes checkout without binding the repo to one workstation."""
+    configured = os.environ.get("HERMES_REPO", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+
+    hermes_home = os.environ.get("HERMES_HOME", "").strip()
+    if hermes_home:
+        discovered = _hermes_repo_from_candidate(Path(hermes_home))
+        if discovered is not None:
+            return discovered
+
+    command = os.environ.get("HERMES_COMMAND", "").strip() or shutil.which("hermes")
+    if command:
+        command_path = Path(command).expanduser().resolve()
+        for parent in (command_path.parent, *command_path.parents):
+            discovered = _hermes_repo_from_candidate(parent)
+            if discovered is not None:
+                return discovered
+
+    for candidate in (
+        Path.home() / ".hermes" / "hermes-agent",
+        Path.home() / ".hermes",
+        Path.home() / "hermes-agent",
+    ):
+        discovered = _hermes_repo_from_candidate(candidate)
+        if discovered is not None:
+            return discovered
+    return Path.home() / ".hermes" / "hermes-agent"
+
+
+HERMES_REPO = resolve_hermes_repo()
+PROVIDER_PATH = HERMES_REPO / HERMES_PROVIDER_RELATIVE
 sys.path.insert(0, str(HERMES_REPO))
 
 _external_origin_candidate = os.environ.get("ASSET_STUDIO_EXTERNAL_ORIGIN", "").strip().rstrip("/")
@@ -219,7 +315,7 @@ def _validate_family_contract(route, contract):
         _qa_enum(contract["animation_mode"], {"idle", "walk", "walk4", "walk6", "attack", "jump", "cast", "hurt", "death"}, "animation_mode")
         _qa_enum(contract["direction_mode"], {"single", "4dir", "8dir"}, "direction_mode")
         directions = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
-        _qa_enum(contract["target_direction"], directions, "target_direction"); _qa_enum(contract["reference_direction"], directions, "reference_direction")
+        _qa_enum(contract["target_direction"], directions, "target_direction"); _qa_enum(contract["reference_direction"], directions | {"AUTO"}, "reference_direction")
         frames = _qa_int(contract["frame_count"], "frame_count"); walk = _qa_int(contract["walk_frames"], "walk_frames")
         if contract["animation_mode"].startswith("walk") and frames != walk:
             raise ValueError("walk frame_count/walk_frames mismatch")
@@ -648,6 +744,21 @@ DIRECTION_PROMPT_CONTRACTS = {
     "NE": "derived only by app-side horizontal flip from NW; never generated directly",
 }
 
+# Frame-by-frame actor generation may author any requested view directly.  This
+# is deliberately separate from the legacy 8-direction mirror policy above:
+# the latter is an atlas optimization, not a restriction on a one-direction
+# animation project.
+ACTOR_FRAME_DIRECTION_CONTRACTS = {
+    "S": "S front view, looking toward the camera",
+    "SW": "SW front-left three-quarter view, facing screen-left",
+    "W": "W true side profile, facing screen-left",
+    "NW": "NW back-left three-quarter view",
+    "N": "N back view, looking away from the camera",
+    "NE": "NE back-right three-quarter view",
+    "E": "E true side profile, facing screen-right",
+    "SE": "SE front-right three-quarter view, facing screen-right while keeping part of the face and chest visible",
+}
+
 SPRITE_ANIMATION_CORE_LOCKS = [
     ("Reference Identity Lock", "one accepted reference identity is the global standard for the whole action set; preserve the actor's silhouette language, key readable details, proportions, equipment/attachments, palette, outline thickness, pixel scale, and body volume across every frame"),
     ("Full-Frame Pose Lock", "each frame must be a complete coherent pose of the same actor, not a crop, pasted body part, isolated limb edit, or numeric anchor hack"),
@@ -665,56 +776,44 @@ def sprite_animation_core_lock_contract() -> str:
     return f"Core animation locks, applied before action-specific PASS: every frame must preserve one accepted reference identity globally while forming real full-frame action poses from a stable root. {locks}. If any lock fails, mark FAIL even if alpha, frame count, or motion partially pass."
 
 
-SPRITE_ACTION_MATRIX = {
-    "idle": {
-        "frames": 4,
-        "columns": ["neutral", "breath-up", "neutral", "breath-down"],
-        "terminal": False,
-        "contract": "4-frame subtle breathing loop; feet planted; preserve same pivot and baseline",
-        "acceptance": "PASS only if the sheet reads as an idle/breathing loop: the character remains standing in place with planted feet, same facing direction, same pivot/baseline, and only small torso/shoulder/head breathing motion across neutral, breath-up, neutral, breath-down beats. If the dominant readable action is not idle breathing, mark FAIL.",
-    },
-    "walk": {
-        "frames": 4,
-        "columns": ["neutral-cross-1", "left-swing-cross", "neutral-cross-2", "right-swing-cross"],
-        "terminal": False,
-        "contract": "simple 4-frame RPG crossover walk loop: frame 1 neutral transition stance with feet close beneath the pelvis; Frame 2: LEFT leg is the lifted swing leg and RIGHT leg is the planted stance/support leg; frame 3 reuses/returns to the same neutral transition stance as frame 1; Frame 4: RIGHT leg is the lifted swing leg and LEFT leg is the planted stance/support leg. In each crossing frame, the swing foot passes beside and visibly overlaps/crosses the planted support leg beneath the pelvis, moving from behind it to just ahead; the front/back depth ordering of the legs must reverse between frames 2 and 4. For S/front-facing: character LEFT = screen-right and character RIGHT = screen-left, so the frame 2 lifted swing boot must be on screen-right; frame 4 lifted swing boot must be on screen-left. Use screen coordinates as the final authority: in column 2 only the screen-right boot advances and its knee travels inward across the planted screen-left leg; in column 4 only the screen-left boot advances and its knee travels inward across the planted screen-right leg. Below the belt, columns 2 and 4 must read as opposite/mirrored phases; reject the same-side enlarged/front boot in both. Lock the pelvis/root center at exactly 50% of each cell width and the same y-coordinate in all four frames. Preserve fixed root/pivot anchor, head/torso reference center, contact baseline, and scale in every frame",
-        "acceptance": "PASS only if the sheet reads as a simple RPG-style in-place crossover walk cycle for the referenced actor: frames 1 and 3 are visually near-identical neutral transition poses with feet close beneath the pelvis. Frame 2 must show the LEFT knee/foot lifted in swing while the RIGHT foot is visibly planted as stance/support; frame 4 must show the exact inverse, with the RIGHT knee/foot lifted in swing while the LEFT foot is planted as stance/support. The swing foot must pass beside and visibly overlap/cross the planted support leg beneath the pelvis, and the front/back depth ordering of the legs must reverse between frames 2 and 4. Crossing means a natural depth pass, not swapped anatomical left/right identity or an X-locked pose. The root/pivot anchor, head/torso reference center, scale, and contact baseline stay locked across frames; pelvis/root center must remain at exactly 50% of each cell width and the same y-coordinate; counter-motion is allowed but secondary. Mark FAIL if frames 1 and 3 drift apart, if only one limb/contact point moves, if the same swing foot is repeated in both crossing frames, if the same side boot is enlarged/lifted in both crossing frames, if the legs never pass/cross through each other, if feet/contact points are hidden by a solid body/robe/sack block, if there is progressive left/right root drift across cells, if bbox-centering would be needed to hide drift, if the motion reads like idle tapping, hopping, skating, dancing, or a static split stance, or if the dominant readable action is not walking; mark FAIL.",
-    },
-    "attack": {
-        "frames": 4,
-        "columns": ["ready", "windup", "strike", "recover"],
-        "terminal": False,
-        "contract": "ready pose, wind-up with weapon/arm pulled back, clean body/weapon strike pose, recovery toward stance; character body/weapon motion only",
-        "acceptance": "PASS only if the sheet reads as an attack: ready stance, readable wind-up, decisive strike pose, and recovery are all present in order, with the weapon/arm/body doing the action and returning toward stance. If the dominant readable action is not an attack, mark FAIL.",
-    },
-    "jump": {
-        "frames": 4,
-        "columns": ["crouch", "takeoff", "airborne", "landing"],
-        "terminal": False,
-        "contract": "crouch anticipation, takeoff, airborne peak, landing/recovery; vertical motion stays centered in the cell",
-        "acceptance": "PASS only if the sheet reads as a jump: crouch anticipation, takeoff extension, airborne peak with clear vertical lift, and landing/recovery are present in order while the sprite remains contained in its cell. If the dominant readable action is not jumping, mark FAIL.",
-    },
-    "cast": {
-        "frames": 4,
-        "columns": ["ready", "gather", "release", "recover"],
-        "terminal": False,
-        "contract": "ready pose, hand/stance anticipation, clean casting/release body pose, recover; character animation only",
-        "acceptance": "PASS only if the sheet reads as spell/skill casting body language: ready stance, hands/stance gather power, clear release gesture, and recovery are present in order, with the character pose—not external VFX—communicating the cast. If the dominant readable action is not casting, mark FAIL.",
-    },
-    "hurt": {
-        "frames": 4,
-        "columns": ["normal", "impact", "recoil", "recovery"],
-        "terminal": False,
-        "contract": "normal pose, impact flinch, recoil, recovery; small hit reaction only, same character and facing direction",
-        "acceptance": "PASS only if the sheet reads as a hurt reaction: normal pose, impact flinch, recoil away from the hit, and recovery are present in order while facing direction, identity, palette, and equipment remain stable. If the dominant readable action is not a hurt reaction, mark FAIL.",
-    },
-    "death": {
-        "frames": 4,
-        "columns": ["alive", "collapse", "down", "dead"],
-        "terminal": True,
-        "contract": "alive/impact, collapse, down, dead/still; direction-preserving collapse ending in a stable corpse/downed frame; final frame keeps the same identity and palette",
-        "acceptance": "PASS only if the sheet reads as death/collapse: alive/impact start, collapse in progress, downed body, and final dead/still pose are present in order; the final pose must be a stable downed/corpse silhouette using the same character identity and palette. If the dominant readable action is not death/collapse, mark FAIL.",
-    },
+DEFAULT_ACTOR_OUTPUT_PROFILE_ID = "generic-pixel-actor-v1"
+DEFAULT_ACTOR_OUTPUT_PROFILE = load_output_profile_by_id(
+    DEFAULT_ACTOR_OUTPUT_PROFILE_ID
+)
+
+
+def _sprite_action_matrix(profile: dict) -> dict[str, dict]:
+    """Expose the existing matrix API from data-driven output-profile recipes."""
+    matrix = {}
+    for action in profile["actions"]:
+        matrix[action["id"]] = {
+            "frames": action["frame_count"],
+            "fps": action["fps"],
+            "loop": action["loop"],
+            "columns": list(action["beats"]),
+            "terminal": action["terminal"],
+            "contract": action["prompt_contract"],
+            "acceptance": action["acceptance"],
+            "pivot": dict(action["pivot"]),
+        }
+    return matrix
+
+
+SPRITE_ACTION_MATRIX = _sprite_action_matrix(DEFAULT_ACTOR_OUTPUT_PROFILE)
+SPRITE_ACTION_ALIASES = {
+    "idle4": "idle",
+    "walk4": "walk",
+    "walk6": "walk",
+    "attack4": "attack",
+    "jump4": "jump",
+    "cast4": "cast",
+    "hurt4": "hurt",
+    "hit": "hurt",
+    "hit2": "hurt",
+    "death4": "death",
+    "death6": "death",
+    "static1": "ui_static",
+    "ui_static": "ui_static",
 }
 
 
@@ -723,55 +822,144 @@ def sprite_action_acceptance_contract(action: str) -> str:
     spec = SPRITE_ACTION_MATRIX.get(action)
     if not spec:
         return ""
-    return f"{sprite_animation_core_lock_contract()} Whitelist visual acceptance gate for {action}: {spec['acceptance']}"
+    return (
+        f"{sprite_animation_core_lock_contract()} "
+        f"Whitelist visual acceptance gate for {action}: PASS only if {spec['acceptance']} "
+        "Otherwise mark FAIL."
+    )
 
 
 def normalize_animation_action(animation_mode: str) -> str:
     """Map UI/payload animation keys to server canonical sprite actions."""
     raw = str(animation_mode or "idle").strip().lower()
-    aliases = {
-        "idle4": "idle",
-        "walk4": "walk",
-        "walk6": "walk",
-        "attack4": "attack",
-        "jump4": "jump",
-        "cast4": "cast",
-        "hurt4": "hurt",
-        "hit": "hurt",
-        "hit2": "hurt",
-        "death4": "death",
-        "death6": "death",
-        "static1": "ui_static",
-        "ui_static": "ui_static",
-    }
-    if raw in aliases:
-        return aliases[raw]
+    if raw in SPRITE_ACTION_MATRIX:
+        return raw
+    if raw in SPRITE_ACTION_ALIASES:
+        return SPRITE_ACTION_ALIASES[raw]
     stripped = re.sub(r"\d+$", "", raw)
-    if stripped in aliases:
-        return aliases[stripped]
+    if stripped in SPRITE_ACTION_MATRIX:
+        return stripped
     return stripped if stripped in SPRITE_ACTION_MATRIX else "idle"
+
+
+def resolve_actor_action_recipe(profile: dict, animation_mode: str) -> dict:
+    """Resolve exact/profile actions while retaining bounded legacy aliases."""
+    requested = str(animation_mode or "idle").strip().lower()
+    action_id = SPRITE_ACTION_ALIASES.get(requested, requested)
+    try:
+        return action_recipe_for_profile(profile, action_id)
+    except OutputProfileError as exc:
+        raise ValueError(
+            f"Unknown actor action {requested!r} for output profile {profile['id']!r}"
+        ) from exc
 
 
 def animation_frame_count(animation_mode: str, fallback: int | None = None) -> int:
     raw = str(animation_mode or "").strip().lower()
-    match = re.search(r"(\d+)$", raw)
-    if match:
-        return max(1, min(8, int(match.group(1))))
     action = normalize_animation_action(raw)
     if action == "ui_static":
         return 1
     if action in SPRITE_ACTION_MATRIX:
         return int(SPRITE_ACTION_MATRIX[action]["frames"])
+    match = re.search(r"(\d+)$", raw)
+    if match:
+        return max(1, min(64, int(match.group(1))))
     return max(1, min(8, int(fallback or 4)))
 
 
 def load_provider():
-    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex", PROVIDER_PATH)
+    hermes_repo = resolve_hermes_repo()
+    provider_path = hermes_repo / HERMES_PROVIDER_RELATIVE
+    if not provider_path.is_file():
+        raise RuntimeError("Hermes openai-codex image provider is not installed")
+    repo_text = str(hermes_repo)
+    if repo_text not in sys.path:
+        sys.path.insert(0, repo_text)
+    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex", provider_path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Could not load openai-codex image provider")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.OpenAICodexImageGenProvider()
+
+
+def generate_with_page_image_backend(
+    prompt: str,
+    *,
+    image_url: str | None = None,
+    reference_image_urls: list[str] | None = None,
+) -> tuple[bytes, dict]:
+    """Call the same configured Hermes/Codex provider used by the web page."""
+    backend = load_provider()
+    adapter = HermesProviderAdapter(backend)
+    artifacts = tuple(
+        value
+        for value in (image_url, *(reference_image_urls or []))
+        if value is not None
+    )
+    roles = ()
+    if artifacts:
+        roles = ("direction_master",) + tuple(
+            "pose_guide" if index == 0 else f"reference_{index + 1}"
+            for index in range(len(artifacts) - 1)
+        )
+    artifact = adapter.generate(ProviderRequest(
+        prompt=prompt,
+        aspect_ratio="square",
+        input_artifacts=artifacts,
+        options={"reference_roles": roles} if roles else {},
+    ))
+    source = Path(str(artifact.uri or ""))
+    if not source.is_file():
+        raise RuntimeError("Page image backend returned a missing image artifact")
+    return source.read_bytes(), {
+        "model": artifact.model,
+        "provider": artifact.provider,
+        "reference_roles": list(roles),
+    }
+
+
+def provider_health() -> dict:
+    """Report local provider readiness without making an image request."""
+    integration_mode = "hermes-openai-codex"
+    if not (resolve_hermes_repo() / HERMES_PROVIDER_RELATIVE).is_file():
+        return {
+            "success": True,
+            "status": "unavailable",
+            "available": False,
+            "provider": "openai-codex",
+            "display_name": "Hermes · OpenAI Codex",
+            "default_model": None,
+            "capabilities": {},
+            "reason": "hermes_not_installed",
+            "integration_mode": integration_mode,
+        }
+    try:
+        provider = load_provider()
+        available = bool(provider.is_available())
+        return {
+            "success": True,
+            "status": "ready" if available else "unavailable",
+            "available": available,
+            "provider": provider.name,
+            "display_name": provider.display_name,
+            "default_model": provider.default_model(),
+            "capabilities": provider.capabilities(),
+            "reason": None if available else "auth_or_dependency_missing",
+            "integration_mode": integration_mode,
+        }
+    except Exception:
+        return {
+            "success": True,
+            "status": "unavailable",
+            "available": False,
+            "provider": "openai-codex",
+            "display_name": "OpenAI (Codex auth)",
+            "default_model": None,
+            "capabilities": {},
+            "reason": "provider_load_failed",
+            "integration_mode": integration_mode,
+        }
 
 
 def build_prompt(user_prompt: str, preset: str, background_mode: str = "none") -> str:
@@ -1002,13 +1190,7 @@ def normalize_asset_generation_payload(data: dict) -> dict:
         candidate = text(value, default, 64).lower()
         return candidate if candidate in allowed else default
 
-    families = {
-        "sprite": {"character", "monster", "npc", "effect"},
-        "tile": {"floor", "wall", "corner", "door", "terrain", "decal", "autotile", "tileset"},
-        "ui": {"main_panel", "inner_panel", "popup", "card", "button", "slot", "badge", "hud_chip", "gauge", "icon", "cursor"},
-        "object": {"item", "equipment", "weapon", "loot", "furniture", "machine", "prop", "interactable", "destructible"},
-    }
-    actor_types = {"character", "monster", "npc"}
+    families, actor_types = recipe_generation_taxonomy()
     actor_flat_keys = {
         "animation_mode", "direction_mode", "target_direction", "reference_direction",
         "frame_count", "walk_frames", "chroma_mode",
@@ -1069,16 +1251,45 @@ def normalize_asset_generation_payload(data: dict) -> dict:
         direction_mode = source.get("direction_mode", legacy.get("direction_mode", "single"))
         target_direction = source.get("target_direction", legacy.get("target_direction", "S"))
         reference_direction = source.get("reference_direction", legacy.get("reference_direction", "S"))
-        frame_count = source.get("frame_count", legacy.get("frame_count", legacy.get("walk_frames", 4)))
-        walk_frames = source.get("walk_frames", legacy.get("walk_frames", legacy.get("frame_count", 4)))
         chroma_mode = source.get("chroma_mode", legacy.get("chroma_mode", "global"))
+        profile_id = text(
+            source.get("output_profile_id", DEFAULT_ACTOR_OUTPUT_PROFILE_ID),
+            DEFAULT_ACTOR_OUTPUT_PROFILE_ID,
+            128,
+        )
+        try:
+            output_profile = load_output_profile_by_id(profile_id)
+        except OutputProfileError as exc:
+            raise ValueError("Invalid actor output profile") from exc
+        action_recipe = resolve_actor_action_recipe(output_profile, animation_mode)
+        direction_codes = [item["code"] for item in output_profile["directions"]]
+        normalized_direction_mode = enum(
+            direction_mode, {"single", "4dir", "8dir"}, "single"
+        )
+        required_directions = {"single": 1, "4dir": 4, "8dir": 8}
+        if len(direction_codes) < required_directions[normalized_direction_mode]:
+            raise ValueError("Actor direction mode is not supported by the output profile")
+        normalized_target = text(target_direction, "S", 3).upper()
+        if normalized_target not in direction_codes:
+            raise ValueError("Actor target direction is not supported by the output profile")
+        normalized_reference = text(reference_direction, "S", 4).upper()
+        if normalized_reference not in (*CANONICAL_8DIR_ORDER, "AUTO"):
+            raise ValueError("Invalid actor reference direction")
         contract = {
-            "animation_mode": enum(animation_mode, {"idle", "walk", "walk4", "walk6", "attack", "jump", "cast", "hurt", "death"}, "idle"),
-            "direction_mode": enum(direction_mode, {"single", "4dir", "8dir"}, "single"),
-            "target_direction": text(target_direction, "S", 2).upper() if text(target_direction, "S", 2).upper() in CANONICAL_8DIR_ORDER else "S",
-            "reference_direction": text(reference_direction, "S", 2).upper() if text(reference_direction, "S", 2).upper() in CANONICAL_8DIR_ORDER else "S",
-            "frame_count": number(frame_count, 4, 1, 8),
-            "walk_frames": number(walk_frames, 4, 1, 8),
+            "output_profile_id": output_profile["id"],
+            "animation_mode": action_recipe["id"],
+            "direction_mode": normalized_direction_mode,
+            "directions": direction_codes,
+            "target_direction": normalized_target,
+            "reference_direction": normalized_reference,
+            "frame_count": action_recipe["frame_count"],
+            "walk_frames": action_recipe["frame_count"],
+            "fps": action_recipe["fps"],
+            "loop": action_recipe["loop"],
+            "terminal": action_recipe["terminal"],
+            "beats": list(action_recipe["beats"]),
+            "frame": dict(output_profile["frame"]),
+            "pivot": dict(action_recipe["pivot"]),
             "chroma_mode": enum(chroma_mode, {"global", "outer"}, "global"),
             "no_baked_vfx": True,
         }
@@ -1299,7 +1510,27 @@ def build_asset_family_prompt(data: dict) -> str:
         pivot = contract.get("pivot", {})
         section = f"Effect-only sprite contract: category={contract.get('effect_category', 'Slash')}; sequence mode={sequence_mode}; animation mode={contract.get('animation_mode')}; {semantics}; gap={contract.get('gap', 0)}px; loop={contract.get('loop', 'one-shot')}; fps={contract.get('fps', 12)}; frame envelope={contract.get('envelope_width', 64)}x{contract.get('envelope_height', 64)}; size basis={contract.get('size_basis', 'actor-relative')}; pivot={pivot.get('preset', 'center')} ({pivot.get('x', 0.5)}, {pivot.get('y', 0.5)}); trim policy metadata={contract.get('trim_policy', 'preserve-envelope')}; direction=none. No caster, actor body, equipment, direction turnaround, text, or watermark."
     else:
-        section = f"Actor sprite contract: {subtype}; action={contract.get('animation_mode', 'idle')}; direction mode={contract.get('direction_mode', 'single')}; target={contract.get('target_direction', 'S')}; frames={contract.get('frame_count', 4)}. Preserve Reference Identity Lock, Full-Frame Pose Lock, Equipment Lock, Direction Lock, Root Lock, Motion Read, Loop Read, and Production Clean."
+        profile = load_output_profile_by_id(contract["output_profile_id"])
+        action = resolve_actor_action_recipe(profile, contract["animation_mode"])
+        frame = contract["frame"]
+        pivot = contract["pivot"]
+        beats = "; ".join(
+            f"{index + 1}. {beat}" for index, beat in enumerate(contract["beats"])
+        )
+        section = (
+            f"Actor sprite contract: {subtype}; output profile={profile['id']}; "
+            f"action={action['id']}; direction mode={contract['direction_mode']}; "
+            f"direction order={','.join(contract['directions'])}; "
+            f"target={contract['target_direction']}; frames={action['frame_count']}; "
+            f"fps={action['fps']}; loop={str(action['loop']).lower()}; "
+            f"terminal={str(action['terminal']).lower()}; frame={frame['width']}x{frame['height']}; "
+            f"pivot=({pivot['x']},{pivot['y']}) {pivot['unit']}. "
+            f"Frame beats in exact order: {beats}. "
+            f"Action contract: {action['prompt_contract']} "
+            f"Acceptance contract: {action['acceptance']} "
+            "Preserve Reference Identity Lock, Full-Frame Pose Lock, Equipment Lock, "
+            "Direction Lock, Root Lock, Motion Read, Loop Read, and Production Clean."
+        )
     # The profile has already been resolved for this request.  Keep the canonical
     # schema on the normalized payload, but do not send the now-empty override map
     # to the model: its family key names are unrelated workflow vocabulary (for
@@ -1897,7 +2128,7 @@ def build_8dir_mirror_sheet_from_source_pngs(sources: dict, cell_size: int = 420
     return out, qa
 
 
-def postprocess_pixel_generation_bytes(raw: bytes, background_mode: str = "none", direction_mode: str = "single", target_direction: str = "S", animation_mode: str = "idle", chroma_mode: str = "global") -> tuple[bytes, dict]:
+def postprocess_pixel_generation_bytes(raw: bytes, background_mode: str = "none", direction_mode: str = "single", target_direction: str = "S", animation_mode: str = "idle", chroma_mode: str = "global", output_profile_id: str = DEFAULT_ACTOR_OUTPUT_PROFILE_ID) -> tuple[bytes, dict]:
     from PIL import Image
     """Normalize generated pixel assets before the browser sees them.
 
@@ -1912,8 +2143,10 @@ def postprocess_pixel_generation_bytes(raw: bytes, background_mode: str = "none"
         processed = remove_chroma_green_bytes(processed, mode=chroma_mode)
         method_steps.append(f"chroma-{chroma_mode}")
     img = Image.open(io.BytesIO(processed)).convert("RGBA")
-    action_key = normalize_animation_action(animation_mode)
-    img = cleanup_sprite_sheet_residue_image(img, animation_frame_count(animation_mode))
+    profile = load_output_profile_by_id(output_profile_id)
+    action = resolve_actor_action_recipe(profile, animation_mode)
+    action_key = action["id"]
+    img = cleanup_sprite_sheet_residue_image(img, action["frame_count"])
     method_steps.append("residue-cleanup")
     direction_qa = {"status": "skipped", "target_direction": target_direction}
     if str(direction_mode or "single") == "single" and action_key == "idle":
@@ -1927,6 +2160,100 @@ def postprocess_pixel_generation_bytes(raw: bytes, background_mode: str = "none"
     qa["action"] = action_key
     qa["method"] = "+".join(method_steps) if method_steps else "none"
     return out, qa
+
+
+def postprocess_actor_single_frame_bytes(
+    raw: bytes,
+    *,
+    background_mode: str = "chroma_green",
+    chroma_mode: str = "global",
+) -> tuple[bytes, dict]:
+    """Clean one full-canvas actor frame without applying sheet heuristics."""
+    from PIL import Image
+
+    _inspect_provider_image(raw, "actor-frame")
+    processed = raw
+    method_steps = []
+    if str(background_mode or "none").strip() == "chroma_green":
+        processed = force_chroma_green_background(processed)
+        processed = remove_chroma_green_bytes(processed, mode=chroma_mode)
+        method_steps.append(f"chroma-{chroma_mode}")
+
+    image = Image.open(io.BytesIO(processed)).convert("RGBA")
+    image = cleanup_sprite_sheet_residue_image(image, 1)
+    method_steps.append("single-frame-residue-cleanup")
+
+    # PNG permits hidden RGB under alpha=0.  Zero it so later nearest-neighbour
+    # resampling cannot revive the model's green matte around hands and boots.
+    pixels = [
+        (r, g, b, a) if a else (0, 0, 0, 0)
+        for r, g, b, a in image.getdata()
+    ]
+    image.putdata(pixels)
+    out = _png_bytes_from_image(image)
+    bbox = _alpha_bbox(image)
+    components = _component_bboxes(image)
+    width, height = image.size
+    touches_edge = False
+    if bbox:
+        touches_edge = bbox[0] <= 0 or bbox[1] <= 0 or bbox[2] >= width or bbox[3] >= height
+    single_frame_qa = {
+        "pass": bbox is not None and not touches_edge,
+        "alpha_bbox": list(bbox) if bbox else None,
+        "component_count": len(components),
+        "touches_edge": touches_edge,
+    }
+    cleanup_qa = evaluate_cleanup_residue_quality(out)
+    # The generic cleanup checker also probes imaginary quarter-width sheet
+    # boundaries.  A one-frame actor has no such grid, so dark outline pixels at
+    # x=25/50/75% are valid character art, not cell-box residue.
+    cleanup_qa.update({
+        "pass": (
+            cleanup_qa["residual_green_pixels"] == 0
+            and all(alpha == 0 for alpha in cleanup_qa["corner_alpha"])
+        ),
+        "grid_residue_gate": "not-applicable-single-frame",
+    })
+    qa = chroma_green_report(out)
+    qa.update({
+        "status": "PASS" if single_frame_qa["pass"] else "FAIL",
+        "method": "+".join(method_steps),
+        "single_frame_qa": single_frame_qa,
+        "cleanup_qa": cleanup_qa,
+    })
+    return out, qa
+
+
+def build_actor_identity_detail_png(master_bytes: bytes, *, size: int = 512) -> bytes:
+    """Create a nearest-neighbour head/upper-torso reference from a humanoid master."""
+    from PIL import Image
+
+    if type(size) is not int or not 128 <= size <= 1024:
+        raise ValueError("identity detail size must be an integer in 128..1024")
+    image = Image.open(io.BytesIO(master_bytes)).convert("RGBA")
+    bbox = image.getchannel("A").getbbox()
+    if bbox is None:
+        raise ValueError("direction master has no visible actor")
+    left, top, right, bottom = bbox
+    actor_width = right - left
+    actor_height = bottom - top
+    crop_width = max(8, round(actor_width * 0.62))
+    crop_height = max(8, round(actor_height * 0.50))
+    center_x = (left + right) / 2
+    crop_left = max(0, round(center_x - crop_width / 2))
+    crop_right = min(image.width, crop_left + crop_width)
+    crop_top = max(0, top)
+    crop_bottom = min(image.height, crop_top + crop_height)
+    detail = image.crop((crop_left, crop_top, crop_right, crop_bottom))
+
+    square_side = max(detail.size)
+    square = Image.new("RGBA", (square_side, square_side), (0, 0, 0, 0))
+    square.alpha_composite(
+        detail,
+        ((square_side - detail.width) // 2, (square_side - detail.height) // 2),
+    )
+    square = square.resize((size, size), Image.Resampling.NEAREST)
+    return _png_bytes_from_image(square)
 
 
 def postprocess_effect_generation_bytes(raw: bytes, background_mode: str = "none", effect_contract: dict | None = None) -> tuple[bytes, dict]:
@@ -2311,10 +2638,18 @@ def collect_codex_replacement_b64(image_data_url: str, mask_data_url: str, promp
 
 
 def sprite_action_matrix_for_ui() -> dict:
+    directions = [item["code"] for item in DEFAULT_ACTOR_OUTPUT_PROFILE["directions"]]
     return {
-        "directions": list(CANONICAL_8DIR_ORDER),
-        "source_directions": list(MIRRORED_8DIR_SOURCE_DIRECTIONS),
-        "mirror_map": dict(SPRITE_MIRROR_MAP),
+        "output_profile_id": DEFAULT_ACTOR_OUTPUT_PROFILE_ID,
+        "directions": directions,
+        "source_directions": [
+            direction for direction in MIRRORED_8DIR_SOURCE_DIRECTIONS
+            if direction in directions
+        ],
+        "mirror_map": {
+            target: source for target, source in SPRITE_MIRROR_MAP.items()
+            if target in directions and source in directions
+        },
         "core_locks": [{"name": name, "rule": rule} for name, rule in SPRITE_ANIMATION_CORE_LOCKS],
         "core_lock_contract": sprite_animation_core_lock_contract(),
         "actions": {name: dict(spec) for name, spec in SPRITE_ACTION_MATRIX.items()},
@@ -2363,7 +2698,6 @@ Action contract: {spec['contract']}
 Global reference identity rule: the supplied/accepted reference identity is the standard for the whole action set. Preserve identity, equipment, attachments, palette, proportions, pivot, scale, and contact baseline while drawing complete full-frame poses.
 Do not solve motion by cutting, pasting, sliding, warping, or redrawing isolated limbs/parts. Every frame must read as the same actor performing the action as a coherent whole-body pose.
 {sprite_animation_core_lock_contract()}
-For walk actions, use this simple RPG 4-frame crossover pattern: frame 1 neutral transition stance with feet close beneath the pelvis; Frame 2: LEFT leg is the lifted swing leg, crossing from behind to just ahead beside the RIGHT leg, while the RIGHT leg is the planted stance/support leg; frame 3 the same neutral transition stance again; Frame 4: RIGHT leg is the lifted swing leg, crossing from behind to just ahead beside the LEFT leg, while the LEFT leg is the planted stance/support leg. In each crossing frame the swing foot must pass beside and visibly overlap/cross the planted support leg beneath the pelvis; the front/back depth ordering of the legs must reverse between frames 2 and 4. Crossing means a natural depth pass, never swapped anatomical left/right identity or an X-locked pose. Keep a fixed root/pivot anchor, stable head/torso reference center, stable contact baseline, and same scale in every frame. Frame 1 and frame 3 must be visually near-identical neutral frames; frames 2 and 4 must use opposite swing feet and opposite stance/support legs. Animate only actor-appropriate counter-motion around that anchor; never slide the whole actor left/right inside the cell, never hop/skate, never hide the feet/contact points, and never move only one limb/contact point.
 Keep all frames in evenly spaced cells on one horizontal row for this direction.
 Use a flat exact RGB(0,255,0) / #00FF00 chroma-key background edge-to-edge.
 No text, no numbers, no watermark, no mockup frame.
@@ -2371,7 +2705,200 @@ No VFX: do not draw slash arcs, hit sparks, magic glows, particles, smoke, shock
 User request: {prompt.strip()}""".strip()
 
 
-def build_reference_sprite_prompt(prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4, frame_count: int | None = None, asset_type: str = "sprite") -> str:
+def build_actor_direction_master_prompt(prompt: str, direction: str = "S", negative: str = "") -> str:
+    """Build one identity reference, never a turnaround or animation sheet."""
+    direction = str(direction or "S").strip().upper()
+    if direction not in ACTOR_FRAME_DIRECTION_CONTRACTS:
+        raise ValueError(f"direction must be one of {', '.join(CANONICAL_8DIR_ORDER)}")
+    character = str(prompt or "").strip()
+    if not character:
+        raise ValueError("prompt is required")
+    avoid = str(negative or "").strip()
+    avoid_line = f"\nAvoid: {avoid}" if avoid else ""
+    return f"""Actor Direction Master generation contract.
+
+Generate exactly one complete full-body character in one neutral standing pose.
+This is an identity master, not an animation frame set: no sprite sheet, contact sheet, turnaround, alternate pose, duplicate character, cell grid, labels, or text.
+
+Direction lock: {ACTOR_FRAME_DIRECTION_CONTRACTS[direction]}.
+Identity request: {character}
+
+Anatomy lock:
+- exactly one head, one torso, two shoulders, two arms, two hands, two hips, two legs, and two feet
+- both arms must connect shoulder-to-elbow-to-wrist-to-hand without fused, detached, duplicated, or melted parts
+- each hand is a compact readable game-sprite hand with one thumb-side cue; no finger fan, extra nub, claw blob, or missing wrist
+- each boot/foot has a readable ankle, heel, sole, and toe direction; no twisted, merged, duplicated, or amputated foot
+- keep a believable muscular humanoid skeleton under the costume; muscles may be exaggerated but joints may not bend incorrectly
+
+Production lock:
+- crisp polished pixel art with hard pixel clusters and no anti-aliasing or painterly blur
+- full body, both hands, and both feet fully visible with generous empty margins
+- stable upright root, level ground baseline, readable silhouette, empty hands unless the identity request explicitly requires equipment
+- flat uniform #00FF00 chroma-key background edge-to-edge; no floor, cast shadow, scenery, UI, watermark, or VFX{avoid_line}""".strip()
+
+
+def build_dynamic_identity_spec(character_prompt: str, direction: str) -> dict:
+    """Create a per-character lock contract without hard-coding a character type."""
+    prompt = character_prompt.strip()
+    if not prompt:
+        raise ValueError("prompt is required")
+    return {
+        "schema_version": "asset-studio.character-identity/v1",
+        "source": "user-prompt-and-direction-master",
+        "character_description": prompt,
+        "direction": direction,
+        "locked_features": [
+            "species and body proportions",
+            "skin, hair, face, and distinctive anatomy",
+            "clothing, armor, equipment, materials, and colors",
+            "pixel-art rendering, outline, shading, and palette",
+        ],
+        "frame_change_policy": "pose-only",
+    }
+
+
+def walk4_blueprints() -> tuple[dict, ...]:
+    """Return contact/passing pairs so both legs visibly cross in a four-frame walk."""
+    walk = se_walk_blueprints()
+    return tuple(walk[index] for index in (0, 2, 3, 5))
+
+
+def build_actor_single_frame_prompt(
+    prompt: str,
+    *,
+    direction: str,
+    action: dict,
+    frame_index: int,
+    pose_summary: str = "",
+    motion_directive: str = "",
+    negative: str = "",
+    has_continuity_reference: bool = False,
+) -> str:
+    """Build a two-reference request for one authored animation frame."""
+    direction = str(direction or "S").strip().upper()
+    if direction not in ACTOR_FRAME_DIRECTION_CONTRACTS:
+        raise ValueError(f"direction must be one of {', '.join(CANONICAL_8DIR_ORDER)}")
+    character = str(prompt or "").strip()
+    if not character:
+        raise ValueError("prompt is required")
+    beats = list(action["beats"])
+    if isinstance(frame_index, bool) or not isinstance(frame_index, int) or not 0 <= frame_index < len(beats):
+        raise ValueError(f"frame_index must be between 0 and {len(beats) - 1}")
+    beat = beats[frame_index]
+    summary = str(pose_summary or "").strip()
+    if len(summary) > 2000 or any(ord(char) < 32 and char not in "\n\t" for char in summary):
+        raise ValueError("pose_summary must be at most 2000 printable characters")
+    summary_line = f"\nAuthored pose facts: {summary}" if summary else ""
+    motion = str(motion_directive or "").strip()
+    if len(motion) > 1000 or any(ord(char) < 32 and char not in "\n\t" for char in motion):
+        raise ValueError("motion_directive must be at most 1000 printable characters")
+    motion_line = f"\nMotion directive: {motion}" if motion else ""
+    avoid = str(negative or "").strip()
+    avoid_line = f"\nAvoid: {avoid}" if avoid else ""
+    continuity_line = ""
+    if has_continuity_reference:
+        continuity_line = (
+            "\n- IMAGE 4 is the approved Continuity Reference from this same animation. "
+            "Match its head and torso scale, face rendering, equipment size, outline thickness, "
+            "pixel-cluster scale, canvas occupancy, and ground anchor. Do not copy its limb pose; "
+            "IMAGE 2 remains authoritative for the current pose."
+        )
+    return f"""Generate ONE frame only for a production pixel-art actor animation.
+Do not output a strip, sheet, grid, alternate pose, inset, comparison, labels, numbers, or multiple characters.
+
+Ordered visual references:
+- IMAGE 1 is the Direction Master. Copy the exact character design: face and eye placement, hair and facial hair, skin/anatomy, body proportions, costume and armor, every held item, which hand holds it, palette, outline, shading, pixel density, and camera view.
+- IMAGE 2 is the Pose Guide. Use only its joint locations, limb directions, support/contact state, root, and baseline. Never copy its guide colors, bones, circles, labels, or diagram style into the result.
+- IMAGE 3 is the Identity Detail: a nearest-neighbour head/upper-torso crop from IMAGE 1. Use it to preserve the exact head silhouette, facial pixels, eye line, hair, facial hair, shoulder armor, outline, and pixel-cluster scale; it is not a second character or a composition reference.{continuity_line}
+- In IMAGE 2, orange/red joints are the authored screen-left limbs named left; blue joints are the authored screen-right limbs named right; yellow is the center chain; magenta is the fixed root. These are screen-space production labels, not a request to reinterpret anatomical handedness.
+- IMAGE 1 and IMAGE 3 own appearance; IMAGE 2 owns pose. Never average or redesign the identity references.
+
+Frame contract:
+- character: {character}
+- direction: {ACTOR_FRAME_DIRECTION_CONTRACTS[direction]}
+- action: {action['id']}
+- frame: {frame_index + 1} of {len(beats)}
+- beat: {beat}
+- action motion: {action['prompt_contract']}
+- acceptance: {action['acceptance']}{motion_line}{summary_line}
+- The Motion directive is authoritative for weapon and equipment presence. If it says unarmed or no weapon, interpret generic weapon wording in the action profile as the striking hand/limb and do not invent equipment.
+
+Anatomy and continuity lock:
+- draw exactly the same single actor as IMAGE 1, with exactly two connected arms/hands and two connected legs/feet
+- keep the head silhouette, facial pixels, eye line, torso center, equipment design, and equipment-to-hand attachment visually unchanged; this is a pose edit, not a character redesign
+- shoulders, elbows, wrists, hips, knees, and ankles must follow IMAGE 2 and bend as a coherent muscular humanoid pose
+- hands must remain compact and readable with a wrist and thumb-side cue; no fused fist/forearm, extra nubs, finger fans, or duplicated hand
+- feet/boots must show clear ankle-to-heel-to-toe orientation and the authored support/contact state; no twisted sole, merged boots, missing heel, or duplicated foot
+- support/contact is mandatory: the authored support toe must be the lowest weight-bearing boot on the baseline, while a foot marked passing/flight must remain visibly above that baseline
+- preserve head size, torso length, limb thickness, costume design, palette, SE camera angle, root, scale, and ground baseline across the animation
+- use a complete newly drawn full-body pose; do not cut, paste, slide, stretch, or locally warp limbs from IMAGE 1
+
+Output lock:
+- crisp hard-edged pixel art, full body visible, no cropping, no VFX, no motion trail, no floor, no cast shadow, no text or watermark
+- one centered actor with generous margins on a flat uniform #00FF00 chroma-key background edge-to-edge{avoid_line}""".strip()
+
+
+def pose_blueprint_prompt_summary(blueprint: dict) -> str:
+    """Serialize validated authored joints into a compact prompt-side contract."""
+    validated = validate_pose_blueprint(blueprint)
+    width = validated["canvas"]["width"]
+    height = validated["canvas"]["height"]
+    joints = {
+        joint["name"]: (
+            round(joint["x"] * (width - 1)),
+            round(joint["y"] * (height - 1)),
+        )
+        for joint in validated["joints"]
+    }
+    phase_directive = ""
+    if validated["beat_id"] == "left-contact":
+        phase_directive = (
+            "; mandatory neutral transition: both boots stay close beneath the pelvis, "
+            "orange toe planted on the baseline and blue toe only slightly raised; "
+            "no wide stride and no repeated forward boot"
+        )
+    elif validated["beat_id"] == "right-contact":
+        phase_directive = (
+            "; mandatory neutral transition: both boots stay close beneath the pelvis, "
+            "blue toe planted on the baseline and orange toe only slightly raised; "
+            "no wide stride and no repeated forward boot"
+        )
+    elif validated["beat_id"] == "left-passing":
+        phase_directive = (
+            "; mandatory crossover: the blue screen-right leg is the raised swing leg; "
+            "its toe must appear on the screen-left side of the orange planted support toe, "
+            "visibly passing in front of the support leg beneath the pelvis"
+        )
+    elif validated["beat_id"] == "right-passing":
+        phase_directive = (
+            "; mandatory crossover: the orange screen-left leg is the raised swing leg; "
+            "its toe must appear on the screen-right side of the blue planted support toe, "
+            "visibly passing in front of the support leg beneath the pelvis"
+        )
+    return "; ".join((
+        f"{width}x{height} authored grid",
+        f"root=({round(validated['root']['x'] * (width - 1))},{round(validated['root']['y'] * (height - 1))})",
+        f"baseline={round(validated['baseline'] * (height - 1))}",
+        f"support={validated['support_foot']}",
+        f"contact={validated['contact_foot']}",
+        f"left hand={validated['hand_state_l']}",
+        f"right hand={validated['hand_state_r']}",
+        f"left foot={validated['foot_state_l']}",
+        f"right foot={validated['foot_state_r']}",
+        f"left toe={joints['toe_l']}",
+        f"right toe={joints['toe_r']}",
+        "left arm shoulder->elbow->wrist->hand "
+        f"{joints['shoulder_l']}->{joints['elbow_l']}->{joints['wrist_l']}->{joints['hand_l']}",
+        "right arm shoulder->elbow->wrist->hand "
+        f"{joints['shoulder_r']}->{joints['elbow_r']}->{joints['wrist_r']}->{joints['hand_r']}",
+        "left leg hip->knee->ankle->toe "
+        f"{joints['hip_l']}->{joints['knee_l']}->{joints['ankle_l']}->{joints['toe_l']}",
+        "right leg hip->knee->ankle->toe "
+        f"{joints['hip_r']}->{joints['knee_r']}->{joints['ankle_r']}->{joints['toe_r']}",
+    )) + phase_directive
+
+
+def build_reference_sprite_prompt(prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4, frame_count: int | None = None, asset_type: str = "sprite", output_profile_id: str = DEFAULT_ACTOR_OUTPUT_PROFILE_ID) -> str:
     neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
     if str(asset_type or "").strip().lower() == "effect":
         return f"""Create a new effect-only pixel-art game VFX asset using the supplied reference image only as fit/context.
@@ -2386,22 +2913,31 @@ Reference contract:
 
 User request: {prompt.strip()}
 {neg}""".strip()
-    requested_frames = max(1, min(8, int(frame_count or walk_frames or 4)))
-    action_key = normalize_animation_action(animation_mode)
+    profile = load_output_profile_by_id(output_profile_id)
+    action = resolve_actor_action_recipe(profile, animation_mode)
+    action_key = action["id"]
+    requested_frames = action["frame_count"]
+    direction_codes = [item["code"] for item in profile["directions"]]
+    reference_view_contract = (
+        "Infer the supplied reference image's current facing directly from the image; "
+        "do not assume a front view."
+        if reference_direction == "AUTO"
+        else f"The supplied reference image direction is {reference_direction}."
+    )
     direction_contract = ""
     if direction_mode == "8dir":
         direction_contract = """
 Directional sprite-sheet contract:
-- 8-direction output. Direction row order must be exactly: N, NE, E, SE, S, SW, W, NW.
-- The supplied reference image direction is reference_direction={reference_direction}. Preserve that view most closely, then rotate the same character design into the other seven directions.
+- 8-direction output. Direction row order must be exactly: {direction_order}.
+- {reference_view_contract} Preserve that view most closely, then rotate the same character design into the other seven directions.
 - Side rows must read as true side profiles. Back rows must remove front-only face/chest details.
-- Keep identical scale, pivot, costume, outline thickness, palette, and lighting across all rows.""".format(reference_direction=reference_direction)
+- Keep identical scale, pivot, costume, outline thickness, palette, and lighting across all rows.""".format(reference_view_contract=reference_view_contract, direction_order=", ".join(direction_codes))
     elif direction_mode == "4dir":
         direction_contract = """
 Directional sprite-sheet contract:
-- 4-direction output. Direction row order must be exactly: S, W, E, N.
-- The supplied reference image direction is reference_direction={reference_direction}. Preserve that view most closely, then rotate the same character design into the other directions.
-- Side rows must read as true side profiles. Back row must remove front-only face/chest details.""".format(reference_direction=reference_direction)
+- 4-direction output. Direction row order must be exactly: {direction_order}.
+- {reference_view_contract} Preserve that view most closely, then rotate the same character design into the other directions.
+- Side rows must read as true side profiles. Back row must remove front-only face/chest details.""".format(reference_view_contract=reference_view_contract, direction_order=", ".join(direction_codes))
     else:
         direction_contract = """
 Single-target one-direction generation contract:
@@ -2409,38 +2945,27 @@ Single-target one-direction generation contract:
 - Do not generate a direction-candidate sheet, contact sheet, multi-direction atlas, or alternate direction candidates.
 - Do not output all 8 directions. The app will request each direction separately.
 - Direction meaning is screen-space: SW/W turn toward screen-left, SE/E turn toward screen-right.
-- The supplied reference image direction is reference_direction={reference_direction}; use it for identity/style, then rotate only into the requested target direction.
+- Diagonal meaning is explicit: SE is a front-right three-quarter view; SW is front-left; NE is back-right; NW is back-left.
+- {reference_view_contract} Use it for identity/style, then rotate only into the requested target direction.
 - If target_direction is W or E, the sprite must be a true side profile.
 - If target_direction is S, the sprite must face camera/front.
-- Keep a single centered sprite with transparent/chroma background margin, not a row/stack.""".format(reference_direction=reference_direction, target_direction=target_direction)
+- Keep exactly one direction and arrange it as one horizontal row of exactly {requested_frames} animation frames with transparent/chroma margins and no additional rows.""".format(reference_view_contract=reference_view_contract, target_direction=target_direction, requested_frames=requested_frames)
     frame_contract = ""
-    if action_key in SPRITE_ACTION_MATRIX:
-        spec = SPRITE_ACTION_MATRIX[action_key]
-        columns = list(spec['columns'])
-        if requested_frames != len(columns):
-            if action_key == "idle" and requested_frames > 1:
-                columns = [f"breath{i + 1}" for i in range(requested_frames)]
-            elif action_key == "attack":
-                attack_beats = ["ready", "windup", "strike", "impact", "follow-through", "recover", "settle", "return"]
-                columns = attack_beats[:requested_frames]
-            elif action_key == "walk":
-                if requested_frames == 6:
-                    columns = ["left-contact", "left-down", "passing-left", "right-contact", "right-down", "passing-right"]
-                else:
-                    columns = [f"walk{i + 1}" for i in range(requested_frames)]
-            else:
-                columns = [f"frame{i + 1}" for i in range(requested_frames)]
-        acceptance_contract = sprite_action_acceptance_contract(action_key)
-        frame_contract = f"""
+    columns = list(action["beats"])
+    acceptance_contract = (
+        f"{sprite_animation_core_lock_contract()} "
+        f"Whitelist visual acceptance gate for {action_key}: PASS only if {action['acceptance']} "
+        "Otherwise mark FAIL."
+    )
+    frame_contract = f"""
 {action_key.capitalize()} action contract:
 - Frame count: exactly {requested_frames}.
 - column order must be exactly: {', '.join(columns)}.
-- {spec['contract']}.
+- {action['prompt_contract']}.
 - {acceptance_contract}.
 - {sprite_animation_core_lock_contract()}.
 - Global reference identity rule: one accepted reference identity is the standard for the whole action set; preserve identity, equipment/attachments, palette, proportions, pivot, scale, and contact baseline between frames.
 - Full-frame pose rule: each frame must be a complete coherent pose of the same actor; do not create motion by cutting, pasting, sliding, warping, or redrawing isolated limbs/parts.
-- For walk actions: use the simple RPG crossover four-beat grammar: frame 1 neutral transition stance with feet close beneath the pelvis; Frame 2: LEFT leg is the lifted swing leg and RIGHT leg is the planted stance/support leg; frame 3 the same neutral transition stance again; Frame 4: RIGHT leg is the lifted swing leg and LEFT leg is the planted stance/support leg. Frame 1 and frame 3 must be visually near-identical neutral frames. In frames 2 and 4 the swing foot passes beside and visibly overlaps/crosses the planted support leg beneath the pelvis, moving from behind it to just ahead; the front/back depth ordering of the legs must reverse between frames 2 and 4. Crossing is a natural depth pass, not swapped anatomical left/right identity or an X-locked pose. This is an actor-appropriate stance/support and swing roles rule simplified for low-resolution readability. Keep a fixed root/pivot anchor, stable head/torso reference center, stable contact baseline, and same scale in every frame. Do not slide the whole actor left/right inside the cell, do not hop, do not skate, do not hide the feet/contact points under a solid body/robe/skirt/sack block, and do not move only one limb/contact point.
 - Cell-boundary rule: treat every frame as a separate boxed cell with a wide empty #00FF00 gutter between cells.
 - Containment rule: every body part, weapon, held object, shadow, and silhouette must stay fully inside its own cell.
 - No-VFX rule: do not draw slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, or background effects. Effects are separate game assets and must not be baked into character action sheets.
@@ -2463,7 +2988,7 @@ User request: {prompt.strip()}
 {neg}""".strip()
 
 
-def collect_codex_reference_asset_b64(reference_data_url: str, prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4, frame_count: int | None = None, asset_type: str = "sprite", asset_family: str = "sprite") -> tuple[str, str, str]:
+def collect_codex_reference_asset_b64(reference_data_url: str, prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4, frame_count: int | None = None, asset_type: str = "sprite", asset_family: str = "sprite", output_profile_id: str = DEFAULT_ACTOR_OUTPUT_PROFILE_ID) -> tuple[str, str, str]:
     """Generate a new reference-guided asset without assuming actor semantics."""
     import httpx
     from agent.auxiliary_client import _codex_cloudflare_headers
@@ -2489,7 +3014,7 @@ def collect_codex_reference_asset_b64(reference_data_url: str, prompt: str, nega
     actor = family == "sprite" and str(asset_type).lower() in {"character", "monster", "npc", "sprite"}
     effect = family == "sprite" and str(asset_type).lower() == "effect"
     if actor or effect:
-        request_text = build_reference_sprite_prompt(prompt, negative, direction_mode=direction_mode, reference_direction=reference_direction, target_direction=target_direction, animation_mode=animation_mode, walk_frames=walk_frames, frame_count=frame_count, asset_type=asset_type)
+        request_text = build_reference_sprite_prompt(prompt, negative, direction_mode=direction_mode, reference_direction=reference_direction, target_direction=target_direction, animation_mode=animation_mode, walk_frames=walk_frames, frame_count=frame_count, asset_type=asset_type, output_profile_id=output_profile_id)
         instructions = ("Generate an isolated game effect from the supplied visual reference; follow the canonical effect contract."
                         if effect else "Generate pixel-art game assets from a supplied reference image. Preserve actor identity/style and follow the actor animation contract.")
         reference_label = ("Reference image to use only as fit/context for the separate effect asset:"
@@ -3045,6 +3570,32 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self._policy_allowed():
             return self._send_policy_error()
+        path = urlparse(self.path).path
+        if path == "/api/provider-health":
+            return self.send_json(200, provider_health())
+        if path == "/api/actor-walk4-blueprints":
+            blueprints = walk4_blueprints()
+            return self.send_json(200, {
+                "success": True,
+                "direction": "SE",
+                "action": "walk",
+                "frame_count": 4,
+                "beats": [blueprint["beat_id"] for blueprint in blueprints],
+                "blueprints": list(blueprints),
+            })
+        if path == "/api/recipes":
+            try:
+                return self.send_json(200, load_recipe_registry())
+            except Exception:
+                return self.send_json(503, {"success": False, "error": "Recipe registry unavailable"})
+        if path.startswith("/api/output-profiles/"):
+            profile_id = unquote(path.removeprefix("/api/output-profiles/"))
+            try:
+                return self.send_json(200, load_output_profile_by_id(profile_id))
+            except OutputProfileError:
+                return self.send_json(
+                    404, {"success": False, "error": "Output profile unavailable"}
+                )
         return super().do_GET()
 
     def do_HEAD(self):
@@ -3099,6 +3650,204 @@ class Handler(SimpleHTTPRequestHandler):
                     "qa": qa,
                     "chroma_mode": chroma_mode,
                 })
+            if path == "/api/assemble-actor-walk4":
+                frames = data.get("frames")
+                if not isinstance(frames, list) or len(frames) != 4:
+                    raise ValueError("frames must contain exactly four walk frames")
+                frame_pngs = []
+                for index, frame in enumerate(frames):
+                    if not isinstance(frame, dict):
+                        raise ValueError(f"frame {index} must be an object")
+                    if frame.get("visual_qa") != "PASS":
+                        raise ValueError(f"frame {index} requires visual_qa=PASS")
+                    raw, _extension = data_url_to_bytes(frame.get("image", ""))
+                    _inspect_provider_image(raw, f"frame {index}")
+                    frame_pngs.append(raw)
+                try:
+                    assembled = assemble_actor_head_locked_frames(
+                        frame_pngs,
+                        cell_size=int(data.get("cell_size", 512)),
+                        padding=int(data.get("padding", 16)),
+                    )
+                except ActorAssemblyError as error:
+                    raise ValueError(str(error)) from error
+                run_id = f"walk4_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+                sheet_name = f"actor_{run_id}.png"
+                (GENERATED / sheet_name).write_bytes(assembled["sheet_png"])
+                frame_urls = []
+                for index, raw in enumerate(assembled["normalized_frame_pngs"]):
+                    name = f"actor_{run_id}_{index:02d}.png"
+                    (GENERATED / name).write_bytes(raw)
+                    frame_urls.append(f"/assets/generated/{name}")
+                return self.send_json(200, {
+                    "success": True,
+                    "generation_stage": "actor-walk4-assembly",
+                    "sheet_url": f"/assets/generated/{sheet_name}",
+                    "frame_urls": frame_urls,
+                    "geometry": assembled["geometry"],
+                    "export_ready": True,
+                })
+            if path == "/api/generate-actor-master":
+                character_prompt = str(data.get("prompt", "")).strip()
+                direction = str(data.get("direction", "S")).strip().upper()
+                negative = str(data.get("negative", "")).strip()
+                background_mode = str(data.get("background_mode", "chroma_green")).strip()
+                if background_mode != "chroma_green":
+                    return self.send_json(400, {"success": False, "error": "actor generation requires background_mode=chroma_green"})
+                request_prompt = build_actor_direction_master_prompt(
+                    character_prompt,
+                    direction,
+                    negative,
+                )
+                raw, provider_result = generate_with_page_image_backend(request_prompt)
+                out, qa = postprocess_actor_single_frame_bytes(
+                    raw,
+                    background_mode=background_mode,
+                    chroma_mode="global",
+                )
+                name = f"actor_master_{direction.lower()}_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+                dst = GENERATED / name
+                dst.write_bytes(out)
+                deterministic_pass = bool(
+                    qa["single_frame_qa"]["pass"]
+                    and qa["cleanup_qa"]["pass"]
+                )
+                response = {
+                    "success": deterministic_pass,
+                    "provider_success": True,
+                    "url": f"/assets/generated/{name}",
+                    "path": str(dst),
+                    "generation_stage": "direction-master",
+                    "direction": direction,
+                    "identity_spec": build_dynamic_identity_spec(character_prompt, direction),
+                    "model": provider_result.get("model"),
+                    "provider": provider_result.get("provider"),
+                    "background_mode": background_mode,
+                    "qa": qa,
+                    "deterministic_qa": {"status": "PASS" if deterministic_pass else "FAIL", "details": qa},
+                    "visual_qa": {"status": "PENDING", "checks": {}},
+                    "export_ready": False,
+                    "method": f"page-backend-direction-master+{qa['method']}",
+                }
+                return self.send_json(200 if response["success"] else 422, response)
+            if path == "/api/generate-actor-frame":
+                character_prompt = str(data.get("prompt", "")).strip()
+                direction = str(data.get("direction", "S")).strip().upper()
+                identity_spec = data.get("identity_spec")
+                if identity_spec is not None:
+                    if not isinstance(identity_spec, dict):
+                        raise ValueError("identity_spec must be an object")
+                    if identity_spec.get("schema_version") != "asset-studio.character-identity/v1":
+                        raise ValueError("identity_spec schema_version is invalid")
+                    if identity_spec.get("direction") != direction:
+                        raise ValueError("identity_spec direction must match direction")
+                    if identity_spec.get("frame_change_policy") != "pose-only":
+                        raise ValueError("identity_spec frame_change_policy must be pose-only")
+                    character_prompt = str(identity_spec.get("character_description", "")).strip()
+                action_id = str(data.get("action", "idle")).strip().lower()
+                frame_index = data.get("frame_index")
+                direction_master = data.get("direction_master")
+                continuity_reference = data.get("continuity_reference")
+                pose_blueprint = data.get("pose_blueprint")
+                if not direction_master:
+                    return self.send_json(400, {"success": False, "error": "direction_master is required"})
+                if not isinstance(pose_blueprint, dict):
+                    return self.send_json(400, {"success": False, "error": "pose_blueprint is required"})
+                try:
+                    master_bytes, _extension = data_url_to_bytes(direction_master)
+                    _inspect_provider_image(master_bytes, "direction_master")
+                except Exception as error:
+                    raise ValueError("direction_master must be a decodable raster image data URL") from error
+                if continuity_reference is not None:
+                    if not isinstance(continuity_reference, str) or not continuity_reference:
+                        raise ValueError("continuity_reference must be a decodable raster image data URL")
+                    try:
+                        continuity_bytes, _continuity_extension = data_url_to_bytes(continuity_reference)
+                        _inspect_provider_image(continuity_bytes, "continuity_reference")
+                    except Exception as error:
+                        raise ValueError("continuity_reference must be a decodable raster image data URL") from error
+                output_profile_id = str(data.get("output_profile_id", DEFAULT_ACTOR_OUTPUT_PROFILE_ID))
+                profile = load_output_profile_by_id(output_profile_id)
+                action = resolve_actor_action_recipe(profile, action_id)
+                if isinstance(frame_index, bool) or not isinstance(frame_index, int):
+                    raise ValueError("frame_index must be an integer")
+                validated_blueprint = validate_pose_blueprint(pose_blueprint)
+                if validated_blueprint["direction"] != direction:
+                    raise ValueError("pose_blueprint direction must match direction")
+                if validated_blueprint["action"] != action["id"]:
+                    raise ValueError("pose_blueprint action must match action")
+                if validated_blueprint["frame_index"] != frame_index:
+                    raise ValueError("pose_blueprint frame_index must match frame_index")
+                if not 0 <= frame_index < action["frame_count"]:
+                    raise ValueError(f"frame_index must be between 0 and {action['frame_count'] - 1}")
+                if validated_blueprint["beat_id"] != action["beats"][frame_index]:
+                    raise ValueError("pose_blueprint beat_id must match the output profile beat")
+                pose_guide_png = render_pose_blueprint_prompt_png(validated_blueprint)
+                pose_guide = "data:image/png;base64," + base64.b64encode(pose_guide_png).decode("ascii")
+                identity_detail_png = build_actor_identity_detail_png(master_bytes)
+                identity_detail = "data:image/png;base64," + base64.b64encode(identity_detail_png).decode("ascii")
+                blueprint_json = json.dumps(validated_blueprint, sort_keys=True, separators=(",", ":"))
+                blueprint_digest = hashlib.sha256(blueprint_json.encode("utf-8")).hexdigest()
+                request_prompt = build_actor_single_frame_prompt(
+                    character_prompt,
+                    direction=direction,
+                    action=action,
+                    frame_index=frame_index,
+                    pose_summary=pose_blueprint_prompt_summary(validated_blueprint),
+                    motion_directive=str(data.get("motion_directive", "")),
+                    negative=str(data.get("negative", "")),
+                    has_continuity_reference=continuity_reference is not None,
+                )
+                background_mode = str(data.get("background_mode", "chroma_green")).strip()
+                if background_mode != "chroma_green":
+                    raise ValueError("actor generation requires background_mode=chroma_green")
+                reference_images = [pose_guide, identity_detail]
+                if continuity_reference is not None:
+                    reference_images.append(continuity_reference)
+                raw, provider_result = generate_with_page_image_backend(
+                    request_prompt,
+                    image_url=direction_master,
+                    reference_image_urls=reference_images,
+                )
+                out, qa = postprocess_actor_single_frame_bytes(
+                    raw,
+                    background_mode=background_mode,
+                    chroma_mode="global",
+                )
+                beat = action["beats"][frame_index]
+                name = (
+                    f"actor_frame_{direction.lower()}_{action['id']}_{frame_index:02d}_"
+                    f"{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+                )
+                dst = GENERATED / name
+                dst.write_bytes(out)
+                deterministic_pass = bool(
+                    qa["single_frame_qa"]["pass"]
+                    and qa["cleanup_qa"]["pass"]
+                )
+                response = {
+                    "success": deterministic_pass,
+                    "provider_success": True,
+                    "url": f"/assets/generated/{name}",
+                    "path": str(dst),
+                    "generation_stage": "actor-frame",
+                    "direction": direction,
+                    "action": action["id"],
+                    "beat": beat,
+                    "frame_index": frame_index,
+                    "frame_count": action["frame_count"],
+                    "pose_blueprint_digest": blueprint_digest,
+                    "model": provider_result.get("model"),
+                    "provider": provider_result.get("provider"),
+                    "background_mode": background_mode,
+                    "qa": qa,
+                    "deterministic_qa": {"status": "PASS" if deterministic_pass else "FAIL", "details": qa},
+                    "visual_qa": {"status": "PENDING", "checks": {}},
+                    "continuity_reference_used": continuity_reference is not None,
+                    "export_ready": False,
+                    "method": f"page-backend-two-reference-single-frame+{qa['method']}",
+                }
+                return self.send_json(200 if response["success"] else 422, response)
             if path == "/api/inpaint":
                 prompt = str(data.get("prompt", "")).strip()
                 negative = str(data.get("negative", "")).strip()
@@ -3161,8 +3910,9 @@ class Handler(SimpleHTTPRequestHandler):
                 data = normalize_asset_generation_payload(data)
                 asset_family = data["asset_family"]
                 asset_type = data["asset_type"]
-                is_actor_sprite = asset_family == "sprite" and asset_type in {"character", "monster", "npc"}
-                is_effect = asset_family == "sprite" and asset_type == "effect"
+                generation_recipe_id = recipe_id_for_asset_selection(asset_family, asset_type)
+                is_actor_sprite = generation_recipe_id == "actor-animation"
+                is_effect = generation_recipe_id == "vfx-sequence"
                 is_tile = asset_family == "tile"
                 is_ui = asset_family == "ui"
                 is_object = asset_family == "object"
@@ -3212,6 +3962,7 @@ class Handler(SimpleHTTPRequestHandler):
                         walk_frames=int(data.get("walk_frames", 4)),
                         frame_count=int(data.get("frame_count", data.get("walk_frames", 4))),
                         asset_type=asset_type,
+                        output_profile_id=data["output_profile_id"],
                     )
                 else:
                     image_b64, model, quality = collect_codex_reference_asset_b64(
@@ -3237,6 +3988,7 @@ class Handler(SimpleHTTPRequestHandler):
                         target_direction=target_direction,
                         animation_mode=animation_mode,
                         chroma_mode=chroma_mode,
+                        output_profile_id=data["output_profile_id"],
                     )
                 else:
                     out, qa = raw, {"status": "bypassed", "method": f"{asset_family}-raw", "sprite_cleanup": False}
@@ -3248,8 +4000,9 @@ class Handler(SimpleHTTPRequestHandler):
                 data = normalize_asset_generation_payload(data)
                 asset_family = data["asset_family"]
                 asset_type = data["asset_type"]
-                is_actor_sprite = asset_family == "sprite" and asset_type in {"character", "monster", "npc"}
-                is_effect = asset_family == "sprite" and asset_type == "effect"
+                generation_recipe_id = recipe_id_for_asset_selection(asset_family, asset_type)
+                is_actor_sprite = generation_recipe_id == "actor-animation"
+                is_effect = generation_recipe_id == "vfx-sequence"
                 is_tile = asset_family == "tile"
                 is_ui = asset_family == "ui"
                 is_object = asset_family == "object"
@@ -3284,6 +4037,7 @@ class Handler(SimpleHTTPRequestHandler):
                         target_direction=str(data.get("target_direction", "S")),
                         animation_mode=str(data.get("animation_mode", "idle")),
                         chroma_mode=str(data.get("chroma_mode", "global")),
+                        output_profile_id=data["output_profile_id"],
                     )
                 else:
                     out, qa = raw, {"status": "bypassed", "method": f"{asset_family}-raw", "sprite_cleanup": False}
@@ -3292,6 +4046,8 @@ class Handler(SimpleHTTPRequestHandler):
                 dst.write_bytes(out)
                 return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": result.get("model"), "provider": result.get("provider"), "background_mode": background_mode, "qa": qa, "method": f"generate+{qa.get('method', 'postprocess')}"})
             return self.send_json(404, {"success": False, "error": "Unknown API endpoint"})
+        except RecipeRegistryError:
+            return self.send_json(503, {"success": False, "error": "Recipe registry unavailable"})
         except ValueError as e:
             return self.send_json(400, {"success": False, "error": str(e)})
         except Exception as e:

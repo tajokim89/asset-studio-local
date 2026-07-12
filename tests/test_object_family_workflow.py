@@ -20,6 +20,7 @@ import server
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
+REGISTRY = json.loads((ROOT / "contracts" / "asset-recipes.json").read_text(encoding="utf-8"))
 
 FOREIGN_FAMILY_KEYS = {
     "sprite", "tile", "ui", "animation_mode", "direction_mode", "topology", "nine_slice",
@@ -190,7 +191,7 @@ def _constant_source(name):
 def _browser_object(usage="world"):
     witness = sample_object()
     values = {
-        "assetSubtype": "interactable", "assetCorePrompt": "brass flood-gate lever",
+        "assetSubtype": "item", "assetCorePrompt": "brass flood-gate lever",
         "assetStylePreset": "pixel_refined", "assetStyleNotes": "high readability",
         "assetOutputWidth": 160, "assetOutputHeight": 128, "assetBackground": "transparent",
         "objectUsage": usage, "objectIdentitySubtype": "interactable",
@@ -217,9 +218,12 @@ def _browser_object(usage="world"):
     }
     production = "\n".join(_constant_source(name) for name in (
         "DEFAULT_STYLE_PROFILE", "canonicalProjectStyleProfile", "ASSET_FAMILY_SUBTYPES",
+        "PROJECT_FAMILIES", "assetFamilyDrafts",
         "controlValue", "controlNumber", "controlChecked",
         "clampFamilyNumber",
     )) + "\n" + "\n".join(_function_source(name) for name in (
+        "validateAndBuildRecipeViews", "recipeGenerationSubtypesForFamily",
+        "legacyAssetSubtypesForFamily", "projectAssetSubtypesForFamily",
         "normalizeStyleProfile", "resolveStyleProfileForFamily", "styleProfileFromControls",
         "currentAssetFamily", "currentAssetSubtype", "buildObjectContract",
         "buildAssetGenerationPayload",
@@ -231,8 +235,19 @@ const $=id=>controls[id]||null;
 const document={{getElementById:$}};
 let selectedAssetFamily='object';
 {production}
+const assetRecipeRegistry={json.dumps(REGISTRY)};
+const recipeViews=validateAndBuildRecipeViews(assetRecipeRegistry);
+const assetRecipeRegistryState={{status:'ready',registry:assetRecipeRegistry,production:recipeViews.production,known:recipeViews.known}};
 const poison={{sprite:{{action:'attack'}},tile:{{topology:'blob'}},ui:{{states:['hover']}},world_scale:'tiny',pivot:'center',padding:777,ground_contact:false,state:'flat'}};
-try {{ process.stdout.write(JSON.stringify({{contract:buildObjectContract(),payload:buildAssetGenerationPayload(poison),error:''}})); }}
+try {{
+  const contract=buildObjectContract();
+  const payload=buildAssetGenerationPayload(poison);
+  controls.assetSubtype.value='interactable';
+  let labSelection;
+  try {{ labSelection={{status:'returned',payload:buildAssetGenerationPayload(poison)}}; }}
+  catch(error) {{ labSelection={{status:'rejected',error:String(error.message||error)}}; }}
+  process.stdout.write(JSON.stringify({{contract,payload,labSelection,error:''}}));
+}}
 catch(error) {{ process.stdout.write(JSON.stringify({{contract:null,payload:null,error:String(error.message||error)}})); }}
 """
     completed = subprocess.run(
@@ -267,8 +282,16 @@ def test_browser_preserves_planned_object_semantics_without_family_leakage(usage
     assert result["error"] == ""
     assert result["contract"] == expected
     assert result["payload"]["object"] == expected
+    assert result["payload"]["asset_type"] == "item"
     assert not (FOREIGN_FAMILY_KEYS & result["payload"].keys())
     assert not (LEGACY_FLAT_KEYS & result["payload"].keys())
+
+
+def test_browser_rejects_legacy_lab_object_selection():
+    selection = _browser_object()["labSelection"]
+    assert selection["status"] == "rejected"
+    assert "invalid asset family or subtype" in selection["error"].lower()
+    assert "payload" not in selection
 
 
 @pytest.mark.parametrize("usage", ["world", "icon"])

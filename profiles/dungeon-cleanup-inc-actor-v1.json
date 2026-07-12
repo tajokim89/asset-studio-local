@@ -1,0 +1,118 @@
+{
+  "schema_version": "asset-studio.output-profile/v1",
+  "id": "dungeon-cleanup-inc-actor-v1",
+  "title": "Dungeon Cleanup Inc 88px eight-direction actor example",
+  "family": "actor",
+  "role": "example",
+  "frame": {
+    "width": 88,
+    "height": 88,
+    "image_format": "png",
+    "transparent_background": true
+  },
+  "directions": [
+    { "id": "south", "code": "S" },
+    { "id": "south-east", "code": "SE" },
+    { "id": "east", "code": "E" },
+    { "id": "north-east", "code": "NE" },
+    { "id": "north", "code": "N" },
+    { "id": "north-west", "code": "NW" },
+    { "id": "west", "code": "W" },
+    { "id": "south-west", "code": "SW" }
+  ],
+  "actions": [
+    {
+      "id": "idle",
+      "frame_count": 4,
+      "fps": 4,
+      "loop": true,
+      "terminal": false,
+      "beats": ["settle", "breathe-up", "settle-return", "breathe-down"],
+      "prompt_contract": "Subtle in-place breathing loop with planted feet and a fixed root.",
+      "acceptance": "Reads as one stable actor breathing in place and loops without a visible pop.",
+      "pivot": { "unit": "pixels", "x": 44, "y": 77 },
+      "sheet_layout": {
+        "file_name_template": "dungeon-cleanup-inc-actor-v1-{action}.png",
+        "packing": "rows-by-direction",
+        "columns": 4,
+        "rows": 8,
+        "direction_order": [
+          "south",
+          "south-east",
+          "east",
+          "north-east",
+          "north",
+          "north-west",
+          "west",
+          "south-west"
+        ],
+        "frame_order": [0, 1, 2, 3]
+      }
+    },
+    {
+      "id": "walk",
+      "frame_count": 6,
+      "fps": 8,
+      "loop": true,
+      "terminal": false,
+      "beats": ["left-contact", "left-down", "left-passing", "right-contact", "right-down", "right-passing"],
+      "prompt_contract": "Six-phase in-place walk with alternating support feet and a fixed root.",
+      "acceptance": "Reads as continuous walking without skating, repeated same-side steps, or root drift.",
+      "pivot": { "unit": "pixels", "x": 44, "y": 77 },
+      "sheet_layout": {
+        "file_name_template": "dungeon-cleanup-inc-actor-v1-{action}.png",
+        "packing": "rows-by-direction",
+        "columns": 6,
+        "rows": 8,
+        "direction_order": [
+          "south",
+          "south-east",
+          "east",
+          "north-east",
+          "north",
+          "north-west",
+          "west",
+          "south-west"
+        ],
+        "frame_order": [0, 1, 2, 3, 4, 5]
+      }
+    },
+    {
+      "id": "attack",
+      "frame_count": 6,
+      "fps": 10,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "anticipation", "wind-up", "strike", "impact", "recovery"],
+      "prompt_contract": "Complete melee attack with anticipation, strike, impact, and recovery.",
+      "acceptance": "Reads as a complete attack while identity, equipment, scale, and facing remain coherent.",
+      "pivot": { "unit": "pixels", "x": 44, "y": 77 },
+      "sheet_layout": {
+        "file_name_template": "dungeon-cleanup-inc-actor-v1-{action}.png",
+        "packing": "rows-by-direction",
+        "columns": 6,
+        "rows": 8,
+        "direction_order": [
+          "south",
+          "south-east",
+          "east",
+          "north-east",
+          "north",
+          "north-west",
+          "west",
+          "south-west"
+        ],
+        "frame_order": [0, 1, 2, 3, 4, 5]
+      }
+    }
+  ],
+  "import_hints": {
+    "engine": "godot-4",
+    "texture_filter": "nearest",
+    "mipmaps": false,
+    "alpha_mode": "straight",
+    "coordinate_origin": "top-left",
+    "pixels_per_unit": 88,
+    "resource_path_template": "res://assets/generated/actors/dungeon-cleanup-inc-actor-v1/{action}.png"
+  }
+}

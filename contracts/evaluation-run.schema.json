@@ -1,0 +1,373 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asset-studio.local/contracts/evaluation-run.schema.json",
+  "title": "Asset Studio Evaluation Run",
+  "description": "One generation attempt with provider, candidate, QA, aggregate, and user-decision states kept distinct.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "job_id",
+    "recipe_id",
+    "output_profile_id",
+    "started_at",
+    "finished_at",
+    "request",
+    "generation",
+    "candidate",
+    "postprocess",
+    "local_qa",
+    "visual_qa",
+    "aggregate",
+    "metrics",
+    "user_decision"
+  ],
+  "properties": {
+    "schema_version": { "const": "asset-studio.evaluation-run/v1" },
+    "run_id": { "$ref": "#/$defs/identifier" },
+    "job_id": { "$ref": "#/$defs/identifier" },
+    "recipe_id": { "$ref": "#/$defs/identifier" },
+    "output_profile_id": { "$ref": "#/$defs/identifier" },
+    "started_at": { "$ref": "#/$defs/timestamp" },
+    "finished_at": { "$ref": "#/$defs/timestamp" },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt", "prompt_sha256", "reference_sha256s", "parameters"],
+      "properties": {
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 12000 },
+        "prompt_sha256": { "$ref": "#/$defs/sha256" },
+        "reference_sha256s": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256" }
+        },
+        "parameters": { "type": "object", "maxProperties": 128 }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "call_count", "provider", "model", "error"],
+      "properties": {
+        "status": { "enum": ["not_called", "succeeded", "failed"] },
+        "call_count": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "provider": { "$ref": "#/$defs/identifier" },
+        "model": { "$ref": "#/$defs/identifier" },
+        "error": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "$ref": "#/$defs/identifier" },
+                "message": { "type": "string", "minLength": 1, "maxLength": 2048 }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "succeeded" } } },
+          "then": {
+            "properties": {
+              "call_count": { "const": 1 },
+              "error": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "failed" } } },
+          "then": {
+            "properties": {
+              "call_count": { "const": 1 },
+              "error": { "type": "object" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "not_called" } } },
+          "then": { "properties": { "call_count": { "const": 0 } } }
+        }
+      ]
+    },
+    "candidate": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/candidate" }
+      ]
+    },
+    "postprocess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pipeline_version", "steps"],
+      "properties": {
+        "pipeline_version": { "$ref": "#/$defs/identifier" },
+        "steps": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "version"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "version": { "$ref": "#/$defs/identifier" }
+            }
+          }
+        }
+      }
+    },
+    "local_qa": { "$ref": "#/$defs/qaStage" },
+    "visual_qa": { "$ref": "#/$defs/qaStage" },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reasons"],
+      "properties": {
+        "status": { "enum": ["pending", "passed", "failed"] },
+        "reasons": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "failed" } } },
+          "then": { "properties": { "reasons": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "value"],
+        "properties": {
+          "id": { "$ref": "#/$defs/identifier" },
+          "value": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "boolean" },
+              { "type": "number" }
+            ]
+          }
+        }
+      }
+    },
+    "user_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "decided_at", "reason"],
+      "properties": {
+        "status": { "enum": ["pending", "approved", "rejected"] },
+        "decided_at": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/timestamp" }
+          ]
+        },
+        "reason": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 1, "maxLength": 2048 }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "pending" } } },
+          "then": { "properties": { "decided_at": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["approved", "rejected"] } } },
+          "then": { "properties": { "decided_at": { "$ref": "#/$defs/timestamp" } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "rejected" } } },
+          "then": { "properties": { "reason": { "type": "string", "minLength": 1 } } }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$"
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "artifact_ref", "sha256", "media_type"],
+      "properties": {
+        "candidate_id": { "$ref": "#/$defs/identifier" },
+        "artifact_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "media_type": { "const": "image/png" }
+      }
+    },
+    "qaCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "reasons", "observations"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "status": { "enum": ["passed", "failed"] },
+        "reasons": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        },
+        "observations": { "type": "object", "maxProperties": 128 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "failed" } } },
+          "then": { "properties": { "reasons": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "qaStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "checks"],
+      "properties": {
+        "status": { "enum": ["not_run", "passed", "failed"] },
+        "checks": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/qaCheck" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "not_run" } } },
+          "then": { "properties": { "checks": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "passed" } } },
+          "then": {
+            "properties": {
+              "checks": {
+                "minItems": 1,
+                "items": {
+                  "allOf": [
+                    { "$ref": "#/$defs/qaCheck" },
+                    { "properties": { "status": { "const": "passed" } } }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "failed" } } },
+          "then": {
+            "properties": {
+              "checks": {
+                "minItems": 1,
+                "contains": {
+                  "properties": { "status": { "const": "failed" } },
+                  "required": ["status"]
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "generation": { "properties": { "status": { "const": "succeeded" } } } } },
+      "then": { "properties": { "candidate": { "$ref": "#/$defs/candidate" } } }
+    },
+    {
+      "if": { "properties": { "generation": { "properties": { "status": { "enum": ["not_called", "failed"] } } } } },
+      "then": {
+        "properties": {
+          "candidate": { "type": "null" },
+          "local_qa": { "properties": { "status": { "const": "not_run" } } },
+          "visual_qa": { "properties": { "status": { "const": "not_run" } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "local_qa": { "properties": { "status": { "enum": ["not_run", "failed"] } } } } },
+      "then": { "properties": { "visual_qa": { "properties": { "status": { "const": "not_run" } } } } }
+    },
+    {
+      "if": {
+        "properties": {
+          "local_qa": { "properties": { "status": { "const": "passed" } } },
+          "visual_qa": { "properties": { "status": { "const": "passed" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "aggregate": {
+            "properties": { "status": { "const": "passed" } }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          { "properties": { "local_qa": { "properties": { "status": { "const": "failed" } } } } },
+          { "properties": { "visual_qa": { "properties": { "status": { "const": "failed" } } } } }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate": {
+            "properties": { "status": { "const": "failed" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "aggregate": { "properties": { "status": { "const": "passed" } } } } },
+      "then": {
+        "properties": {
+          "local_qa": { "properties": { "status": { "const": "passed" } } },
+          "visual_qa": { "properties": { "status": { "const": "passed" } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "user_decision": { "properties": { "status": { "const": "approved" } } } } },
+      "then": {
+        "properties": {
+          "candidate": { "$ref": "#/$defs/candidate" },
+          "aggregate": { "properties": { "status": { "const": "passed" } } }
+        }
+      }
+    }
+  ]
+}

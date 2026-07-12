@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asset-studio.local/contracts/golden-job.schema.json",
+  "title": "Asset Studio Golden Job",
+  "description": "A provider-neutral, repeatable image-generation evaluation input.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "job_id",
+    "title",
+    "family",
+    "recipe_id",
+    "output_profile_id",
+    "quality_rubric_version",
+    "prompt",
+    "reference",
+    "generation",
+    "contract",
+    "required_local_checks",
+    "required_visual_checks",
+    "required_metrics"
+  ],
+  "properties": {
+    "schema_version": { "const": "asset-studio.golden-job/v1" },
+    "job_id": { "$ref": "#/$defs/identifier" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "family": { "enum": ["object", "actor", "ui", "effect"] },
+    "recipe_id": { "$ref": "#/$defs/identifier" },
+    "output_profile_id": { "$ref": "#/$defs/identifier" },
+    "quality_rubric_version": { "$ref": "#/$defs/identifier" },
+    "prompt": { "type": "string", "minLength": 1, "maxLength": 12000 },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "continuity_group", "max_images"],
+      "properties": {
+        "mode": { "enum": ["none", "optional", "identity_master"] },
+        "continuity_group": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/identifier" }]
+        },
+        "max_images": { "type": "integer", "minimum": 0, "maximum": 16 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "none" } } },
+          "then": {
+            "properties": {
+              "continuity_group": { "type": "null" },
+              "max_images": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "identity_master" } } },
+          "then": {
+            "properties": {
+              "continuity_group": { "$ref": "#/$defs/identifier" },
+              "max_images": { "minimum": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["development_runs", "release_runs", "candidates_per_run"],
+      "properties": {
+        "development_runs": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "release_runs": { "type": "integer", "minimum": 20, "maximum": 1000 },
+        "candidates_per_run": { "type": "integer", "minimum": 1, "maximum": 4 }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "canvas",
+        "transparent_background",
+        "frame_count",
+        "directions",
+        "action",
+        "loop",
+        "states",
+        "beats",
+        "pivot"
+      ],
+      "properties": {
+        "kind": { "enum": ["static", "animation", "state_set", "sequence"] },
+        "canvas": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1, "maximum": 4096 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 4096 }
+          }
+        },
+        "transparent_background": { "const": true },
+        "frame_count": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "directions": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "action": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/identifier" }]
+        },
+        "loop": { "type": "boolean" },
+        "states": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "beats": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "semantic"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "semantic": { "type": "string", "minLength": 1, "maxLength": 256 }
+            }
+          }
+        },
+        "pivot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {
+            "x": { "type": "number", "minimum": 0, "maximum": 1 },
+            "y": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "required_local_checks": { "$ref": "#/$defs/identifierList" },
+    "required_visual_checks": { "$ref": "#/$defs/identifierList" },
+    "required_metrics": { "$ref": "#/$defs/identifierList" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "identifierList": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/identifier" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "contract": { "properties": { "kind": { "const": "static" } } } } },
+      "then": {
+        "properties": {
+          "family": { "const": "object" },
+          "contract": {
+            "properties": {
+              "frame_count": { "const": 1 },
+              "directions": { "maxItems": 0 },
+              "action": { "type": "null" },
+              "loop": { "const": false },
+              "states": { "maxItems": 0 },
+              "beats": { "maxItems": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "contract": { "properties": { "kind": { "const": "animation" } } } } },
+      "then": {
+        "properties": {
+          "family": { "const": "actor" },
+          "reference": {
+            "properties": { "mode": { "const": "identity_master" } }
+          },
+          "contract": {
+            "properties": {
+              "frame_count": { "minimum": 2 },
+              "directions": { "minItems": 1, "maxItems": 1 },
+              "action": { "$ref": "#/$defs/identifier" },
+              "states": { "maxItems": 0 },
+              "beats": { "minItems": 2 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "contract": { "properties": { "kind": { "const": "state_set" } } } } },
+      "then": {
+        "properties": {
+          "family": { "const": "ui" },
+          "contract": {
+            "properties": {
+              "frame_count": { "minimum": 2 },
+              "directions": { "maxItems": 0 },
+              "action": { "type": "null" },
+              "loop": { "const": false },
+              "states": { "minItems": 2 },
+              "beats": { "maxItems": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "contract": { "properties": { "kind": { "const": "sequence" } } } } },
+      "then": {
+        "properties": {
+          "family": { "const": "effect" },
+          "contract": {
+            "properties": {
+              "frame_count": { "minimum": 2 },
+              "directions": { "maxItems": 0 },
+              "action": { "$ref": "#/$defs/identifier" },
+              "states": { "maxItems": 0 },
+              "beats": { "minItems": 2 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "contract": {
+            "properties": { "action": { "enum": ["idle", "walk"] } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "contract": { "properties": { "loop": { "const": true } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "contract": { "properties": { "action": { "const": "attack" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "contract": { "properties": { "loop": { "const": false } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "contract": { "properties": { "action": { "const": "impact" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "contract": { "properties": { "loop": { "const": false } } }
+        }
+      }
+    }
+  ]
+}

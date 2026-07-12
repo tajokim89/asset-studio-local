@@ -1,0 +1,190 @@
+{
+  "schema_version": "asset-studio.output-profile/v1",
+  "id": "generic-pixel-actor-v1",
+  "title": "Generic 32px eight-direction pixel actor",
+  "family": "actor",
+  "role": "default",
+  "frame": {
+    "width": 32,
+    "height": 32,
+    "image_format": "png",
+    "transparent_background": true
+  },
+  "directions": [
+    { "id": "north", "code": "N" },
+    { "id": "northeast", "code": "NE" },
+    { "id": "east", "code": "E" },
+    { "id": "southeast", "code": "SE" },
+    { "id": "south", "code": "S" },
+    { "id": "southwest", "code": "SW" },
+    { "id": "west", "code": "W" },
+    { "id": "northwest", "code": "NW" }
+  ],
+  "actions": [
+    {
+      "id": "idle",
+      "frame_count": 4,
+      "fps": 6,
+      "loop": true,
+      "terminal": false,
+      "beats": ["settle", "breathe-up", "settle-return", "breathe-down"],
+      "prompt_contract": "Subtle in-place breathing loop with planted feet, a fixed root, and no locomotion.",
+      "acceptance": "Reads as one stable actor breathing in place; the closing frame returns cleanly to the opening pose.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 4, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3] }
+    },
+    {
+      "id": "walk",
+      "frame_count": 6,
+      "fps": 10,
+      "loop": true,
+      "terminal": false,
+      "beats": ["left-contact", "left-down", "left-passing", "right-contact", "right-down", "right-passing"],
+      "prompt_contract": "Six-phase in-place walk cycle with alternating support feet, opposite arm swing, and a fixed root and contact baseline.",
+      "acceptance": "Reads as continuous walking with left and right support phases, no skating, hopping, repeated same-side step, or root drift.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+    },
+    {
+      "id": "run",
+      "frame_count": 6,
+      "fps": 14,
+      "loop": true,
+      "terminal": false,
+      "beats": ["left-contact", "left-compression", "left-flight", "right-contact", "right-compression", "right-flight"],
+      "prompt_contract": "Fast in-place run cycle with compression and flight phases, strong counter-swing, and a fixed root anchor.",
+      "acceptance": "Reads faster and more forcefully than walking, alternates support sides, includes flight phases, and loops without sliding.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+    },
+    {
+      "id": "attack",
+      "frame_count": 6,
+      "fps": 12,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "anticipation", "wind-up", "strike", "impact", "recovery"],
+      "prompt_contract": "One complete melee attack with readable anticipation, a decisive body-driven strike using the declared striking limb or equipment, an impact pose, and recovery.",
+      "acceptance": "Reads as a complete attack rather than an idle gesture; the striking limb or declared equipment, hands, body, identity, and facing stay coherent.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+    },
+    {
+      "id": "ranged_attack",
+      "frame_count": 6,
+      "fps": 12,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "aim", "draw-or-load", "release", "recoil", "recovery"],
+      "prompt_contract": "One complete ranged attack with aiming, draw or loading motion, release, recoil, and recovery; no projectile VFX baked in.",
+      "acceptance": "Reads as a ranged attack with coherent hand-to-weapon contact and a clear release while preserving equipment and identity.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+    },
+    {
+      "id": "cast",
+      "frame_count": 6,
+      "fps": 12,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "gather", "charge", "release", "follow-through", "recovery"],
+      "prompt_contract": "Spell or skill casting body motion with gather, charge, release, follow-through, and recovery; external VFX remain separate.",
+      "acceptance": "The actor pose clearly communicates casting without relying on baked particles, glow, projectiles, or other effects.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+    },
+    {
+      "id": "block",
+      "frame_count": 4,
+      "fps": 10,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "raise-guard", "hold-guard", "lower-guard"],
+      "prompt_contract": "Raise and hold a defensive guard, then return toward the ready stance while maintaining hand and equipment contact.",
+      "acceptance": "Reads as a defensive block with a stable guarded silhouette and no attack swing or equipment detachment.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 4, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3] }
+    },
+    {
+      "id": "dodge",
+      "frame_count": 6,
+      "fps": 14,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "anticipation", "launch", "evade", "landing", "recovery"],
+      "prompt_contract": "Quick evasive body motion with anticipation, launch, clear evade pose, landing, and recovery inside the fixed cell.",
+      "acceptance": "Reads as a dodge rather than a walk or jump and remains contained without camera motion, teleporting, or identity drift.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+    },
+    {
+      "id": "jump",
+      "frame_count": 6,
+      "fps": 12,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "crouch", "takeoff", "apex", "descent", "landing"],
+      "prompt_contract": "Jump with crouch anticipation, takeoff, airborne apex, descent, and landing while staying centered in the cell.",
+      "acceptance": "Reads as a jump with real vertical pose change and a contained landing, not a scale change or whole-sheet translation.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+    },
+    {
+      "id": "hurt",
+      "frame_count": 4,
+      "fps": 12,
+      "loop": false,
+      "terminal": false,
+      "beats": ["neutral", "impact", "recoil", "recovery"],
+      "prompt_contract": "Compact hit reaction with a readable impact and recoil followed by recovery, without changing direction or identity.",
+      "acceptance": "Reads as a hit reaction and preserves the same actor, equipment, scale, and facing through the recoil.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 4, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3] }
+    },
+    {
+      "id": "death",
+      "frame_count": 6,
+      "fps": 10,
+      "loop": false,
+      "terminal": true,
+      "beats": ["alive", "impact", "collapse-start", "collapse", "down", "dead-still"],
+      "prompt_contract": "Non-looping collapse from the living pose into a stable downed final pose that remains the same identifiable actor.",
+      "acceptance": "Reads as one continuous death and ends on a stable corpse or downed pose; the final frame never returns to standing.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+    },
+    {
+      "id": "interact",
+      "frame_count": 4,
+      "fps": 8,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "reach", "contact", "recovery"],
+      "prompt_contract": "Reach toward an in-world target, make readable contact, and recover while keeping the actor rooted and facing consistently.",
+      "acceptance": "Reads as interaction or use without inventing the target object, changing identity, or becoming an attack.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 4, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3] }
+    },
+    {
+      "id": "pickup",
+      "frame_count": 4,
+      "fps": 8,
+      "loop": false,
+      "terminal": false,
+      "beats": ["ready", "crouch-and-reach", "acquire", "rise"],
+      "prompt_contract": "Crouch and reach toward the ground, acquire an implied item, and rise back toward the ready stance.",
+      "acceptance": "Reads as picking up an item with a coherent crouch and rise; no unrelated object, attack motion, or identity drift is introduced.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 4, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3] }
+    }
+  ],
+  "import_hints": {
+    "engine": "generic",
+    "texture_filter": "nearest",
+    "mipmaps": false,
+    "alpha_mode": "straight",
+    "coordinate_origin": "top-left",
+    "pixels_per_unit": 32,
+    "resource_path_template": "assets/actors/generic-pixel-actor-v1/{action}.png"
+  }
+}

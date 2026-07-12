@@ -5,12 +5,16 @@ and primary action are a common shell that remains available alongside whichever
 family panel is active.
 """
 
+from __future__ import annotations
+
 import re
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from tests.helpers.js_runtime_harness import JavaScriptRuntimeHarness
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -385,7 +389,6 @@ def test_core_request_draft_is_saved_under_the_old_family_and_restored_for_the_n
     assert re.search(r"\bassetFamilyDrafts\s*=\s*new\s+Map\s*\(", JS)
     save = _function_body("saveAssetCreationDraft")
     restore = _function_body("restoreAssetCreationDraft")
-    switch = _function_body("setAssetFamily")
 
     # The requirement is specifically the core-request draft.  Output/subtype/style
     # may also be persisted, but are intentionally not mandatory here.
@@ -400,16 +403,32 @@ def test_core_request_draft_is_saved_under_the_old_family_and_restored_for_the_n
         restore,
     )
 
-    save_call = re.search(
-        r"saveAssetCreationDraft\s*\(\s*currentAssetFamily\s*\(\s*\)\s*\)", switch
+    result = JavaScriptRuntimeHarness(ROOT / "src" / "main.js").run_json(
+        names=("setAssetFamily",),
+        prelude="""
+const events = [];
+let selectedAssetFamily = 'sprite';
+const recipeGenerationSubtypesForFamily = family => family === 'ui' ? ['button'] : [];
+const currentAssetFamily = () => selectedAssetFamily;
+const saveAssetCreationDraft = family => events.push(['save', family]);
+const renderAssetSubtypeOptions = (family, subtype) => events.push(['render', family, subtype, selectedAssetFamily]);
+const restoreAssetCreationDraft = family => events.push(['restore', family, selectedAssetFamily]);
+const updateAssetFamilyUi = () => events.push(['update', selectedAssetFamily]);
+""",
+        script="""
+setAssetFamily('ui', 'button');
+process.stdout.write(JSON.stringify({ events, selectedAssetFamily }));
+""",
     )
-    selection = re.search(r"\bselectedAssetFamily\s*=\s*family\b", switch)
-    restore_call = re.search(r"restoreAssetCreationDraft\s*\(\s*family\s*\)", switch)
-    assert save_call and selection and restore_call
-    assert save_call.start() < selection.start() < restore_call.start(), (
-        "Switching must save the outgoing family's core before selecting and restoring "
-        "the incoming family's core"
-    )
+    assert result == {
+        "events": [
+            ["save", "sprite"],
+            ["render", "ui", "button", "ui"],
+            ["restore", "ui", "ui"],
+            ["update", "ui"],
+        ],
+        "selectedAssetFamily": "ui",
+    }, "Switching must save the old family before rendering and restoring the new one"
 
 
 def test_shared_style_output_and_background_stay_outside_family_hidden_state():

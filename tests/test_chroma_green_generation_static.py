@@ -36,41 +36,17 @@ def _function_body(name: str) -> str:
     raise AssertionError(f"Unclosed JavaScript function {name}()")
 
 
-def _is_sprite_subtype_gate(node: ast.AST, subtypes: set[str]) -> bool:
-    if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.And):
-        return False
-    family_ok = any(
-        isinstance(part, ast.Compare)
-        and isinstance(part.left, ast.Name)
-        and part.left.id == "asset_family"
-        and len(part.ops) == 1
-        and isinstance(part.ops[0], ast.Eq)
-        and len(part.comparators) == 1
-        and isinstance(part.comparators[0], ast.Constant)
-        and part.comparators[0].value == "sprite"
-        for part in node.values
+def _is_recipe_id_gate(node: ast.AST, recipe_id: str) -> bool:
+    return (
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name)
+        and node.left.id == "generation_recipe_id"
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.Eq)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == recipe_id
     )
-    subtype_ok = any(
-        isinstance(part, ast.Compare)
-        and isinstance(part.left, ast.Name)
-        and part.left.id == "asset_type"
-        and len(part.ops) == 1
-        and len(part.comparators) == 1
-        and (
-            isinstance(part.ops[0], ast.Eq)
-            and isinstance(part.comparators[0], ast.Constant)
-            and {part.comparators[0].value} == subtypes
-            or isinstance(part.ops[0], ast.In)
-            and isinstance(part.comparators[0], (ast.Set, ast.Tuple, ast.List))
-            and {
-                item.value
-                for item in part.comparators[0].elts
-                if isinstance(item, ast.Constant)
-            } == subtypes
-        )
-        for part in node.values
-    )
-    return family_ok and subtype_ok
 
 
 def test_generate_api_accepts_chroma_green_background_mode():
@@ -107,6 +83,15 @@ def test_ai_asset_generation_respects_shared_background_and_gates_sprite_postpro
 
     tree = ast.parse(SERVER)
     do_post = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "do_POST")
+    recipe_resolutions = [
+        node.value
+        for node in ast.walk(do_post)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "generation_recipe_id"
+            for target in node.targets
+        )
+    ]
     actor_gates = [
         node.value
         for node in ast.walk(do_post)
@@ -119,10 +104,22 @@ def test_ai_asset_generation_respects_shared_background_and_gates_sprite_postpro
         if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id == "is_effect" for target in node.targets)
     ]
-    assert actor_gates and all(
-        _is_sprite_subtype_gate(gate, {"character", "monster", "npc"}) for gate in actor_gates
+    assert recipe_resolutions and all(
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "recipe_id_for_asset_selection"
+        and len(call.args) == 2
+        and all(isinstance(arg, ast.Name) for arg in call.args)
+        and [arg.id for arg in call.args] == ["asset_family", "asset_type"]
+        and not call.keywords
+        for call in recipe_resolutions
     )
-    assert effect_gates and all(_is_sprite_subtype_gate(gate, {"effect"}) for gate in effect_gates)
+    assert actor_gates and all(
+        _is_recipe_id_gate(gate, "actor-animation") for gate in actor_gates
+    )
+    assert effect_gates and all(
+        _is_recipe_id_gate(gate, "vfx-sequence") for gate in effect_gates
+    )
 
     postprocess_branches = [
         node for node in ast.walk(do_post)

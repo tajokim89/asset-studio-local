@@ -1,0 +1,101 @@
+{
+  "schema_version": "asset-studio.golden-job/v1",
+  "job_id": "actor-attack",
+  "title": "South-facing ranger sword attack",
+  "family": "actor",
+  "recipe_id": "actor-animation",
+  "output_profile_id": "generic-pixel-actor-v1",
+  "quality_rubric_version": "quality-rubric-v1",
+  "prompt": "Use the approved identity master of a compact forest ranger with a moss-green hood, tan tunic, brown boots, a small round wooden buckler on the left arm, and a short iron sword in the right hand. Keep the ranger facing south and preserve face, body proportions, clothing, equipment hands, palette, outline, and foot root. Create a one-shot sword attack with ordered motion beats: anticipation, wind-up, strike, impact, recovery, return. The weapon accelerates into one readable impact peak and remains in the right hand; the shield remains on the left arm. The body returns to its grounded ready pose after recovery; this is an attack, not six unrelated weapon poses. Crisp 32x32 pixel art per frame, transparent background, no text, no frame border.",
+  "reference": {
+    "mode": "identity_master",
+    "continuity_group": "golden-ranger-v1",
+    "max_images": 1
+  },
+  "generation": {
+    "development_runs": 5,
+    "release_runs": 20,
+    "candidates_per_run": 1
+  },
+  "contract": {
+    "kind": "animation",
+    "canvas": {
+      "width": 32,
+      "height": 32
+    },
+    "transparent_background": true,
+    "frame_count": 6,
+    "directions": ["south"],
+    "action": "attack",
+    "loop": false,
+    "states": [],
+    "beats": [
+      {
+        "id": "anticipation",
+        "semantic": "weight shifts away from the target before the swing"
+      },
+      {
+        "id": "wind-up",
+        "semantic": "sword draws back while feet remain anchored to the root"
+      },
+      {
+        "id": "strike",
+        "semantic": "sword crosses forward with the largest directional motion"
+      },
+      {
+        "id": "impact",
+        "semantic": "attack reaches its clearest extension and visual impact peak"
+      },
+      {
+        "id": "recovery",
+        "semantic": "weapon and torso recoil from the impact without identity drift"
+      },
+      {
+        "id": "return",
+        "semantic": "ranger returns to the grounded ready pose"
+      }
+    ],
+    "pivot": {
+      "x": 0.5,
+      "y": 0.875
+    }
+  },
+  "required_local_checks": [
+    "canvas-size",
+    "frame-count",
+    "transparent-background",
+    "required-reference-present",
+    "non-empty-content",
+    "frame-uniqueness",
+    "pivot-drift",
+    "bbox-scale-drift",
+    "palette-consistency",
+    "impact-peak-delta",
+    "return-to-root-delta"
+  ],
+  "required_visual_checks": [
+    "identity-consistency",
+    "direction-readability",
+    "action-readability",
+    "attack-readability",
+    "impact-readability",
+    "temporal-continuity",
+    "equipment-consistency",
+    "weapon-hand-consistency",
+    "pixel-art-integrity"
+  ],
+  "required_metrics": [
+    "provider-response-success",
+    "local-qa-pass",
+    "visual-qa-pass",
+    "user-approval",
+    "candidates-to-approval",
+    "regenerated-frames",
+    "manual-edit-seconds",
+    "identity-score",
+    "action-score",
+    "direction-score",
+    "impact-score",
+    "export-contract-match"
+  ]
+}

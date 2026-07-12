@@ -73,3 +73,21 @@ def test_phase15_buttons_are_wired():
     assert "$('runPixelWorkflow').onclick" in JS
     assert "applyPixelWorkflowGridDefaults()" in JS
     assert "if ($('generateBtn')) $('generateBtn').onclick = () => generateAiAsset()" in JS
+
+
+def test_animation_preview_uses_one_common_canvas_and_head_anchor():
+    body = _function_body("buildAnimationFramesFromGrid")
+    assert "maxFrameWidth" in body
+    assert "maxFrameHeight" in body
+    assert "detectFrameHeadAnchor" in body
+    assert "commonHeadAnchor" in body
+    assert "frameCanvas.width = maxFrameWidth" in body
+    assert "frameCanvas.height = maxFrameHeight" in body
+    detection = _function_body("detectSpriteSlices")
+    assert "normalizeDetectedSpriteSlices" in detection
+
+
+def test_reference_direction_is_inferred_instead_of_user_selected():
+    assert "inferReferenceDirection" in JS
+    assert "pixelReferenceDirection" in _function_body("ensureAdvancedReferenceUi")
+    assert ".classList.add('hidden')" in _function_body("ensureAdvancedReferenceUi")

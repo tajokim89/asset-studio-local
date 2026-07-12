@@ -6,6 +6,8 @@ H2 supplies those declarations the three declaration tests are the expected RED
 and runtime cases are skipped rather than failing because of a broken harness.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import subprocess

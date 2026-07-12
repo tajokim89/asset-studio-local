@@ -248,31 +248,40 @@ def test_family_tabs_and_subtype_changes_are_wired_to_the_state_setters():
     )
 
 
-def test_initial_family_sync_runs_after_actor_animation_state_initialization():
-    """The eager family sync must not access lexical state while it is in TDZ."""
+def test_recipe_registry_initialization_runs_after_actor_state_and_tool_wiring():
+    """Async recipe initialization must start only after its UI dependencies exist."""
     state = re.search(
         r"\blet\s+lastActorAnimationPreset\s*=\s*['\"]idle['\"]\s*;", JS
     )
-    initial_sync = re.search(
-        r"^\s*setAssetFamily\s*\(\s*['\"]sprite['\"]\s*,\s*['\"]character['\"]\s*\)\s*;",
+    registry_load = re.search(
+        r"^\s*loadAssetRecipeRegistry\s*\(\s*\)\s*;",
         JS,
         re.MULTILINE,
-    )
-    assert state, "Expected actor-animation state used by syncPixelAssetWorkflowUi()"
-    assert initial_sync, "Expected one initial sprite-family synchronization"
-    assert state.start() < initial_sync.start(), (
-        "Initialize lastActorAnimationPreset before the top-level setAssetFamily() call; "
-        "otherwise syncPixelAssetWorkflowUi() throws in the temporal dead zone and later "
-        "tool-button event wiring never executes"
     )
     tool_wiring = re.search(
         r"for\s*\([^)]*document\.querySelectorAll\s*\(\s*['\"]\.tool-button['\"]\s*\)[\s\S]{0,300}"
         r"\.onclick\s*=\s*\(\)\s*=>\s*activateTool\b",
         JS,
     )
+    assert state, "Expected actor-animation state used by syncPixelAssetWorkflowUi()"
     assert tool_wiring, "Expected toolbar buttons, including AI, to remain wired"
-    assert tool_wiring.start() < initial_sync.start(), (
-        "Eager family synchronization must run only after tool-button wiring is installed"
+    assert registry_load, "Expected async recipe-registry initialization"
+    initial_gate = next(
+        (
+            match
+            for match in re.finditer(
+                r"^\s*applyRecipeRegistryToGenerationUi\s*\(\s*\)\s*;",
+                JS,
+                re.MULTILINE,
+            )
+            if tool_wiring.start() < match.start() < registry_load.start()
+        ),
+        None,
+    )
+    assert initial_gate, "Generation controls must be gated before loading recipes"
+    assert state.start() < tool_wiring.start() < initial_gate.start() < registry_load.start(), (
+        "Initialize actor state and toolbar handlers, disable unvalidated generation, then "
+        "start the asynchronous recipe-registry load"
     )
 
 
@@ -360,6 +369,33 @@ def test_family_generate_button_has_shared_inflight_guard_catch_and_finally_rest
     assert "finally" in body
     wiring = re.search(r"familyGenerateAi[\s\S]{0,500}addEventListener[\s\S]{0,500}", JS)
     assert wiring and ".catch" in wiring.group(0)
+
+
+def test_generation_progress_reports_real_stage_and_elapsed_time_without_fake_percent():
+    for element_id in ("assetGenerationProgress", "assetGenerationProgressBar", "assetGenerationProgressText"):
+        assert element_id in JS
+    assert "beginGenerationProgress" in JS
+    assert "updateGenerationProgress" in JS
+    assert "finishGenerationProgress" in JS
+    body = _function_body("generateAiAsset")
+    for stage in ("1/3", "2/3", "3/3"):
+        assert stage in body
+    assert "elapsed" in JS.lower() or "경과" in JS
+
+
+def test_asset_result_omits_embedded_reference_bytes_and_retry_rehydrates_them():
+    assert "compactAssetResultPayload" in JS
+    assert "reference_asset_url" in JS
+    retry = _function_body("retryAssetResult")
+    assert "srcToDataUrl" in retry
+
+
+def test_reference_direction_and_chroma_strategy_are_advanced_but_still_wired():
+    assert "pixelAdvancedReference" in JS
+    assert "ensureAdvancedReferenceUi" in JS
+    sprite = _function_body("buildSpriteContract")
+    assert "pixelReferenceDirection" in sprite
+    assert "pixelChromaMode" in sprite
 
 
 def test_number_reader_preserves_zero_and_structured_family_values_are_validated():

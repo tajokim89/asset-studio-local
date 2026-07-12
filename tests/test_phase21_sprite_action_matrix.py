@@ -26,17 +26,23 @@ def test_phase21_locks_source_direction_generation_to_left_side_plus_flips():
 
 
 def test_phase21_action_matrix_defines_idle_walk_attack_hurt_death_contracts():
-    assert list(SPRITE_ACTION_MATRIX) == ["idle", "walk", "attack", "jump", "cast", "hurt", "death"]
+    assert list(SPRITE_ACTION_MATRIX) == [
+        "idle", "walk", "run", "attack", "ranged_attack", "cast", "block",
+        "dodge", "jump", "hurt", "death", "interact", "pickup",
+    ]
     assert SPRITE_ACTION_MATRIX["idle"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["walk"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["attack"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["jump"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["cast"]["frames"] == 4
+    assert SPRITE_ACTION_MATRIX["walk"]["frames"] == 6
+    assert SPRITE_ACTION_MATRIX["attack"]["frames"] == 6
+    assert SPRITE_ACTION_MATRIX["jump"]["frames"] == 6
+    assert SPRITE_ACTION_MATRIX["cast"]["frames"] == 6
     assert SPRITE_ACTION_MATRIX["hurt"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["death"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["walk"]["columns"] == ["neutral-cross-1", "left-swing-cross", "neutral-cross-2", "right-swing-cross"]
-    assert "simple RPG-style in-place crossover walk cycle" in SPRITE_ACTION_MATRIX["walk"]["acceptance"]
-    assert "legs never pass/cross through each other" in SPRITE_ACTION_MATRIX["walk"]["acceptance"]
+    assert SPRITE_ACTION_MATRIX["death"]["frames"] == 6
+    assert SPRITE_ACTION_MATRIX["walk"]["columns"] == [
+        "left-contact", "left-down", "left-passing",
+        "right-contact", "right-down", "right-passing",
+    ]
+    assert "continuous walking" in SPRITE_ACTION_MATRIX["walk"]["acceptance"]
+    assert SPRITE_ACTION_MATRIX["dodge"]["fps"] == 14
     assert SPRITE_ACTION_MATRIX["death"]["terminal"] is True
 
 
@@ -53,7 +59,7 @@ def test_phase21_action_prompt_is_one_direction_action_strip_not_all_directions(
     assert "Do not output all 8 directions" in prompt
     assert "front-left three-quarter" in prompt
     assert "use the accepted SW static reference as frame 1 identity anchor" in prompt
-    assert "Column order must be exactly: ready, windup, strike, recover" in prompt
+    assert "Column order must be exactly: ready, anticipation, wind-up, strike, impact, recovery" in prompt
     assert "Keep all frames in evenly spaced cells on one horizontal row for this direction" in prompt
     assert "Global reference identity rule" in prompt
     assert "complete full-frame poses" in prompt
@@ -62,7 +68,8 @@ def test_phase21_action_prompt_is_one_direction_action_strip_not_all_directions(
 
 def test_phase21_action_matrix_ui_payload_is_serializable_and_complete():
     payload = sprite_action_matrix_for_ui()
+    assert payload["output_profile_id"] == "generic-pixel-actor-v1"
     assert payload["directions"] == CANONICAL_8DIR_ORDER
     assert payload["source_directions"] == MIRRORED_8DIR_SOURCE_DIRECTIONS
     assert payload["mirror_map"] == {"E": "W", "SE": "SW", "NE": "NW"}
-    assert set(payload["actions"]) == {"idle", "walk", "attack", "jump", "cast", "hurt", "death"}
+    assert set(payload["actions"]) == set(SPRITE_ACTION_MATRIX)

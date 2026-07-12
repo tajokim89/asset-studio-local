@@ -19,6 +19,7 @@ import server
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
+REGISTRY = json.loads((ROOT / "contracts" / "asset-recipes.json").read_text(encoding="utf-8"))
 
 UI_KEYS = {
     "purpose", "information_structure", "source_size", "sizing_mode",
@@ -138,12 +139,14 @@ def test_browser_semantic_list_parsing_trims_preserves_order_and_ignores_inciden
 @pytest.fixture(scope="module")
 def browser_ui_result():
     functions = "\n".join(_function_source(name) for name in (
+        "validateAndBuildRecipeViews", "recipeGenerationSubtypesForFamily",
+        "legacyAssetSubtypesForFamily", "projectAssetSubtypesForFamily",
         "normalizeStyleProfile", "resolveStyleProfileForFamily", "styleProfileFromControls",
         "currentAssetFamily", "currentAssetSubtype", "buildUiContract",
         "buildAssetGenerationPayload",
     ))
     values = {
-        "assetSubtype": "main_panel", "assetCorePrompt": "inventory panel",
+        "assetSubtype": "button", "assetCorePrompt": "inventory panel",
         "assetStylePreset": "pixel_refined", "assetStyleNotes": "verdant brass",
         "assetOutputWidth": 320, "assetOutputHeight": 180,
         "assetBackground": "transparent",
@@ -177,15 +180,26 @@ const DEFAULT_STYLE_PROFILE = {JS[JS.index("const DEFAULT_STYLE_PROFILE"):JS.ind
 let canonicalProjectStyleProfile = JSON.parse(JSON.stringify(DEFAULT_STYLE_PROFILE));
 const $ = id => controls[id] || null;
 const ASSET_FAMILY_SUBTYPES = {{ui:['main_panel','inner_panel','popup','card','button','slot','badge','hud_chip','gauge','icon','cursor']}};
+const PROJECT_FAMILIES = ['sprite','tile','ui','object'];
+const assetFamilyDrafts = new Map();
 let selectedAssetFamily = 'ui';
 const controlValue = (id,fallback='') => controls[id] ? controls[id].value : fallback;
 const controlNumber = (id,fallback=0) => {{const n=Number(controlValue(id,fallback));return Number.isFinite(n)?n:fallback;}};
 const controlChecked = (id,fallback=false) => controls[id] ? !!controls[id].checked : fallback;
 const clampFamilyNumber = (value,min,max) => Math.min(max,Math.max(min,value));
 {functions}
+const assetRecipeRegistry = {json.dumps(REGISTRY)};
+const recipeViews = validateAndBuildRecipeViews(assetRecipeRegistry);
+const assetRecipeRegistryState = {{status:'ready',registry:assetRecipeRegistry,production:recipeViews.production,known:recipeViews.known}};
 const poison = {{sprite:{{action:'attack'}},tile:{{topology:'blob'}},object:{{view:'side'}},
  action:'attack',equipment:'sword',effect_category:'Magic',sequence_mode:'sequence'}};
-process.stdout.write(JSON.stringify({{contract:buildUiContract(),payload:buildAssetGenerationPayload(poison)}}));
+const contract = buildUiContract();
+const payload = buildAssetGenerationPayload(poison);
+controls.assetSubtype.value = 'main_panel';
+let labSelection;
+try {{ labSelection = {{status:'returned',payload:buildAssetGenerationPayload(poison)}}; }}
+catch (error) {{ labSelection = {{status:'rejected',error:String(error.message || error)}}; }}
+process.stdout.write(JSON.stringify({{contract,payload,labSelection}}));
 """
     completed = subprocess.run(["node", "-e", harness], cwd=ROOT, text=True,
                                capture_output=True, timeout=15, check=False)
@@ -208,6 +222,7 @@ def _normalize(ui=None, **root_poison):
 def test_browser_preserves_complete_nested_ui_contract(browser_ui_result):
     assert browser_ui_result["contract"] == SAMPLE_UI
     assert browser_ui_result["payload"]["ui"] == SAMPLE_UI
+    assert browser_ui_result["payload"]["asset_type"] == "button"
 
 
 def test_browser_payload_is_ui_family_isolated(browser_ui_result):
@@ -216,6 +231,13 @@ def test_browser_payload_is_ui_family_isolated(browser_ui_result):
     assert set(payload["ui"]) == UI_KEYS
     assert not (FOREIGN_KEYS & payload.keys())
     assert not (FOREIGN_KEYS & payload["ui"].keys())
+
+
+def test_browser_rejects_legacy_lab_ui_selection(browser_ui_result):
+    selection = browser_ui_result["labSelection"]
+    assert selection["status"] == "rejected"
+    assert "invalid asset family or subtype" in selection["error"].lower()
+    assert "payload" not in selection
 
 
 def test_server_exactly_preserves_complete_contract_deterministically_and_in_isolation():

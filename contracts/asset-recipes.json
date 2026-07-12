@@ -1,0 +1,503 @@
+{
+  "schema_version": "asset-studio.asset-recipes/v1",
+  "quality_rubric_version": "quality-rubric-v1",
+  "recipes": [
+    {
+      "id": "static-transparent-object",
+      "title": "Static transparent object",
+      "description": "Generate one readable transparent pixel-art item or world object candidate.",
+      "channel": "production",
+      "readiness": "contract_only",
+      "family": "object",
+      "transport": {
+        "family": "object",
+        "type": "item"
+      },
+      "generation_strategy": "single-candidate",
+      "reference_policy": "optional",
+      "default_output_profile_id": null,
+      "export_capability": {
+        "route": "object",
+        "options": [
+          "states",
+          "pivot",
+          "ground",
+          "collision",
+          "interaction"
+        ]
+      },
+      "golden_job_ids": [
+        "static-object"
+      ],
+      "required_stages": [
+        "generate",
+        "local_qa",
+        "visual_qa",
+        "user_approval",
+        "edit",
+        "export"
+      ]
+    },
+    {
+      "id": "actor-animation",
+      "title": "Actor animation",
+      "description": "Create an approved identity, direction master, action beats, and individually replaceable frames.",
+      "channel": "production",
+      "readiness": "contract_only",
+      "family": "actor",
+      "transport": {
+        "family": "sprite",
+        "type": "character"
+      },
+      "generation_strategy": "identity-direction-beat-frame",
+      "reference_policy": "identity_master",
+      "default_output_profile_id": "generic-pixel-actor-v1",
+      "export_capability": {
+        "route": "actor",
+        "options": [
+          "sheets",
+          "frames",
+          "fps",
+          "pivot"
+        ]
+      },
+      "golden_job_ids": [
+        "actor-idle",
+        "actor-walk",
+        "actor-attack"
+      ],
+      "required_stages": [
+        "generate",
+        "local_qa",
+        "visual_qa",
+        "user_approval",
+        "edit",
+        "export"
+      ]
+    },
+    {
+      "id": "ui-component",
+      "title": "UI component state set",
+      "description": "Create a text-free component master and consistent normal, hover, pressed, and disabled states.",
+      "channel": "production",
+      "readiness": "contract_only",
+      "family": "ui",
+      "transport": {
+        "family": "ui",
+        "type": "button"
+      },
+      "generation_strategy": "state-master-derivatives",
+      "reference_policy": "optional",
+      "default_output_profile_id": null,
+      "export_capability": {
+        "route": "ui",
+        "options": [
+          "states",
+          "nine-slice",
+          "safe-area"
+        ]
+      },
+      "golden_job_ids": [
+        "ui-button"
+      ],
+      "required_stages": [
+        "generate",
+        "local_qa",
+        "visual_qa",
+        "user_approval",
+        "edit",
+        "export"
+      ]
+    },
+    {
+      "id": "vfx-sequence",
+      "title": "VFX sequence",
+      "description": "Create ordered effect beats with a fixed pivot, one energy peak, and frame-level replacement.",
+      "channel": "production",
+      "readiness": "contract_only",
+      "family": "effect",
+      "transport": {
+        "family": "sprite",
+        "type": "effect"
+      },
+      "generation_strategy": "beat-frame-sequence",
+      "reference_policy": "none",
+      "default_output_profile_id": null,
+      "export_capability": {
+        "route": "effect",
+        "options": [
+          "full-cell",
+          "trim",
+          "fps",
+          "pivot"
+        ]
+      },
+      "golden_job_ids": [
+        "vfx-impact"
+      ],
+      "required_stages": [
+        "generate",
+        "local_qa",
+        "visual_qa",
+        "user_approval",
+        "edit",
+        "export"
+      ]
+    },
+    {
+      "id": "tile-autotile",
+      "title": "Tile and autotile atlas",
+      "description": "Evaluate topology-driven tiles, seams, adjacency, and importer metadata before production promotion.",
+      "channel": "lab",
+      "readiness": "contract_only",
+      "family": "tile",
+      "transport": {
+        "family": "tile",
+        "type": "autotile"
+      },
+      "generation_strategy": "topology-atlas",
+      "reference_policy": "optional",
+      "default_output_profile_id": null,
+      "export_capability": {
+        "route": "tile",
+        "options": [
+          "atlas",
+          "rules",
+          "collision",
+          "navigation"
+        ]
+      },
+      "golden_job_ids": [],
+      "required_stages": [
+        "generate",
+        "local_qa",
+        "visual_qa",
+        "user_approval",
+        "edit",
+        "export"
+      ]
+    }
+  ],
+  "legacy_subtypes": [
+    {
+      "legacy_id": "sprite.character",
+      "family": "sprite",
+      "type": "character",
+      "classification": "production",
+      "recipe_id": "actor-animation",
+      "variant": "character",
+      "migration_action": "use_recipe",
+      "reason": "Canonical legacy transport for the actor animation recipe."
+    },
+    {
+      "legacy_id": "sprite.monster",
+      "family": "sprite",
+      "type": "monster",
+      "classification": "alias",
+      "recipe_id": "actor-animation",
+      "variant": "monster",
+      "migration_action": "normalize_alias",
+      "reason": "A monster uses the same identity, direction, and action-beat pipeline as other actors."
+    },
+    {
+      "legacy_id": "sprite.npc",
+      "family": "sprite",
+      "type": "npc",
+      "classification": "alias",
+      "recipe_id": "actor-animation",
+      "variant": "npc",
+      "migration_action": "normalize_alias",
+      "reason": "An NPC uses the same identity, direction, and action-beat pipeline as other actors."
+    },
+    {
+      "legacy_id": "sprite.effect",
+      "family": "sprite",
+      "type": "effect",
+      "classification": "production",
+      "recipe_id": "vfx-sequence",
+      "variant": "effect",
+      "migration_action": "use_recipe",
+      "reason": "Canonical legacy transport for the VFX sequence recipe."
+    },
+    {
+      "legacy_id": "tile.floor",
+      "family": "tile",
+      "type": "floor",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Floor topology and seam behavior have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "tile.wall",
+      "family": "tile",
+      "type": "wall",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Wall topology and seam behavior have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "tile.corner",
+      "family": "tile",
+      "type": "corner",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Corner adjacency behavior has no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "tile.door",
+      "family": "tile",
+      "type": "door",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Door and passage connectivity has no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "tile.terrain",
+      "family": "tile",
+      "type": "terrain",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Terrain transitions have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "tile.decal",
+      "family": "tile",
+      "type": "decal",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Decal overlap and export semantics have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "tile.autotile",
+      "family": "tile",
+      "type": "autotile",
+      "classification": "lab",
+      "recipe_id": "tile-autotile",
+      "variant": "autotile",
+      "migration_action": "keep_lab",
+      "reason": "A matching Lab recipe exists, but it has no Golden Job and is not production-ready."
+    },
+    {
+      "legacy_id": "tile.tileset",
+      "family": "tile",
+      "type": "tileset",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Tileset composition and importer metadata have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.main_panel",
+      "family": "ui",
+      "type": "main_panel",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Panel slicing, content-safe areas, and resizing have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.inner_panel",
+      "family": "ui",
+      "type": "inner_panel",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Panel slicing, content-safe areas, and resizing have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.popup",
+      "family": "ui",
+      "type": "popup",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Popup composition and scalable layout have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.card",
+      "family": "ui",
+      "type": "card",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Card composition and scalable layout have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.button",
+      "family": "ui",
+      "type": "button",
+      "classification": "production",
+      "recipe_id": "ui-component",
+      "variant": "button",
+      "migration_action": "use_recipe",
+      "reason": "Canonical legacy transport covered by the UI button Golden Job."
+    },
+    {
+      "legacy_id": "ui.slot",
+      "family": "ui",
+      "type": "slot",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Slot states and item-content layout have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.badge",
+      "family": "ui",
+      "type": "badge",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Badge readability and state behavior have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.hud_chip",
+      "family": "ui",
+      "type": "hud_chip",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "HUD chip readability and scalable layout have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.gauge",
+      "family": "ui",
+      "type": "gauge",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Gauge fill behavior and state consistency have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "ui.icon",
+      "family": "ui",
+      "type": "icon",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "UI icon sizing and readability are not covered by the object recipe's Golden Job."
+    },
+    {
+      "legacy_id": "ui.cursor",
+      "family": "ui",
+      "type": "cursor",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Cursor hotspot, animation, and interaction states have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "object.item",
+      "family": "object",
+      "type": "item",
+      "classification": "production",
+      "recipe_id": "static-transparent-object",
+      "variant": "item",
+      "migration_action": "use_recipe",
+      "reason": "Canonical legacy transport covered by the static object Golden Job."
+    },
+    {
+      "legacy_id": "object.equipment",
+      "family": "object",
+      "type": "equipment",
+      "classification": "alias",
+      "recipe_id": "static-transparent-object",
+      "variant": "equipment",
+      "migration_action": "normalize_alias",
+      "reason": "Equipment is a semantic variant of one readable transparent object candidate."
+    },
+    {
+      "legacy_id": "object.weapon",
+      "family": "object",
+      "type": "weapon",
+      "classification": "alias",
+      "recipe_id": "static-transparent-object",
+      "variant": "weapon",
+      "migration_action": "normalize_alias",
+      "reason": "A weapon is a semantic variant of one readable transparent object candidate."
+    },
+    {
+      "legacy_id": "object.loot",
+      "family": "object",
+      "type": "loot",
+      "classification": "alias",
+      "recipe_id": "static-transparent-object",
+      "variant": "loot",
+      "migration_action": "normalize_alias",
+      "reason": "Loot is a semantic variant of one readable transparent item candidate."
+    },
+    {
+      "legacy_id": "object.furniture",
+      "family": "object",
+      "type": "furniture",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Furniture footprint, ground contact, and scale have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "object.machine",
+      "family": "object",
+      "type": "machine",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Machine states and interaction semantics have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "object.prop",
+      "family": "object",
+      "type": "prop",
+      "classification": "alias",
+      "recipe_id": "static-transparent-object",
+      "variant": "prop",
+      "migration_action": "normalize_alias",
+      "reason": "A non-interactive prop is a semantic variant of one readable transparent world object."
+    },
+    {
+      "legacy_id": "object.interactable",
+      "family": "object",
+      "type": "interactable",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Interaction states and metadata have no Golden Job validation yet."
+    },
+    {
+      "legacy_id": "object.destructible",
+      "family": "object",
+      "type": "destructible",
+      "classification": "lab",
+      "recipe_id": null,
+      "variant": null,
+      "migration_action": "keep_lab",
+      "reason": "Damage and destruction states have no Golden Job validation yet."
+    }
+  ]
+}

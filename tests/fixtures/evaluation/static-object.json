@@ -1,0 +1,59 @@
+{
+  "schema_version": "asset-studio.golden-job/v1",
+  "job_id": "static-object",
+  "title": "Readable transparent potion object",
+  "family": "object",
+  "recipe_id": "static-transparent-object",
+  "output_profile_id": "generic-pixel-object-v1",
+  "quality_rubric_version": "quality-rubric-v1",
+  "prompt": "A single small red healing potion with a cork stopper, readable silhouette, limited palette, crisp pixel-art clusters, centered with clear padding, no text, no border frame, transparent background.",
+  "reference": {
+    "mode": "none",
+    "continuity_group": null,
+    "max_images": 0
+  },
+  "generation": {
+    "development_runs": 5,
+    "release_runs": 20,
+    "candidates_per_run": 1
+  },
+  "contract": {
+    "kind": "static",
+    "canvas": {
+      "width": 32,
+      "height": 32
+    },
+    "transparent_background": true,
+    "frame_count": 1,
+    "directions": [],
+    "action": null,
+    "loop": false,
+    "states": [],
+    "beats": [],
+    "pivot": {
+      "x": 0.5,
+      "y": 1.0
+    }
+  },
+  "required_local_checks": [
+    "canvas-size",
+    "transparent-background",
+    "non-empty-content",
+    "border-clearance",
+    "palette-budget"
+  ],
+  "required_visual_checks": [
+    "prompt-alignment",
+    "silhouette-readability",
+    "pixel-art-integrity"
+  ],
+  "required_metrics": [
+    "provider-response-success",
+    "local-qa-pass",
+    "visual-qa-pass",
+    "user-approval",
+    "candidates-to-approval",
+    "manual-edit-seconds",
+    "export-contract-match"
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "schema_version": "asset-studio.golden-job/v1",
+  "job_id": "actor-walk",
+  "title": "South-facing ranger walk cycle",
+  "family": "actor",
+  "recipe_id": "actor-animation",
+  "output_profile_id": "generic-pixel-actor-v1",
+  "quality_rubric_version": "quality-rubric-v1",
+  "prompt": "Use the approved identity master of a compact forest ranger with a moss-green hood, tan tunic, brown boots, a small round wooden buckler on the left arm, and a short iron sword in the right hand. Keep the ranger facing south and preserve face, body proportions, clothing, equipment hands, palette, outline, and foot root. Create a grounded walk cycle with ordered motion beats: left-foot contact, left support down, left passing, right-foot contact, right support down, right passing. The support foot alternates, each foot visibly contacts the same baseline, and body motion follows the gait; this is locomotion, not six unrelated poses. Crisp 32x32 pixel art per frame, transparent background, no text, no frame border.",
+  "reference": {
+    "mode": "identity_master",
+    "continuity_group": "golden-ranger-v1",
+    "max_images": 1
+  },
+  "generation": {
+    "development_runs": 5,
+    "release_runs": 20,
+    "candidates_per_run": 1
+  },
+  "contract": {
+    "kind": "animation",
+    "canvas": {
+      "width": 32,
+      "height": 32
+    },
+    "transparent_background": true,
+    "frame_count": 6,
+    "directions": ["south"],
+    "action": "walk",
+    "loop": true,
+    "states": [],
+    "beats": [
+      {
+        "id": "contact-left",
+        "semantic": "left foot lands on the baseline while the right leg trails"
+      },
+      {
+        "id": "down-left",
+        "semantic": "left leg accepts weight and the body reaches its lowest point"
+      },
+      {
+        "id": "passing-left",
+        "semantic": "right foot passes the planted left leg as the body rises"
+      },
+      {
+        "id": "contact-right",
+        "semantic": "right foot lands on the baseline while the left leg trails"
+      },
+      {
+        "id": "down-right",
+        "semantic": "right leg accepts weight and the body reaches its lowest point"
+      },
+      {
+        "id": "passing-right",
+        "semantic": "left foot passes the planted right leg and closes toward the first contact"
+      }
+    ],
+    "pivot": {
+      "x": 0.5,
+      "y": 0.875
+    }
+  },
+  "required_local_checks": [
+    "canvas-size",
+    "frame-count",
+    "transparent-background",
+    "required-reference-present",
+    "non-empty-content",
+    "frame-uniqueness",
+    "pivot-drift",
+    "bbox-scale-drift",
+    "palette-consistency",
+    "support-foot-alternation",
+    "contact-baseline-drift",
+    "loop-closing-delta"
+  ],
+  "required_visual_checks": [
+    "identity-consistency",
+    "direction-readability",
+    "action-readability",
+    "gait-readability",
+    "temporal-continuity",
+    "loop-naturalness",
+    "equipment-consistency",
+    "pixel-art-integrity"
+  ],
+  "required_metrics": [
+    "provider-response-success",
+    "local-qa-pass",
+    "visual-qa-pass",
+    "user-approval",
+    "candidates-to-approval",
+    "regenerated-frames",
+    "manual-edit-seconds",
+    "identity-score",
+    "action-score",
+    "direction-score",
+    "loop-score",
+    "export-contract-match"
+  ]
+}

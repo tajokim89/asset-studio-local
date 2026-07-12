@@ -31,17 +31,22 @@ def _png_bytes(img: Image.Image) -> bytes:
 
 
 def test_phase25_server_action_matrix_has_full_canonical_action_contracts():
-    assert set(SPRITE_ACTION_MATRIX) >= {"idle", "walk", "attack", "jump", "cast", "hurt", "death"}
+    expected = {
+        "idle", "walk", "run", "attack", "ranged_attack", "cast", "block",
+        "dodge", "jump", "hurt", "death", "interact", "pickup",
+    }
+    assert set(SPRITE_ACTION_MATRIX) == expected
     assert "hit" not in SPRITE_ACTION_MATRIX
     assert SPRITE_ACTION_MATRIX["idle"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["hurt"]["columns"] == ["normal", "impact", "recoil", "recovery"]
-    assert SPRITE_ACTION_MATRIX["jump"]["columns"] == ["crouch", "takeoff", "airborne", "landing"]
-    assert SPRITE_ACTION_MATRIX["cast"]["columns"] == ["ready", "gather", "release", "recover"]
-    assert SPRITE_ACTION_MATRIX["death"]["columns"][-1] in {"dead", "dead/still"}
-    for action in ["idle", "walk", "attack", "jump", "cast", "hurt", "death"]:
+    assert SPRITE_ACTION_MATRIX["hurt"]["columns"] == ["neutral", "impact", "recoil", "recovery"]
+    assert SPRITE_ACTION_MATRIX["jump"]["columns"] == ["ready", "crouch", "takeoff", "apex", "descent", "landing"]
+    assert SPRITE_ACTION_MATRIX["cast"]["columns"] == ["ready", "gather", "charge", "release", "follow-through", "recovery"]
+    assert SPRITE_ACTION_MATRIX["death"]["columns"][-1] == "dead-still"
+    for action in expected:
         spec = SPRITE_ACTION_MATRIX[action]
         assert spec["frames"] == len(spec["columns"])
         assert spec["contract"]
+        assert spec["acceptance"]
 
 
 def test_phase25_animation_action_normalization_aliases_payload_keys():
@@ -101,14 +106,14 @@ def test_phase25_core_animation_locks_are_non_negotiable_for_all_actor_actions()
 def test_phase25_action_prompts_include_beat_sheets_and_cell_cleanup_contract():
     attack = build_sprite_action_prompt("cleanup knight", action="attack4", direction="SW")
     assert "ACTION attack" in attack
-    assert "Column order must be exactly: ready, windup, strike, recover" in attack
+    assert "Column order must be exactly: ready, anticipation, wind-up, strike, impact, recovery" in attack
     assert "cell" in attack.lower()
     assert "chroma-key background" in attack
     for token in ["No VFX", "slash arcs", "hit sparks", "separate game assets"]:
         assert token in attack
 
     cast = build_reference_sprite_prompt("cleanup mage", animation_mode="cast4", frame_count=4)
-    for token in ["ready", "release", "recover", "Whitelist visual acceptance gate for cast", "PASS only if", "dominant readable action is not casting", "green spill", "halo", "fringe"]:
+    for token in ["ready", "charge", "release", "recovery", "Whitelist visual acceptance gate for cast", "PASS only if", "clearly communicates casting", "green spill", "halo", "fringe"]:
         assert token in cast
     assert "contained effect" not in cast
     assert "VFX must stay inside" not in cast
@@ -119,23 +124,24 @@ def test_phase25_action_prompts_include_beat_sheets_and_cell_cleanup_contract():
 
 
 def test_phase25_action_visual_qa_uses_whitelist_acceptance_for_every_actor_action():
-    actions = ["idle", "walk", "attack", "jump", "cast", "hurt", "death"]
+    actions = list(SPRITE_ACTION_MATRIX)
     for action in actions:
         gate = sprite_action_acceptance_contract(action)
         assert f"Whitelist visual acceptance gate for {action}" in gate
         assert "PASS only if" in gate
-        assert "dominant readable action is not" in gate
         assert "mark FAIL" in gate
         assert SPRITE_ACTION_MATRIX[action]["acceptance"] in gate
 
     expectations = {
-        "idle4": ["idle/breathing loop", "planted feet", "not idle breathing"],
-        "walk6": ["in-place crossover walk cycle for the referenced actor", "planted as stance/support", "root/pivot anchor", "only one limb/contact point moves", "legs never pass/cross through each other"],
-        "attack4": ["ready stance", "wind-up", "not an attack"],
-        "jump4": ["crouch anticipation", "airborne peak", "not jumping"],
-        "cast4": ["release gesture", "not casting"],
-        "hurt4": ["impact flinch", "recoil", "not a hurt reaction"],
-        "death4": ["death/collapse", "dead/still", "not death/collapse"],
+        "idle4": ["stable actor breathing in place", "closing frame returns cleanly"],
+        "walk6": ["continuous walking", "left and right support phases", "no skating"],
+        "attack4": ["complete attack", "weapon, hands, body"],
+        "jump4": ["real vertical pose change", "contained landing"],
+        "cast4": ["clearly communicates casting", "baked particles"],
+        "hurt4": ["hit reaction", "through the recoil"],
+        "death4": ["continuous death", "final frame never returns to standing"],
+        "dodge": ["Reads as a dodge", "without camera motion"],
+        "pickup": ["picking up an item", "coherent crouch and rise"],
     }
     for mode, tokens in expectations.items():
         prompt = build_reference_sprite_prompt("cleanup worker", animation_mode=mode, frame_count=6 if mode == "walk6" else 4)
@@ -176,18 +182,12 @@ def test_phase25_action_prompts_include_generic_reference_identity_and_full_fram
         "one accepted reference identity is the standard for the whole action set",
         "complete coherent full-frame poses",
         "do not merely upscale, crop, copy, cut/paste, or move isolated parts",
-        "stance/support and swing roles",
-        "Frame 1 and frame 3 must be visually near-identical neutral frames",
-        "Frame 2: LEFT leg is the lifted swing leg",
-        "RIGHT leg is the planted stance/support leg",
-        "Frame 4: RIGHT leg is the lifted swing leg",
-        "LEFT leg is the planted stance/support leg",
-        "passes beside and visibly overlaps/crosses the planted support leg beneath the pelvis",
-        "front/back depth ordering of the legs must reverse between frames 2 and 4",
-        "For S/front-facing: character LEFT = screen-right and character RIGHT = screen-left",
-        "frame 2 lifted swing boot must be on screen-right; frame 4 lifted swing boot must be on screen-left",
-        "pelvis/root center at exactly 50% of each cell width",
-        "do not move only one limb/contact point",
+        "Frame count: exactly 6",
+        "left-contact, left-down, left-passing, right-contact, right-down, right-passing",
+        "alternating support feet",
+        "fixed root and contact baseline",
+        "continuous walking",
+        "no skating, hopping, repeated same-side step, or root drift",
     ]:
         assert token in walk
     assert "left/support foot step" not in walk
@@ -205,52 +205,36 @@ def test_phase25_action_prompts_include_generic_reference_identity_and_full_fram
     for token in [
         "Global reference identity rule",
         "whole action set",
-        "complete full-frame poses",
+        "complete full-frame pose",
         "cutting, pasting, sliding, warping",
-        "frame 1 neutral transition stance",
-        "frame 3 the same neutral transition stance again",
-        "Frame 2: LEFT leg is the lifted swing leg",
-        "Frame 4: RIGHT leg is the lifted swing leg",
-        "opposite stance/support legs",
-        "one limb/contact point",
+        "left-contact, left-down, left-passing, right-contact, right-down, right-passing",
+        "Six-phase in-place walk cycle",
+        "alternating support feet",
     ]:
         assert token in sprite_prompt
 
 
 def test_phase25_frontend_locks_preset_default_frames_and_payload_keys():
-    assert "const PIXEL_ANIMATION_PRESET_DEFAULT_FRAMES" in JS
-    for token in ["walk6: 6", "idle: 4", "attack: 4", "jump: 4", "cast: 4", "hurt: 4", "death: 4"]:
-        assert token in JS
-    assert "const frames = pixelPresetFrameCount(preset);" in JS
-    assert "key: preset === 'walk6' ? 'walk6'" in JS
-    assert "actionFrameBeats" in JS
-    assert "neutral crossover/passing stance reused" in JS
-    assert "neutral-left-cross-neutral-right-cross" in JS
-    assert "LEFT leg swing-cross" in JS
-    assert "RIGHT leg swing-cross" in JS
-    assert "character LEFT = screen-right" in JS
-    assert "frame 2 swing boot on screen-right" in JS
-    assert "frame 4 swing boot on screen-left" in JS
-    assert "pelvis/root center at exactly 50% of each cell width" in JS
-    for token in ["ready pose", "wind-up", "clean body/weapon strike pose", "airborne peak", "release gesture", "impact flinch", "dead/still"]:
+    for token in [
+        "actorOutputProfileState",
+        "loadActorOutputProfile",
+        "validateActorOutputProfile",
+        "actorActionRecipe",
+        "output_profile_id: actorOutputProfileState.profile.id",
+        "frame_count: action.frame_count",
+        "fps: action.fps",
+        "loop: action.loop",
+        "beats: [...action.beats]",
+    ]:
         assert token in JS
 
 
-def test_walk4_selected_reference_prompt_has_explicit_cross_through_roles_without_full_gait_conflicts():
-    walk4_block = JS.split("walk4: {", 1)[1].split("walk6: {", 1)[0]
-    assert "neutral crossover -> LEFT leg swing-cross -> same neutral crossover -> RIGHT leg swing-cross" in walk4_block
-    assert "swing foot travels from behind the planted support leg, passes beside/overlaps it beneath the pelvis, and emerges ahead" in walk4_block
-    assert "left/support step" not in walk4_block
-    assert "right/opposite-support step" not in walk4_block
-    assert "connected passing beats" not in walk4_block
-
+def test_selected_reference_request_uses_the_same_profile_contract_as_new_generation():
     selected_reference_block = JS.split("async function generateFrontIdleFromSelected()", 1)[1].split("async function runPixelWorkflow()", 1)[0]
-    assert "duplicate frames" not in selected_reference_block
-    assert "same swing foot repeated in both crossing frames" in selected_reference_block
-    assert "same side boot enlarged/lifted in both crossing frames" in selected_reference_block
-    assert "legs never pass/cross through each other" in selected_reference_block
-    assert "progressive left/right root drift" in selected_reference_block
-    assert "four unrelated walk poses" in selected_reference_block
+    assert "const requestPayload = buildAssetGenerationPayload" in selected_reference_block
+    assert "animation_mode: spec.key" not in selected_reference_block
+    assert "frame_count: spec.frames" not in selected_reference_block
+    assert "asset_type: type" not in selected_reference_block
 
 
 def test_phase25_cleanup_removes_dark_cell_borders_and_reports_residue():

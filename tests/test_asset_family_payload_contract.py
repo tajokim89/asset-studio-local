@@ -23,7 +23,7 @@ FAMILIES = ("sprite", "tile", "ui", "object")
 def _representative_object_contract():
     """Complete E2 witness with nested semantics and legitimate zeroes."""
     return {
-        "usage": "world", "identity": {"subtype": "interactable", "form": "brass lever", "material": "brass", "function": "opens gate"}, "view": "three-quarter",
+        "usage": "world", "identity": {"subtype": "item", "form": "brass lever", "material": "brass", "function": "opens gate"}, "view": "three-quarter",
         "scale": {"basis": "tile-relative", "tile_relative": {"width": 2.0, "height": 1.5}, "character_relative": 0.75, "footprint": {"width": 2, "depth": 1}},
         "source": {"canvas": {"width": 160, "height": 128}, "padding": {"top": 0, "right": 7, "bottom": 11, "left": 0}},
         "placement": {"pivot": {"x": 0.0, "y": 1.0}, "ground_point": {"x": 0.0, "y": 1.0}, "y_sort_point": {"x": 0.0, "y": 0.875}, "snap_points": [{"id": "origin", "x": 0.0, "y": 0.0}]},
@@ -264,6 +264,29 @@ def test_generation_endpoints_use_normalized_contract_and_gate_sprite_postproces
         endpoint_source = source(endpoint)
         normalizer_call = f"data = {normalizer_name}(data)"
         assert normalizer_call in endpoint_source
+        recipe_assignment = next(
+            (
+                node for node in ast.walk(endpoint)
+                if isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "generation_recipe_id"
+                    for target in node.targets
+                )
+            ),
+            None,
+        )
+        assert recipe_assignment is not None
+        recipe_call = recipe_assignment.value
+        assert (
+            isinstance(recipe_call, ast.Call)
+            and isinstance(recipe_call.func, ast.Name)
+            and recipe_call.func.id == "recipe_id_for_asset_selection"
+            and [
+                arg.id for arg in recipe_call.args if isinstance(arg, ast.Name)
+            ] == ["asset_family", "asset_type"]
+            and len(recipe_call.args) == 2
+            and not recipe_call.keywords
+        ), "Generation route must resolve through the canonical recipe registry"
         actor_assignment = next(
             (
                 node for node in ast.walk(endpoint)
@@ -273,27 +296,35 @@ def test_generation_endpoints_use_normalized_contract_and_gate_sprite_postproces
             None,
         )
         assert actor_assignment is not None
-        gate = actor_assignment.value
-        assert isinstance(gate, ast.BoolOp) and isinstance(gate.op, ast.And) and len(gate.values) == 2
-        family_gate, subtype_gate = gate.values
-        assert (
-            isinstance(family_gate, ast.Compare)
-            and isinstance(family_gate.left, ast.Name) and family_gate.left.id == "asset_family"
-            and len(family_gate.ops) == 1 and isinstance(family_gate.ops[0], ast.Eq)
-            and len(family_gate.comparators) == 1
-            and isinstance(family_gate.comparators[0], ast.Constant)
-            and family_gate.comparators[0].value == "sprite"
+        effect_assignment = next(
+            (
+                node for node in ast.walk(endpoint)
+                if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "is_effect" for target in node.targets)
+            ),
+            None,
         )
-        assert (
-            isinstance(subtype_gate, ast.Compare)
-            and isinstance(subtype_gate.left, ast.Name) and subtype_gate.left.id == "asset_type"
-            and len(subtype_gate.ops) == 1 and isinstance(subtype_gate.ops[0], ast.In)
-            and len(subtype_gate.comparators) == 1
-            and isinstance(subtype_gate.comparators[0], ast.Set)
-            and {item.value for item in subtype_gate.comparators[0].elts if isinstance(item, ast.Constant)}
-            == {"character", "monster", "npc"}
-        ), "Actor postprocessing gate must use only normalized sprite actor subtypes"
-        assert endpoint_source.index(normalizer_call) < endpoint_source.index(source(actor_assignment))
+        assert effect_assignment is not None
+
+        def is_recipe_gate(assignment, recipe_id):
+            gate = assignment.value
+            return (
+                isinstance(gate, ast.Compare)
+                and isinstance(gate.left, ast.Name)
+                and gate.left.id == "generation_recipe_id"
+                and len(gate.ops) == 1
+                and isinstance(gate.ops[0], ast.Eq)
+                and len(gate.comparators) == 1
+                and isinstance(gate.comparators[0], ast.Constant)
+                and gate.comparators[0].value == recipe_id
+            )
+
+        assert is_recipe_gate(actor_assignment, "actor-animation")
+        assert is_recipe_gate(effect_assignment, "vfx-sequence")
+        recipe_position = endpoint_source.index(source(recipe_assignment))
+        assert endpoint_source.index(normalizer_call) < recipe_position
+        assert recipe_position < endpoint_source.index(source(actor_assignment))
+        assert recipe_position < endpoint_source.index(source(effect_assignment))
         effect_branch = next(
             (
                 node for node in ast.walk(endpoint)
@@ -398,21 +429,21 @@ def test_server_effect_normalization_has_no_actor_defaults_or_fields():
 
 def test_server_object_numeric_values_are_finite_bounded_and_zero_safe():
     contract = _representative_object_contract()
-    normalized = server.normalize_asset_generation_payload({"asset_family": "object", "asset_type": "prop", "object": contract})["object"]
+    normalized = server.normalize_asset_generation_payload({"asset_family": "object", "asset_type": "item", "object": contract})["object"]
     assert normalized == contract
     assert normalized["source"]["padding"]["top"] == 0
     assert normalized["placement"]["pivot"]["x"] == 0
     for mutation in ({"source": {"canvas": {"width": 0, "height": 128}, "padding": contract["source"]["padding"]}}, {"placement": {**contract["placement"], "y_sort_point": {"x": 0, "y": float("inf")}}}):
         with pytest.raises(ValueError):
-            server.normalize_asset_generation_payload({"asset_family": "object", "asset_type": "prop", "object": {**contract, **mutation}})
+            server.normalize_asset_generation_payload({"asset_family": "object", "asset_type": "item", "object": {**contract, **mutation}})
 
 
 def test_server_family_prompts_include_complete_ui_and_object_contracts():
-    ui = server.normalize_asset_generation_payload({"asset_family": "ui", "asset_type": "badge", "ui": {}})
+    ui = server.normalize_asset_generation_payload({"asset_family": "ui", "asset_type": "button", "ui": {}})
     ui_prompt = server.build_asset_family_prompt(ui)
     for token in ("semantic regions", "sizing=nine-slice", "decor density=medium", "opacity=1.0", "text-free", 'states=["normal"]'):
         assert token in ui_prompt
-    obj = server.normalize_asset_generation_payload({"asset_family": "object", "asset_type": "machine", "object": _representative_object_contract()})
+    obj = server.normalize_asset_generation_payload({"asset_family": "object", "asset_type": "item", "object": _representative_object_contract()})
     obj_prompt = server.build_asset_family_prompt(obj)
     for token in ("OBJECT_CONTRACT_CANONICAL", '"padding"', '"ground_point"', '"quest_gate"'):
         assert token in obj_prompt
@@ -462,11 +493,13 @@ def test_server_checks_practical_content_length_limit_before_read():
 
 @pytest.mark.parametrize("family,subtype,background", [
     ("sprite", "character", "transparent"),
-    ("tile", "terrain", "opaque"),
+    ("sprite", "effect", "transparent"),
     ("ui", "button", "transparent"),
-    ("object", "prop", "transparent"),
+    ("object", "item", "transparent"),
 ])
-def test_server_normalizes_common_style_output_for_every_family(family, subtype, background):
+def test_server_normalizes_common_style_output_for_every_production_selection(
+    family, subtype, background,
+):
     contract = _representative_object_contract() if family == "object" else {}
     normalized = server.normalize_asset_generation_payload({
         "asset_family": family,

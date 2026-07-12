@@ -1,0 +1,75 @@
+{
+  "schema_version": "asset-studio.golden-job/v1",
+  "job_id": "ui-button",
+  "title": "Text-free stone button state set",
+  "family": "ui",
+  "recipe_id": "ui-component",
+  "output_profile_id": "generic-pixel-ui-v1",
+  "quality_rubric_version": "quality-rubric-v1",
+  "prompt": "A text-free rectangular pixel-art stone button component with identical 96x32 canvas, silhouette, corner geometry, inner safe area, and nine-slice-safe border thickness across four ordered states: normal, hover, pressed, disabled. Hover is subtly brighter, pressed visibly moves the inner face down by one pixel while preserving the outer canvas, and disabled is desaturated but still legible. No text, letters, icons, labels, background panel, or decorative content outside the button. Transparent background and crisp integer-aligned pixels.",
+  "reference": {
+    "mode": "optional",
+    "continuity_group": "golden-stone-button-v1",
+    "max_images": 1
+  },
+  "generation": {
+    "development_runs": 5,
+    "release_runs": 20,
+    "candidates_per_run": 1
+  },
+  "contract": {
+    "kind": "state_set",
+    "canvas": {
+      "width": 96,
+      "height": 32
+    },
+    "transparent_background": true,
+    "frame_count": 4,
+    "directions": [],
+    "action": null,
+    "loop": false,
+    "states": [
+      "normal",
+      "hover",
+      "pressed",
+      "disabled"
+    ],
+    "beats": [],
+    "pivot": {
+      "x": 0.5,
+      "y": 0.5
+    }
+  },
+  "required_local_checks": [
+    "canvas-size",
+    "state-count",
+    "transparent-background",
+    "non-empty-content",
+    "state-canvas-alignment",
+    "safe-area-consistency",
+    "nine-slice-border-consistency",
+    "palette-consistency",
+    "text-pixel-absence"
+  ],
+  "required_visual_checks": [
+    "component-consistency",
+    "state-distinguishability",
+    "hover-readability",
+    "pressed-depth-readability",
+    "disabled-readability",
+    "text-free-composition",
+    "pixel-art-integrity"
+  ],
+  "required_metrics": [
+    "provider-response-success",
+    "local-qa-pass",
+    "visual-qa-pass",
+    "user-approval",
+    "candidates-to-approval",
+    "regenerated-frames",
+    "manual-edit-seconds",
+    "state-consistency-score",
+    "state-distinguishability-score",
+    "export-contract-match"
+  ]
+}

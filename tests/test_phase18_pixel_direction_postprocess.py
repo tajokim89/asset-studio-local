@@ -102,6 +102,8 @@ def test_single_direction_prompt_requests_exactly_one_direction_not_extraction_s
     assert "target_direction=W" in server_prompt
     assert "Do not generate a direction-candidate sheet" in server_prompt
     assert "Do not output all 8 directions" in server_prompt
+    assert "one horizontal row of exactly 4 animation frames" in server_prompt
+    assert "not a row/stack" not in server_prompt
     assert "Single target via one-direction generation" in js
     assert "Generate exactly one target direction" in js
     assert "internal extraction sheet" not in server_prompt

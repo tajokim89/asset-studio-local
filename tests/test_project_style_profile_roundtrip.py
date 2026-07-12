@@ -34,10 +34,11 @@ def node(script):
 
 
 def test_four_family_drafts_keep_accepted_lexical_values_byte_identical_at_runtime():
-    source="\n".join(decl(n) for n in ("defaultProjectFamilyDraft","validateProjectFamilyDrafts","hydrateProjectFamilyDrafts"))
+    source="\n".join(decl(n) for n in ("projectAssetSubtypesForFamily","defaultProjectFamilyDraft","validateProjectFamilyDrafts","hydrateProjectFamilyDrafts"))
     script=r'''
 const PROJECT_FAMILIES=['sprite','tile','ui','object'];
 const ASSET_FAMILY_SUBTYPES={sprite:['character'],tile:['floor'],ui:['button'],object:['item']};
+const assetRecipeRegistryState={status:'ready',registry:{},production:{},known:ASSET_FAMILY_SUBTYPES};
 const ASSET_FAMILY_OUTPUT_DEFAULTS={sprite:{width:512,height:512,background:'transparent'},tile:{width:512,height:512,background:'opaque'},ui:{width:1024,height:512,background:'transparent'},object:{width:512,height:512,background:'transparent'}};
 const PROJECT_DRAFT_SHARED_CONTROLS=['assetCorePrompt','assetOutputWidth','assetOutputHeight','assetBackground'];
 const PROJECT_DRAFT_FAMILY_CONTROLS={sprite:[],tile:[],ui:[],object:[]};

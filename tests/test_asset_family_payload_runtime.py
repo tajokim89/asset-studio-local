@@ -17,13 +17,13 @@ import server
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
+REGISTRY = json.loads((ROOT / "contracts" / "asset-recipes.json").read_text(encoding="utf-8"))
 FAMILY_KEYS = {"sprite", "tile", "ui", "object"}
 REPRESENTATIVES = (
     ("sprite", "character"),
     ("sprite", "effect"),
-    ("tile", "terrain"),
     ("ui", "button"),
-    ("object", "interactable"),
+    ("object", "item"),
 )
 SHARED_KEYS = {"asset_family", "asset_type", "prompt", "style_profile", "output"}
 ACTOR_KEYS = {
@@ -42,7 +42,7 @@ UI_FOREIGN_FAMILY_KEYS = {
 
 def _server_object_fixture():
     return {
-        "usage": "world", "identity": {"subtype": "interactable"}, "view": "three-quarter",
+        "usage": "world", "identity": {"subtype": "item"}, "view": "three-quarter",
         "scale": {"basis": "tile-relative"},
         "source": {"canvas": {"width": 160, "height": 128}, "padding": {"top": 0, "right": 0, "bottom": 0, "left": 0}},
         "placement": {"pivot": {"x": 0, "y": 1}, "ground_point": {"x": 0, "y": 1}, "y_sort_point": {"x": 0, "y": 1}, "snap_points": []},
@@ -97,19 +97,6 @@ EXPECTED_BROWSER_CONTRACTS = {
             "no_baked_vfx": False,
         },
     },
-    "tile/terrain": {
-        "required": {
-            "environment", "material", "use", "tile_size", "shape", "margin", "spacing",
-            "mode", "rows", "columns", "seamless", "topology", "inner_corners",
-            "outer_corners", "transitions", "terrain_types", "variants", "metadata",
-        },
-        "values": {
-            "tile_size": {"width": 32, "height": 32}, "mode": "single",
-            "rows": 1, "columns": 1, "margin": 0, "spacing": 0,
-            "seamless": True, "topology": "corner+edge", "variants": [],
-            "metadata": {"collision": {}, "occlusion": {}, "navigation": {}, "custom": {}},
-        },
-    },
     "ui/button": {
         "required": {
             "purpose", "information_structure", "source_size", "sizing_mode", "slice_margins",
@@ -128,7 +115,7 @@ EXPECTED_BROWSER_CONTRACTS = {
             **UI_STATIC_INVARIANTS,
         },
     },
-    "object/interactable": {
+    "object/item": {
         "required": {
             "usage", "identity", "view", "scale", "source", "placement", "shadow", "states",
             "variants", "collision", "interaction", "custom_properties",
@@ -239,6 +226,8 @@ def _diagnostic_text(value):
 @pytest.fixture(scope="module")
 def browser_runtime_payloads():
     functions = "\n\n".join(_function_source(name) for name in (
+        "validateAndBuildRecipeViews", "recipeGenerationSubtypesForFamily",
+        "projectAssetSubtypesForFamily",
         "normalizeStyleProfile", "resolveStyleProfileForFamily", "styleProfileFromControls",
         "currentAssetFamily", "currentAssetSubtype", "buildSpriteContract",
         "buildTileContract", "buildUiContract", "buildObjectContract",
@@ -259,11 +248,20 @@ const $ = id => Object.prototype.hasOwnProperty.call(controls, id) ? controls[id
 const document = {{ getElementById: $ }};
 {subtype_constant}
 {_variable_source("canonicalProjectStyleProfile")}
+{_variable_source("assetRecipeRegistryState")}
+{_variable_source("assetFamilyDrafts")}
+{_variable_source("PROJECT_FAMILIES")}
 let selectedAssetFamily = 'sprite';
 {helper_sources}
 // Unrelated deterministic dependency required by buildSpriteContract().
 const pixelPresetFrameCount = raw => raw === 'walk6' ? 6 : 4;
 {functions}
+const recipeRegistry = {json.dumps(REGISTRY)};
+const recipeViews = validateAndBuildRecipeViews(recipeRegistry);
+assetRecipeRegistryState = {{
+  status: 'ready', registry: recipeRegistry,
+  production: recipeViews.production, known: recipeViews.known,
+}};
 function setControls(values) {{
   for (const key of Object.keys(controls)) delete controls[key];
   for (const [key, value] of Object.entries(values)) {{
@@ -294,7 +292,7 @@ function build(family, subtype, extra = {{}}) {{
     tileSpacing: 0,
     uiDecorationDensity: 0,
     uiBackgroundOpacity: 0,
-    objectUsage: 'world', objectIdentitySubtype: 'interactable', objectForm: 'brass lever',
+    objectUsage: 'world', objectIdentitySubtype: subtype, objectForm: 'brass lever',
     objectMaterial: 'brass', objectFunction: 'opens gate', objectView: 'three-quarter',
     objectScaleBasis: 'tile-relative', objectTileRelativeWidth: 2, objectTileRelativeHeight: 1.5,
     objectCharacterRelative: 0.75, objectFootprintWidth: 2, objectFootprintDepth: 1,
@@ -319,9 +317,8 @@ function captureBuild(family, subtype) {{
 const payloads = Object.fromEntries([
   ['sprite/character', build('sprite', 'character')],
   ['sprite/effect', build('sprite', 'effect')],
-  ['tile/terrain', build('tile', 'terrain')],
   ['ui/button', build('ui', 'button')],
-  ['object/interactable', build('object', 'interactable')],
+  ['object/item', build('object', 'item')],
 ]);
 const bounded = build('ui', 'button', {{
   assetOutputWidth: 999999, assetOutputHeight: -9, assetBackground: 'invalid',
@@ -337,7 +334,14 @@ const rejectedSubtypes = {{
   empty: captureBuild('sprite', ''),
   invalid: captureBuild('sprite', '__invalid_explicit_subtype__'),
 }};
-process.stdout.write(JSON.stringify({{ payloads, bounded, helperZeroes, rejectedSubtypes }}));
+const labSelections = {{
+  tileAutotile: captureBuild('tile', 'autotile'),
+  uiBadge: captureBuild('ui', 'badge'),
+  objectInteractable: captureBuild('object', 'interactable'),
+}};
+process.stdout.write(JSON.stringify({{
+  payloads, bounded, helperZeroes, rejectedSubtypes, labSelections,
+}}));
 """
     try:
         completed = subprocess.run(
@@ -410,9 +414,8 @@ def test_browser_representative_has_positive_schema_values_and_one_nested_contra
 
 @pytest.mark.parametrize("family,subtype,forbidden", (
     ("sprite", "effect", {"target_direction", "reference_direction", "equipment", "gait", "walk_frames"}),
-    ("tile", "terrain", {"animation_mode", "action", "frame_count", "walk_frames", "direction_mode", "target_direction", "reference_direction"}),
     ("ui", "button", ACTOR_KEYS - UI_STATIC_INVARIANTS.keys()),
-    ("object", "interactable", {"animation_mode", "action", "direction_mode", "target_direction", "reference_direction"}),
+    ("object", "item", {"animation_mode", "action", "direction_mode", "target_direction", "reference_direction"}),
 ))
 def test_browser_non_actor_contracts_do_not_serialize_hidden_actor_controls(
     browser_runtime_payloads, family, subtype, forbidden,
@@ -435,10 +438,8 @@ def test_browser_preserves_legitimate_zeroes_and_bounds_output(browser_runtime_p
         "controlNumber": 0, "clampFamilyNumber": 0, "controlChecked": False,
     }
     payloads = browser_runtime_payloads["payloads"]
-    assert payloads["tile/terrain"]["tile"]["margin"] == 0
-    assert payloads["tile/terrain"]["tile"]["spacing"] == 0
     assert payloads["ui/button"]["ui"]["opacity"] == 1
-    obj = payloads["object/interactable"]["object"]
+    obj = payloads["object/item"]["object"]
     assert obj["source"]["padding"]["top"] == 0
     assert obj["placement"]["pivot"]["x"] == 0
     assert obj["placement"]["ground_point"]["x"] == 0
@@ -463,9 +464,15 @@ def test_browser_explicit_invalid_sprite_subtype_is_fail_closed(
         assert subtype != "character"
 
 
+@pytest.mark.parametrize("selection", ("tileAutotile", "uiBadge", "objectInteractable"))
+def test_browser_lab_selection_is_rejected(browser_runtime_payloads, selection):
+    result = browser_runtime_payloads["labSelections"][selection]
+    assert result["marker"] == "rejected"
+    assert "Invalid asset family or subtype" in result["error"]
+
+
 @pytest.mark.parametrize("family,subtype", (
-    ("sprite", "effect"), ("tile", "terrain"), ("ui", "button"),
-    ("object", "interactable"),
+    ("sprite", "effect"), ("ui", "button"), ("object", "item"),
 ))
 def test_server_non_actor_contracts_exclude_actor_state_even_when_poisoned(family, subtype):
     poison = {key: "poison" for key in ACTOR_KEYS}

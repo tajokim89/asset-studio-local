@@ -16,6 +16,7 @@ import server
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
+REGISTRY = json.loads((ROOT / "contracts" / "asset-recipes.json").read_text(encoding="utf-8"))
 
 TILE_KEYS = {
     "environment", "material", "use", "tile_size", "shape", "margin", "spacing",
@@ -87,6 +88,8 @@ def _function_source(name):
 @pytest.fixture(scope="module")
 def browser_tile_result():
     functions = "\n".join(_function_source(name) for name in (
+        "validateAndBuildRecipeViews", "recipeGenerationSubtypesForFamily",
+        "legacyAssetSubtypesForFamily", "projectAssetSubtypesForFamily",
         "normalizeStyleProfile", "resolveStyleProfileForFamily", "styleProfileFromControls",
         "currentAssetFamily", "currentAssetSubtype", "buildTileContract",
         "buildAssetGenerationPayload", "buildAssetFamilyPrompt",
@@ -121,16 +124,24 @@ const DEFAULT_STYLE_PROFILE = {JS[JS.index("const DEFAULT_STYLE_PROFILE"):JS.ind
 let canonicalProjectStyleProfile = JSON.parse(JSON.stringify(DEFAULT_STYLE_PROFILE));
 const $ = id => controls[id] || null;
 const ASSET_FAMILY_SUBTYPES = {{tile:['floor','wall','corner','door','terrain','decal','autotile','tileset']}};
+const PROJECT_FAMILIES = ['sprite','tile','ui','object'];
+const assetFamilyDrafts = new Map();
 let selectedAssetFamily = 'tile';
 const controlValue = (id, fallback='') => controls[id] ? controls[id].value : fallback;
 const controlNumber = (id, fallback=0) => {{ const n=Number(controlValue(id, fallback)); return Number.isFinite(n)?n:fallback; }};
 const controlChecked = (id, fallback=false) => controls[id] ? !!controls[id].checked : fallback;
 const clampFamilyNumber = (value,min,max) => Math.min(max,Math.max(min,value));
 {functions}
+const assetRecipeRegistry = {json.dumps(REGISTRY)};
+const recipeViews = validateAndBuildRecipeViews(assetRecipeRegistry);
+const assetRecipeRegistryState = {{status:'ready',registry:assetRecipeRegistry,production:recipeViews.production,known:recipeViews.known}};
 const poisonBase = {{sprite:{{action:'attack'}}, ui:{{states:'hover'}}, object:{{view:'side'}},
  action:'attack', direction_mode:'8dir', equipment:'sword', effect_category:'Magic'}};
+let generation;
+try {{ generation = {{status:'returned',payload:buildAssetGenerationPayload(poisonBase)}}; }}
+catch (error) {{ generation = {{status:'rejected',error:String(error.message || error)}}; }}
 process.stdout.write(JSON.stringify({{
- contract: buildTileContract(), payload: buildAssetGenerationPayload(poisonBase),
+ contract: buildTileContract(), generation,
  prompt: buildAssetFamilyPrompt()
 }}));
 """
@@ -154,14 +165,13 @@ def _normalize(tile=None, **root_poison):
 
 def test_browser_preserves_complete_nested_tile_contract(browser_tile_result):
     assert browser_tile_result["contract"] == SAMPLE_TILE
-    assert browser_tile_result["payload"]["tile"] == SAMPLE_TILE
 
 
-def test_browser_payload_strips_every_foreign_family_and_flattened_field(browser_tile_result):
-    payload = browser_tile_result["payload"]
-    assert set(payload) == {"prompt", "asset_family", "asset_type", "style_profile", "output", "tile"}
-    assert not (FOREIGN_KEYS & payload.keys())
-    assert not (FOREIGN_KEYS & payload["tile"].keys())
+def test_browser_rejects_lab_tile_before_generation_payload_creation(browser_tile_result):
+    generation = browser_tile_result["generation"]
+    assert generation["status"] == "rejected"
+    assert "invalid asset family or subtype" in generation["error"].lower()
+    assert "payload" not in generation
 
 
 def test_server_preserves_complete_nested_tile_contract_and_isolation():
@@ -200,18 +210,17 @@ def test_legacy_server_tile_path_already_strips_root_foreign_family_poison():
 
 
 def test_legacy_browser_tile_contract_remains_nested_and_actor_free(browser_tile_result):
-    payload = browser_tile_result["payload"]
-    assert payload["asset_family"] == "tile"
-    assert isinstance(payload["tile"], dict)
+    contract = browser_tile_result["contract"]
+    assert isinstance(contract, dict)
     assert not ({"animation_mode", "action", "direction_mode", "equipment"}
-                & payload["tile"].keys())
+                & contract.keys())
 
 
 def test_legacy_tile_baseline_preserves_rows_seamless_and_opaque_output(browser_tile_result):
-    payload = browser_tile_result["payload"]
-    assert payload["tile"]["rows"] == 8
-    assert payload["tile"]["seamless"] is True
-    assert payload["output"] == {"width": 267, "height": 267, "background": "opaque"}
+    contract = browser_tile_result["contract"]
+    assert contract["rows"] == 8
+    assert contract["seamless"] is True
+    assert _normalize()["output"] == {"width": 267, "height": 267, "background": "opaque"}
 
 
 @pytest.mark.parametrize("mode", ["single", "tileset", "autotile"])

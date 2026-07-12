@@ -1,0 +1,97 @@
+{
+  "schema_version": "asset-studio.golden-job/v1",
+  "job_id": "vfx-impact",
+  "title": "One-shot arcane impact sequence",
+  "family": "effect",
+  "recipe_id": "vfx-sequence",
+  "output_profile_id": "generic-pixel-vfx-v1",
+  "quality_rubric_version": "quality-rubric-v1",
+  "prompt": "A centered one-shot arcane impact effect in crisp pixel art with a fixed ground pivot and an ordered six-frame energy envelope: compact spark, rapid expansion, brightest impact peak, outward fragments, fading dissipation, near-empty vanish. Energy area and brightness rise once to the peak and then fall; frames show continuous progression rather than six unrelated bursts. Limited cyan, blue, and white palette, transparent background, no character, no text, no frame border, no camera movement.",
+  "reference": {
+    "mode": "none",
+    "continuity_group": null,
+    "max_images": 0
+  },
+  "generation": {
+    "development_runs": 5,
+    "release_runs": 20,
+    "candidates_per_run": 1
+  },
+  "contract": {
+    "kind": "sequence",
+    "canvas": {
+      "width": 64,
+      "height": 64
+    },
+    "transparent_background": true,
+    "frame_count": 6,
+    "directions": [],
+    "action": "impact",
+    "loop": false,
+    "states": [],
+    "beats": [
+      {
+        "id": "spark",
+        "semantic": "small concentrated ignition at the fixed pivot"
+      },
+      {
+        "id": "expand",
+        "semantic": "energy expands quickly while remaining centered on the pivot"
+      },
+      {
+        "id": "peak",
+        "semantic": "largest area and brightest value form the single impact maximum"
+      },
+      {
+        "id": "fragment",
+        "semantic": "peak breaks into outward fragments with lower core energy"
+      },
+      {
+        "id": "dissipate",
+        "semantic": "fragments shrink and fade without a second energy peak"
+      },
+      {
+        "id": "vanish",
+        "semantic": "only minimal fading pixels remain before a transparent end"
+      }
+    ],
+    "pivot": {
+      "x": 0.5,
+      "y": 0.75
+    }
+  },
+  "required_local_checks": [
+    "canvas-size",
+    "frame-count",
+    "transparent-background",
+    "non-empty-content",
+    "frame-uniqueness",
+    "pivot-drift",
+    "palette-consistency",
+    "energy-envelope",
+    "single-impact-peak",
+    "one-shot-terminal-alpha"
+  ],
+  "required_visual_checks": [
+    "effect-consistency",
+    "temporal-continuity",
+    "progression-readability",
+    "impact-readability",
+    "dissipation-readability",
+    "fixed-pivot-readability",
+    "pixel-art-integrity"
+  ],
+  "required_metrics": [
+    "provider-response-success",
+    "local-qa-pass",
+    "visual-qa-pass",
+    "user-approval",
+    "candidates-to-approval",
+    "regenerated-frames",
+    "manual-edit-seconds",
+    "progression-score",
+    "impact-score",
+    "pivot-score",
+    "export-contract-match"
+  ]
+}
