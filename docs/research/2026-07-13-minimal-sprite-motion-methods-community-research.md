@@ -1316,3 +1316,295 @@ manifest에는 canvas, color space, sampling, atlas region, source rect, trim of
 Asset Studio는 레이어를 PNG로 분리하는 데서 끝나면 안 된다. 런타임에서 정확히 재조립할 수 있도록 좌표, 피벗, 소켓, 순서, 변환 제한과 QA를 함께 출력해야 한다.
 
 이 항목은 조사 완료로 판정한다.
+
+---
+
+## 20.4 상태 교체형 스프라이트
+
+### 20.4.1 조사 범위
+
+하나의 게임 오브젝트가 의미상 지속되는 상태에 따라 정적 스프라이트 한 장을 다른 한 장으로 교체하는 방식이다.
+
+- 포함: `closed/open`, `intact/damaged/destroyed`, `empty/full`, `off/on`, `dry/wet`, `unbuilt/built`
+- 제외: 걷기·공격처럼 시간 순서와 프레임 지속시간이 핵심인 애니메이션
+- 제외: 전신 리깅, 장비 페이퍼돌 합성, 독립 수명의 VFX
+
+### 20.4.2 해외 공식 근거
+
+#### Unity SpriteRenderer.sprite
+
+- URL: https://docs.unity3d.com/ScriptReference/SpriteRenderer-sprite.html
+- 증거 유형: 해외 공식 엔진 API
+- 직접 확인 문구:
+  > “The Sprite to render.”
+  > “The rendered sprite can be changed by specifying a different sprite in the sprite variable.”
+
+동일 SpriteRenderer에 다른 Sprite를 할당해 런타임 표시 이미지를 교체할 수 있다. 단, 상태 ID·전이·충돌·상호작용은 관리하지 않으므로 의미 상태 모델은 별도 manifest가 필요하다.
+
+#### Unity 2D Animation Sprite Resolver
+
+- 현재 공식 URL: https://docs.unity3d.com/Packages/com.unity.2d.animation@10.0/manual/SL-Resolver.html
+- 증거 유형: 해외 공식 패키지 문서
+- 직접 확인 문구:
+  > “allows you to change the Sprite rendered by that GameObject's Sprite Renderer component.”
+  > “The component contains two properties - Category and Label”
+
+Sprite 변형을 Category와 Label로 식별해 동일 GameObject가 렌더할 변형을 선택하는 공식 Sprite Swap 워크플로다. Category/Label은 범용 선택 키일 뿐 게임플레이 상태 머신은 아니므로 Asset Studio가 `state_id`, 기본 상태, 전이 조건을 별도로 정의해야 한다.
+
+기존에 알려진 `SpriteResolver.html` 경로는 404였으며, 공식 패키지 목차가 가리키는 현재 `SL-Resolver.html`만 근거로 사용했다.
+
+#### Godot Sprite2D.texture
+
+- URL: https://docs.godotengine.org/en/stable/classes/class_sprite2d.html
+- 증거 유형: 해외 공식 엔진 API
+- 확인 내용:
+  - `Texture2D texture`
+  - `void set_texture(value: Texture2D)`
+  - `Texture2D object to draw.`
+
+같은 Sprite2D의 texture를 다른 Texture2D로 설정해 정적 상태 외형을 교체할 수 있다. 텍스처 크기, centered, offset이 다르면 전환 시 월드 위치가 튈 수 있으므로 공통 논리 캔버스와 피벗 규약이 필요하다.
+
+#### Phaser Sprite Texture
+
+- URL: https://docs.phaser.io/api-documentation/class/gameobjects-sprite
+- 증거 유형: 해외 공식 엔진 API
+- 확인 내용:
+  - Sprite는 Texture Manager의 texture key 또는 instance를 렌더 리소스로 사용
+  - 선택적 atlas frame 지정 가능
+  - TextureCrop 상속 메서드에 `setFrame`, `setTexture` 포함
+
+상태별 개별 텍스처와 단일 atlas 안의 상태별 frame 양쪽을 지원할 수 있다. 다만 setTexture는 렌더 리소스 선택일 뿐 상태 의미와 전이를 관리하지 않는다.
+
+### 20.4.3 국내 지정 사례 재검증과 제외
+
+지정된 국내 게시물 3개는 모두 접근 가능했지만, 실제 제목·본문이 기존에 알려진 설명과 일치하지 않았다. 근거를 꾸며 넣지 않고 제외한다.
+
+#### 제외: DCInside `no=204060`
+
+- URL: https://gall.dcinside.com/mgallery/board/view/?id=game_dev&no=204060
+- 실제 제목: `방치형 게임 만들기 3일차`
+- 실제 확인 내용: 메인 UI, 지도 계획, 손님 스프라이트, 마차 내부 표시, 설정과 스크롤바 작업
+- 판정: 나무 성장 상태 교체를 공개 본문에서 입증할 수 없음
+
+#### 제외: DCInside `no=211304`
+
+- URL: https://gall.dcinside.com/mgallery/board/view/?id=game_dev&no=211304
+- 실제 제목: `지금 소명문 쓰는 사람들은 공무원이 된다했어요 주장하는건데`
+- 판정: 건물 업그레이드용 스프라이트 6종과 무관함
+
+#### 제외: DCInside `no=188141`
+
+- URL: https://gall.dcinside.com/mgallery/board/view/?id=game_dev&no=188141
+- 실제 제목과 본문: `어제 한 거`, `권태기 옴`
+- 판정: 공개 텍스트에서 2프레임 사망 표현을 입증할 수 없음
+- 추가 경계: 2프레임 사망이 사실이어도 시간 순서가 있는 애니메이션이며 지속 상태 한 장 교체의 직접 근거가 아님
+
+따라서 이 항목의 국내 지정 사례 채택 수는 0건이다. 확인되지 않은 국내 사례를 해외 공식 근거와 같은 강도로 취급하지 않는다.
+
+### 20.4.4 AI 생성 원칙: 상태별 독립 생성 금지
+
+상태 이미지를 각각 독립 프롬프트로 생성하면 다음 드리프트가 발생하기 쉽다.
+
+- 실루엣과 비례 변화
+- 카메라 각도와 facing 변화
+- 피벗과 바닥 접점 변화
+- outline 두께 변화
+- 팔레트와 광원 방향 변화
+- 상태와 무관한 디테일 변화
+
+따라서 AI는 먼저 잠긴 canonical base를 만들고, 각 상태는 그 기준 이미지를 입력으로 삼는 constrained edit 또는 구조 보존 변형으로 생성해야 한다.
+
+잠금 항목:
+
+- logical canvas
+- pivot와 ground contact
+- facing와 투시
+- 외곽 실루엣의 불변 영역
+- 팔레트 profile
+- outline 규칙
+- 광원 방향
+- 상태별로 변경 가능한 영역 mask
+
+### 20.4.5 상태 스키마
+
+```yaml
+asset:
+  asset_id: chest_iron
+  schema_version: 1
+
+  canonical_base:
+    logical_canvas: [64, 64]
+    pivot: [32, 56]
+    pixels_per_unit: 16
+    facing: front
+    palette_profile: project_default
+
+  default_state: closed
+
+  states:
+    - id: closed
+      visual:
+        texture: chest_iron_closed.png
+        source_rect: [0, 0, 64, 64]
+        render_offset: [0, 0]
+      collision:
+        shape: rect
+        rect: [13, 31, 38, 25]
+      interaction:
+        openable: true
+        lootable: false
+
+    - id: open
+      visual:
+        texture: chest_iron_open.png
+        source_rect: [0, 0, 64, 64]
+        render_offset: [0, 0]
+      collision:
+        shape: rect
+        rect: [13, 31, 38, 25]
+      interaction:
+        openable: false
+        lootable: true
+
+  transitions:
+    - from: closed
+      to: open
+      trigger: interact_open
+      presentation: instant
+```
+
+### 20.4.6 필수 계약
+
+#### Canonical Base
+
+자산 전체에 대해 다음을 하나로 고정한다.
+
+- 논리 캔버스 크기
+- 좌표계와 픽셀 밀도
+- pivot와 ground contact
+- facing
+- 팔레트 profile
+- nearest-neighbor sampling
+
+상태별 투명 여백이 달라도 엔진에서 차지하는 논리 공간은 동일해야 한다.
+
+#### State ID와 Default State
+
+- 안정적인 기계 ID 사용: `intact`, `damaged`, `destroyed`
+- 표시명과 파일명에서 분리
+- 정확히 하나의 default state 필수
+- 상태 ID 중복 금지
+
+#### 전이 그래프
+
+각 전이는 다음을 가진다.
+
+- `from`
+- `to`
+- 논리 trigger
+- 표현 방식: `instant`, `transition_clip`, `vfx`
+- 선택적 gameplay event
+
+선언되지 않은 전이는 기본 금지한다. fallback을 허용하려면 명시적으로 선언한다.
+
+#### 상태별 Visual
+
+- texture 또는 atlas frame
+- source rect
+- render offset
+- 선택적 z-order 보정
+- 상태별 palette/material override
+
+#### 상태별 Collision
+
+- collider shape와 좌표
+- solid 여부
+- navigation 영향
+- hit target
+
+렌더 이미지가 바뀐다고 충돌체가 자동으로 맞는다고 가정하지 않는다.
+
+#### 상태별 Interaction
+
+- 클릭 영역
+- 사용·수확·대화 가능 여부
+- gameplay tags
+- 상태별 action 목록
+
+### 20.4.7 Atlas Naming
+
+권장 키:
+
+```text
+<asset_id>/<state_id>
+chest_iron/closed
+chest_iron/open
+chest_iron/destroyed
+```
+
+파일명은 바뀔 수 있어도 manifest의 asset ID와 state ID는 안정적으로 유지한다.
+
+### 20.4.8 Deterministic Preview
+
+Studio는 다음 보기를 제공해야 한다.
+
+1. 상태 목록 단독 선택
+2. 전이 그래프 순회
+3. 모든 상태를 같은 월드 좌표에 빠르게 교체
+4. 1× 실제 픽셀 크기와 정수 확대
+5. 체커보드·밝은색·어두운색 배경
+6. visual과 collision overlay 동시 보기
+7. interaction 영역 overlay
+8. contact sheet
+9. 상태 A/B onion 또는 difference overlay
+
+빠른 상태 순회는 위치 흔들림 검사용이며 애니메이션 데이터로 취급하지 않는다.
+
+### 20.4.9 Validation
+
+자동 검사:
+
+- state ID 중복
+- default state 누락 또는 복수 지정
+- 참조 texture/atlas frame 누락
+- 전이의 from/to가 실제 상태를 가리키는지
+- 도달 불가능 상태
+- 의도치 않은 순환
+- logical canvas 불일치
+- pivot·ground contact 점프
+- 비정수 offset
+- facing과 scale 불일치
+- outline 두께 드리프트
+- 팔레트와 광원 방향 드리프트
+- collider가 논리 캔버스를 벗어남
+- visual silhouette와 collider의 심각한 불일치
+- 필수 interaction metadata 누락
+
+### 20.4.10 정적 상태 교체의 경계
+
+정적 state swap은 전환 전후 상태가 일정 시간 유지되고 중간 동작이 중요하지 않을 때 적합하다.
+
+다음은 별도 표현이 필요하다.
+
+- 성장, 붕괴, 문 열림처럼 중간 실루엣이 중요한 경우
+  - 2~4개의 transition frame 또는 transition clip
+- 폭발, 섬광, 파편, 연기처럼 본체 상태와 수명이 다른 경우
+  - 별도 VFX 자산
+- 걷기, 공격, 사망처럼 시간 순서와 프레임 지속시간이 의미를 갖는 경우
+  - 완전한 animation clip
+- 전환 도중 판정 창이나 충돌체가 변하는 경우
+  - 타임라인 이벤트와 프레임별 충돌 metadata
+
+최종 `dead`, `open`, `destroyed` 이미지는 애니메이션 종료 후 유지되는 상태로 포함할 수 있다. 그러나 그 상태에 도달하는 동작 자체를 무조건 즉시 스왑으로 대체해서는 안 된다.
+
+### 20.4.11 판정
+
+상태 교체형 스프라이트는 다음 조건에서 범용적으로 유효하다.
+
+> 잠긴 canonical base + 의미 상태 ID + 공통 논리 좌표계 + 상태별 visual/collision/interaction + 명시적 전이
+
+엔진의 texture 교체 API만으로는 제품 기능이 완성되지 않는다. Asset Studio는 상태 의미와 전이, 좌표 일관성, 충돌·상호작용까지 함께 패키징해야 한다.
+
+국내 지정 사례는 검증 실패로 채택하지 않았고, 해외 공식 문서가 입증하는 범위 안에서만 결론을 내린다.
+
+이 항목은 조사 완료로 판정한다.
