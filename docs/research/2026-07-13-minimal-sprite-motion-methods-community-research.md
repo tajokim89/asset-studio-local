@@ -2439,3 +2439,725 @@ AI가 단독 확정하면 안 되는 것:
 범용 Asset Studio의 기본값은 simple rigid-part 또는 frame animation이어야 한다. full rig mode는 eligibility gate를 통과한 프로젝트에만 명시적으로 활성화한다.
 
 이 항목은 조사 완료로 판정한다.
+
+---
+
+## 20.7 제한 프레임과 완전 프레임의 경계
+
+### 20.7.1 조사 목적
+
+프레임 수를 임의의 숫자로 고정하지 않고, 동작이 전달해야 하는 정보량을 기준으로 다음을 구분한다.
+
+- 추가 프레임이 필요 없는 동작
+- 핵심 자세 2~4장으로 충분한 제한 프레임
+- 시간 순서 전체를 직접 그려야 하는 완전 프레임 애니메이션
+- 다수 외형이 동작을 재사용하기 위한 리그
+
+`2~4장`은 기본 저비용 범위이지 절대 상한이 아니다. 필요한 정보가 4장 안에 들어가지 않으면 억지로 압축하지 않고 완전 프레임으로 승격한다.
+
+### 20.7.2 해외 공식 근거
+
+#### Godot AnimatedSprite2D
+
+- 문서 URL: https://docs.godotengine.org/en/stable/classes/class_animatedsprite2d.html
+- 공식 원문: https://github.com/godotengine/godot-docs/blob/master/classes/class_animatedsprite2d.rst
+- 증거 유형: 해외 공식 엔진 문서
+- 직접 확인 문구:
+  > “AnimatedSprite2D is similar to the Sprite2D node, except it carries multiple textures as animation frames.”
+
+확인 기능:
+
+- SpriteFrames resource
+- animation 선택
+- frame과 frame progress
+- speed scale
+- play, pause, stop
+- animation finished
+- animation looped
+
+프레임 애니메이션은 단순 PNG 묶음이 아니라 이름, 재생 속도, 진행률, 완료·반복 상태를 가진다.
+
+#### Godot SpriteFrames
+
+- 문서 URL: https://docs.godotengine.org/en/stable/classes/class_spriteframes.html
+- 공식 원문: https://github.com/godotengine/godot-docs/blob/master/classes/class_spriteframes.rst
+- 증거 유형: 해외 공식 엔진 문서
+- 직접 확인 문구:
+  > “Contains frames and animation data for playback.”
+
+확인 API:
+
+- `add_animation`
+- `add_frame(anim, texture, duration, at_position)`
+- `get_frame_duration`
+- animation loop
+- animation speed
+
+각 프레임은 동일 간격일 필요가 없으며 frame duration을 개별 보존해야 한다.
+
+#### Aseprite Animation
+
+- URL: https://www.aseprite.org/docs/animation/
+- 증거 유형: 해외 공식 제작 도구 문서
+- 직접 확인 문구:
+  > “The timeline gives you total control over frames, layers, and cels.”
+
+공식 workflow는 첫 프레임을 그리고 새 프레임을 추가해 계속 그리는 방식이며 다음을 명시한다.
+
+- 프레임 추가·복제·삭제
+- linked cel을 통한 재사용
+- 여러 프레임 tag
+- 특정 frame duration 변경
+- loop와 reverse
+- onion skinning
+
+제한 프레임도 완전 프레임도 같은 timeline contract를 사용하되 제작 범위가 다르다.
+
+#### Aseprite Tags
+
+- URL: https://www.aseprite.org/docs/tags/
+- 증거 유형: 해외 공식 제작 도구 문서
+- 직접 확인 내용:
+  - frame range를 이름 있는 animation tag로 묶음
+  - Forward, Reverse, Ping-pong 방향 지원
+
+클립 이름과 범위, 방향을 export metadata에 보존해야 한다.
+
+#### Phaser Animations
+
+- URL: https://docs.phaser.io/phaser/concepts/animations
+- 증거 유형: 해외 공식 엔진 문서
+- 직접 확인 문구:
+  > “The primary means of animation in Phaser is by using 'frame' based animations.”
+  > “The Animation system allows you to play a sequence of these Frames, one after the other, at a given frame rate.”
+
+시간 순서가 의미 있는 동작은 정적 state swap이 아니라 명시적인 frame sequence로 표현된다는 근거다.
+
+### 20.7.3 해외 실제 구현 비교
+
+#### 2프레임 방향 이동 + VFX
+
+- 파일: https://github.com/godotengine/godot-demo-projects/blob/master/2d/dodge_the_creeps/player.tscn
+- 확인 내용:
+  - right 방향 2프레임
+  - up 방향 2프레임
+  - 각 clip speed 5
+  - 별도 Trail GPUParticles2D
+
+단순 스타일의 보행은 방향별 두 자세와 보조 trail만으로도 성립할 수 있다는 실제 사례다. 그러나 2프레임이 모든 보행의 표준이라는 뜻은 아니다.
+
+#### 12프레임 회전 루프
+
+- 파일: https://github.com/godotengine/godot-demo-projects/blob/master/2d/platformer/gui/coins_counter.tscn
+- 확인 내용:
+  - `coin_spinning` clip
+  - 12개 SpriteFrame
+  - loop
+  - speed 12
+
+연속 회전처럼 중간 외형 변화 자체가 동작 정보인 경우 더 많은 프레임이 자연스럽다.
+
+#### 135개 본 animation track 경로
+
+- 파일: https://github.com/godotengine/godot-demo-projects/blob/master/2d/skeleton/player/player.tscn
+- 확인 내용:
+  - animation track path 135개
+  - 다수 Bone2D와 여러 movement clip
+
+다수 관절과 여러 clip을 재사용하는 경우 프레임 수 문제가 아니라 rig·track 복잡도 문제로 전환된다.
+
+### 20.7.4 정보 기반 1차 판정 질문
+
+다음 순서로 판단한다.
+
+1. 본체의 실루엣이 변해야 하는가?
+2. 접촉점이나 방향이 바뀌는가?
+3. 중간 자세가 gameplay 판독에 필요한가?
+4. 프레임별 duration이 의미를 갖는가?
+5. hitbox, socket, event가 시간에 따라 이동하는가?
+6. 같은 동작을 많은 외형이 공유해야 하는가?
+
+판정:
+
+- 1이 아니면 Transform/Tween 또는 VFX
+- 1은 아니지만 의미 상태가 바뀌면 State Swap
+- 실루엣 변화가 소수 강체 파트에만 있으면 Rigid Parts
+- 1~2가 맞고 3~5가 약하면 제한 프레임
+- 3~5가 강하면 완전 프레임
+- 6이 강하고 rig 비용을 감당하면 Rig/Paper-doll
+
+### 20.7.5 Motion Tier
+
+#### Tier 0 — 정적 자산
+
+출력:
+
+- 단일 RGBA
+- pivot와 collision
+- animation 없음
+
+적합:
+
+- 바닥 장식
+- 고정 벽·기둥
+- 상태 변화 없는 소품
+
+#### Tier 1 — Runtime Motion Recipe
+
+출력:
+
+- 단일 RGBA
+- Transform/Tween recipe
+- 선택적 VFX
+
+적합:
+
+- 부유
+- 진동
+- recoil
+- 알림 pulse
+- UI feedback
+
+#### Tier 2 — Semantic State Swap
+
+출력:
+
+- 상태별 정적 RGBA
+- state graph
+- 상태별 collision/interaction
+
+적합:
+
+- on/off
+- intact/damaged
+- empty/full
+- built/unbuilt
+
+중간 전환이 중요하면 Tier 3 이상으로 승격한다.
+
+#### Tier 3 — Simple Rigid Parts
+
+출력:
+
+- base + 파트 1~4개
+- pivot, anchor, socket
+- 제한 transform
+- assembly manifest
+
+적합:
+
+- 포탑
+- 상자 뚜껑
+- 레버
+- 기계 팔
+- 차량 로터
+
+#### Tier 4 — Limited Transition Frames
+
+기본 범위:
+
+- 핵심 자세 2~4장
+- frame별 duration
+- loop 또는 one-shot
+- 선택적 event 1~2개
+- VFX 보강
+
+적합:
+
+- 짧은 점멸
+- 작은 UI 아이콘 loop
+- 간단한 2자세 보행
+- opening snap
+- 짧은 피격 반응
+- 간단한 환경 flicker
+
+승격 조건:
+
+- 중간 실루엣이 잘못 읽힘
+- 접지점이 미끄러짐
+- contact frame이 불명확
+- event가 2개를 넘어 복잡해짐
+- 한 프레임에 너무 많은 변화가 압축됨
+
+#### Tier 5 — Full Frame Animation
+
+프레임 수는 동작별로 결정한다.
+
+필수:
+
+- 명시적 frame sequence
+- frame별 duration
+- anticipation, action/contact, recovery 구분
+- event marker
+- frame별 또는 구간별 collision profile
+- loop seam 검증
+- 방향 variant 정책
+
+적합:
+
+- 보행·달리기
+- 근접 공격
+- 도약·착지
+- 사망과 붕괴
+- 손과 대상이 맞닿는 상호작용
+- 실루엣이 연속 변화하는 회전
+- 복잡한 생물 움직임
+
+#### Tier 6 — Full Rig / Paper-doll
+
+출력:
+
+- bone/rest pose
+- slot/skin/attachment
+- animation tracks
+- compatibility matrix
+- engine adapter
+- 선택적 baked frames
+
+적합:
+
+- 다수 외형이 동일 동작 공유
+- 장비 교체가 핵심 시스템
+- clip 수가 많고 지속적으로 확장
+
+기본 모드가 아니라 gated mode다.
+
+### 20.7.6 제한 프레임의 구성 원칙
+
+2~4장을 단순 균등 샘플링하지 않는다. 의미 있는 자세를 고른다.
+
+예시:
+
+```text
+2장: A / B
+3장: anticipation / contact / settle
+4장: anticipation / action / contact / recovery
+```
+
+프레임 duration은 동일할 필요가 없다.
+
+```yaml
+frames:
+  - id: anticipation
+    duration_ms: 120
+  - id: contact
+    duration_ms: 60
+    events: [hit_contact, vfx_emit]
+  - id: recovery
+    duration_ms: 180
+```
+
+contact를 짧게, hold가 필요한 anticipation이나 recovery를 길게 두는 식의 timing을 허용한다.
+
+### 20.7.7 완전 프레임 승격 조건
+
+다음 중 하나라도 gameplay에 중요하면 완전 프레임을 우선한다.
+
+- 발이 바닥과 교대로 접촉
+- 손·무기·도구의 궤적이 판정과 일치
+- 몸 중심이 이동하며 root motion을 암시
+- anticipation 방향이 공격 대응에 필요
+- contact 직후 recovery가 취소 창과 연결
+- 방향 전환 중 앞뒤 가림이 바뀜
+- 큰 연체·천·꼬리·날개가 연속 변형
+- silhouette가 중간에 여러 번 바뀜
+- frame별 collider 또는 hurtbox가 다름
+
+### 20.7.8 Asset Studio Clip Contract
+
+```yaml
+clip:
+  id: attack_light
+  motion_tier: full_frame
+  loop: false
+  direction: forward
+  frames:
+    - image: attack_light_00.png
+      duration_ms: 100
+      phase: anticipation
+    - image: attack_light_01.png
+      duration_ms: 70
+      phase: action
+    - image: attack_light_02.png
+      duration_ms: 45
+      phase: contact
+      events: [attack_contact, vfx_emit]
+      collision_profile: hit_active
+    - image: attack_light_03.png
+      duration_ms: 160
+      phase: recovery
+  interrupt_policy:
+    before_contact: cancellable
+    after_contact: recovery_only
+```
+
+필수 metadata:
+
+- stable clip ID
+- motion tier
+- frame image 또는 atlas key
+- frame duration
+- loop와 direction
+- phase
+- event markers
+- pivot와 logical canvas
+- collision profile
+- interrupt policy
+
+### 20.7.9 AI 생성 방식
+
+제한·완전 프레임 모두 프레임별 독립 생성은 금지한다.
+
+권장 순서:
+
+1. canonical base 잠금
+2. key pose 설계
+3. ground contact와 pivot 잠금
+4. phase별 change mask 정의
+5. key pose 생성
+6. 필요한 in-between만 생성
+7. onion/difference QA
+8. palette·outline·volume drift 수정
+9. timing과 event 설정
+10. engine preview 승인
+
+AI는 in-between 후보를 만들 수 있지만 contact, silhouette, collision, event timing은 사람이 승인해야 한다.
+
+### 20.7.10 QA
+
+공통 검사:
+
+- canvas와 pivot 일치
+- ground contact drift
+- volume·비례 변화
+- palette와 outline drift
+- ghost pixel과 투명 halo
+- atlas clipping
+- loop seam
+- direction metadata
+- frame duration 0 또는 음수
+- event가 clip 범위를 벗어남
+- collision profile 누락
+
+제한 프레임 추가 검사:
+
+- 핵심 phase 누락
+- 한 프레임에 과도한 변화
+- 접촉 시점 불명확
+- VFX off에서 동작 판독 실패
+
+완전 프레임 추가 검사:
+
+- foot sliding
+- arc discontinuity
+- anticipation/contact/recovery 혼동
+- frame별 body volume 변화
+- cancel window와 visual phase 불일치
+- 방향별 frame 수와 event 불일치
+
+### 20.7.11 판정
+
+프레임 선택 기준은 숫자가 아니라 다음이다.
+
+> gameplay와 시각 판독에 필요한 서로 다른 실루엣·접촉·타이밍 상태의 수
+
+2~4개의 의미 자세로 정보가 충분하면 제한 프레임을 사용한다. 그렇지 않으면 완전 프레임으로 간다. VFX나 Tween으로 누락된 본체 자세를 가리지 않는다.
+
+이 항목은 조사 완료로 판정한다.
+
+---
+
+# 21. 전체 최종 결론
+
+## 21.1 최종 답
+
+범용 AI Pixel Asset Studio가 선택해야 할 방향은 하나의 만능 애니메이션 방식이 아니다.
+
+> **Canonical Asset + Motion Tier + Engine-neutral Manifest + Preview/QA + Adapter Export**
+
+즉, 먼저 일관된 기준 자산을 만들고 에셋별 정보 요구량에 따라 가장 낮은 비용의 motion tier를 선택한 뒤, 공통 metadata와 검증을 거쳐 엔진별로 내보내는 구조가 최종 방향이다.
+
+## 21.2 6개 방식의 최종 역할
+
+| 방식 | 제품 내 역할 | 기본 여부 | 핵심 경계 |
+|---|---|---:|---|
+| 단일 이미지 + Transform/Tween | 가장 저렴한 runtime motion recipe | 기본 | 실루엣 자체는 변하지 않음 |
+| 정적 본체 + 움직이는 파츠 | 소수 강체 부품 조립 | 기본 | 파트 1~4개, 얕은 계층 |
+| 상태 교체형 | 의미 상태 표현 | 기본 | 전환 중간 동작이 중요하지 않음 |
+| VFX 주도형 | 힘·속도·접촉 보강 | 기본 | 본체 판독을 대체하지 않음 |
+| 제한/완전 프레임 | 실제 자세 변화와 timing | 기본 | 정보량에 따라 제한→완전 승격 |
+| 리깅·페이퍼돌 | 대규모 외형·동작 재사용 | 선택/gated | 별도 schema·editor·adapter 필요 |
+
+## 21.3 제품의 중심은 Motion Generator가 아니라 Motion Router
+
+AI가 모든 자산에 walk cycle이나 rig를 생성하는 제품은 범용적이지 않다.
+
+제품의 핵심 지능은 다음이다.
+
+1. 에셋의 의미와 사용 맥락 파악
+2. 필요한 시각·gameplay 정보 판정
+3. 가장 단순한 유효 motion tier 추천
+4. 부족한 경우 한 단계씩 승격
+5. 생성·조립·metadata·QA를 일관된 계약으로 출력
+
+따라서 핵심 기능명은 사실상 `Animation Generator`보다 `Motion Strategy Router`에 가깝다.
+
+## 21.4 권장 제품 구조
+
+```text
+Project Style Bible
+  ↓
+Canonical Asset
+  ↓
+Motion Strategy Router
+  ├─ Static
+  ├─ Transform/Tween
+  ├─ State Swap
+  ├─ Rigid Parts
+  ├─ Limited Frames
+  ├─ Full Frames
+  ├─ VFX Recipe
+  └─ Gated Rig/Paper-doll
+  ↓
+Unified Manifest
+  ↓
+Preview + QA
+  ↓
+Engine Adapters / PNG+JSON / Baked Frames
+```
+
+## 21.5 Canonical Asset가 최우선인 이유
+
+AI 생성의 가장 큰 위험은 각 frame·state·part를 독립적으로 생성해 동일 물체가 달라지는 것이다.
+
+모든 모드가 공유해야 할 기준:
+
+- logical canvas
+- pivot와 ground contact
+- facing와 투시
+- scale과 pixels-per-unit
+- palette profile
+- outline 규칙
+- 광원 방향
+- alpha와 sampling
+- stable asset ID
+
+이 기준이 잠기지 않으면 뒤의 animation과 rig 기능이 많아질수록 오류도 커진다.
+
+## 21.6 Unified Manifest
+
+공통 core:
+
+```yaml
+asset:
+  id: stable_machine_01
+  schema_version: 1
+  logical_canvas: [96, 96]
+  pivot: [48, 82]
+  facing: front
+  pixels_per_unit: 16
+  palette_profile: project_default
+  motion_tier: rigid_parts
+```
+
+tier별 extension:
+
+- transform recipe
+- states와 transitions
+- parts와 sockets
+- frame clips와 events
+- VFX emitters
+- rig bones/slots/skins
+
+core ID와 좌표계는 어떤 tier에서도 변하지 않아야 한다.
+
+## 21.7 에셋 유형별 기본 추천
+
+### 환경·소품
+
+우선순위:
+
+1. Static
+2. State Swap
+3. Rigid Parts
+4. VFX
+5. Limited Frames
+
+문·상자·기계·레버는 대부분 이 범위에서 해결한다.
+
+### 차량·기계
+
+우선순위:
+
+1. Rigid Parts
+2. Transform/Tween
+3. VFX
+4. State Swap
+5. Full Frames는 특수 변형에만 사용
+
+### UI·아이콘
+
+우선순위:
+
+1. Transform/Tween
+2. State Swap
+3. Limited Frames
+4. VFX
+
+### 캐릭터·생물
+
+우선순위:
+
+1. Full Frame Animation
+2. 필요한 부분만 VFX
+3. 다수 외형·장비 재사용 시에만 Rig/Paper-doll
+
+캐릭터 보행·공격을 정적 본체 흔들기나 VFX로 기본 대체하지 않는다.
+
+## 21.8 MVP 범위
+
+### MVP에 포함
+
+- canonical asset lock
+- static RGBA export
+- Transform/Tween recipe
+- State Swap
+- Rigid Parts 1~4개
+- Limited/Full Frame clip import·생성·편집
+- frame duration과 event marker
+- 기본 VFX recipe와 sprite flipbook
+- unified PNG/atlas+JSON manifest
+- pixel preview와 QA
+- Godot 우선 adapter
+- engine-neutral export
+
+### MVP에서 제외 또는 후순위
+
+- full skeletal mesh deformation editor
+- weight painting
+- IK editor
+- 무제한 paper-doll 조합
+- 복잡한 clipping mask animation
+- 모든 엔진용 rig runtime
+- 자동 완전 rig 승인
+
+리깅은 core가 안정된 뒤 별도 milestone으로 개발한다.
+
+## 21.9 자동 추천 규칙
+
+```text
+실루엣 변화 없음
+  → Transform/Tween
+
+지속되는 의미 상태만 변경
+  → State Swap
+
+강체 부품 1~4개만 이동
+  → Rigid Parts
+
+본체 동작은 읽히고 효과만 부족
+  → VFX 보강
+
+핵심 자세 2~4장으로 timing 전달 가능
+  → Limited Frames
+
+접지·궤적·판정·recovery가 연속적으로 중요
+  → Full Frames
+
+다수 skin/장비가 많은 clip을 공유
+  → Rig Eligibility 검사
+```
+
+## 21.10 승격은 자동, 강등은 승인제
+
+낮은 tier에서 검증 실패하면 다음 tier를 추천할 수 있다.
+
+- Transform → Limited Frames
+- State Swap → Transition Frames
+- Rigid Parts → Full Frames 또는 Rig
+- VFX-only → Limited/Full Frames
+- Limited Frames → Full Frames
+
+반대로 Full Frames를 Transform이나 VFX로 강등하면 정보가 손실될 수 있으므로 사용자 승인 없이 자동 강등하지 않는다.
+
+## 21.11 공통 Preview와 QA가 제품 차별점
+
+생성 자체보다 중요한 것은 실제 게임에서 쓸 수 있는지 검증하는 것이다.
+
+필수 공통 프리뷰:
+
+- 1× 실제 픽셀
+- 정수 확대
+- 체커보드·밝은색·어두운색·복잡한 배경
+- pivot와 ground contact
+- collision·interaction·socket overlay
+- deterministic playback
+- VFX off
+- atlas trim 전후
+- engine adapter 결과
+
+필수 공통 QA:
+
+- alpha와 halo
+- nearest sampling
+- logical canvas
+- pivot drift
+- palette·outline·광원 drift
+- atlas clipping
+- event·collision 불일치
+- loop seam
+- draw order와 clipping
+- runtime/baked 차이
+
+## 21.12 AI 역할의 최종 경계
+
+AI에게 맡길 수 있는 것:
+
+- mode 추천
+- canonical asset 변형 후보
+- 상태·파트·key pose 후보 생성
+- constrained in-between
+- VFX texture와 recipe 초안
+- metadata 초안
+- 자동 QA와 오류 후보 탐지
+
+사람이 승인해야 하는 것:
+
+- canonical base
+- gameplay-readable silhouette
+- contact timing
+- hitbox와 socket
+- rig hierarchy와 weights
+- equipment compatibility
+- 최종 pixel cluster 품질
+
+## 21.13 개발 우선순위
+
+1. Canonical asset와 style lock
+2. Unified manifest와 schema versioning
+3. Transform/Tween
+4. State Swap
+5. Rigid Parts
+6. Frame clip·timing·event
+7. VFX recipe
+8. Preview/QA 강화
+9. Godot adapter와 baked export
+10. Rig/Paper-doll gated extension
+
+이 순서는 저비용·범용 기능부터 실제 사용 가능성을 확보하고, 가장 복잡하고 엔진 결합도가 높은 rig를 뒤로 미룬다.
+
+## 21.14 최종 제품 판정
+
+최종적으로 Asset Studio는 다음 제품이어야 한다.
+
+> **AI가 픽셀 자산을 무조건 애니메이션으로 만드는 도구가 아니라, 자산의 역할에 맞는 최소 충분 동작 방식을 선택하고 게임 엔진에 넣을 수 있는 데이터까지 검증·출력하는 제작 시스템**
+
+가장 중요한 결론은 세 가지다.
+
+1. **정적·상태·파츠·VFX·프레임·리그를 하나의 난이도 연속선으로 관리한다.**
+2. **항상 가장 낮은 유효 tier에서 시작하되 판독 실패 시 즉시 승격한다.**
+3. **리깅은 기본 기능이 아니라 별도 gated 하위 제품으로 둔다.**
+
+이 구조가 범용성, 제작 비용, 픽셀 품질, 엔진 호환성과 AI 일관성을 동시에 가장 잘 지킨다.
+
+전체 1~6 조사와 최종 결론을 완료한다.
