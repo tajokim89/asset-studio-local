@@ -542,9 +542,89 @@ def assemble_actor_head_locked_frames(
     return result
 
 
+def assemble_canonical_walk_frames(
+    neutral_png: bytes,
+    left_png: bytes,
+    right_png: bytes,
+) -> dict[str, Any]:
+    """Build N/L/N/R on the uploaded neutral frame's exact RGBA canvas."""
+    try:
+        with Image.open(io.BytesIO(bytes(neutral_png))) as source:
+            if source.format != "PNG":
+                raise ActorAssemblyError("walk neutral frame is not a valid PNG")
+            source.load()
+            neutral = source.convert("RGBA")
+    except ActorAssemblyError:
+        raise
+    except (OSError, UnidentifiedImageError, ValueError, TypeError) as error:
+        raise ActorAssemblyError("walk neutral frame is not a valid PNG") from error
+
+    neutral_bbox = neutral.getchannel("A").getbbox()
+    if neutral_bbox is None:
+        raise ActorAssemblyError("walk neutral frame is empty")
+    width, height = neutral.size
+    if neutral_bbox[0] == 0 or neutral_bbox[1] == 0 or neutral_bbox[2] == width or neutral_bbox[3] == height:
+        raise ActorAssemblyError("walk neutral frame alpha touches source edge")
+
+    generated_frames = []
+    generated_geometry = []
+    for output_index, raw in ((1, left_png), (3, right_png)):
+        generated, source_bbox = _decode_frame(raw, output_index)
+        crop = generated.crop(source_bbox)
+        drawable_width = width - 2
+        drawable_height = neutral_bbox[3] - neutral_bbox[1]
+        scale = min(
+            Fraction(1, 1),
+            Fraction(drawable_width, crop.width),
+            Fraction(drawable_height, crop.height),
+        )
+        resized_size = (_scaled_dimension(crop.width, scale), _scaled_dimension(crop.height, scale))
+        if resized_size[0] > drawable_width or resized_size[1] > drawable_height:
+            raise ActorAssemblyError(f"generated walk frame {output_index + 1} cannot fit neutral canvas")
+        resized = _zero_transparent_rgb(crop.resize(resized_size, Image.Resampling.NEAREST))
+        left = (width - resized.width) // 2
+        bottom = min(height - 1, neutral_bbox[3])
+        top = bottom - resized.height
+        if left < 1 or top < 1 or left + resized.width >= width or top + resized.height >= height:
+            raise ActorAssemblyError(f"generated walk frame {output_index + 1} cannot fit neutral canvas")
+        normalized = Image.new("RGBA", neutral.size, (0, 0, 0, 0))
+        normalized.alpha_composite(resized, (left, top))
+        generated_frames.append(_zero_transparent_rgb(normalized))
+        generated_geometry.append({
+            "index": output_index,
+            "source_size": list(generated.size),
+            "source_alpha_bbox": list(source_bbox),
+            "resized_size": list(resized_size),
+            "offset": [left, top],
+            "scale": {"numerator": scale.numerator, "denominator": scale.denominator, "value": float(scale)},
+        })
+
+    frames = (neutral, generated_frames[0], neutral.copy(), generated_frames[1])
+    sheet = Image.new("RGBA", (width * 4, height), (0, 0, 0, 0))
+    for index, frame in enumerate(frames):
+        sheet.paste(frame, (index * width, 0))
+    return {
+        "sheet_png": _png_bytes(sheet),
+        "normalized_frame_pngs": tuple(_png_bytes(frame) for frame in frames),
+        "geometry": {
+            "schema_version": "asset-studio.actor-walk-assembly/v1",
+            "layout": "horizontal",
+            "alignment": "uploaded-neutral-canvas",
+            "frame_count": 4,
+            "cell_size": [width, height],
+            "sheet_size": [width * 4, height],
+            "source_size": [width, height],
+            "resampling": "nearest-neighbor-generated-frames-only",
+            "neutral_preservation": "exact-rgba-pixels-and-dimensions",
+            "generated_frames": generated_geometry,
+        },
+    }
+
+
 __all__ = [
     "ActorAssemblyError",
     "assemble_actor_canvas_frames",
     "assemble_actor_frames",
     "assemble_actor_head_locked_frames",
+    "assemble_canonical_walk_frames",
 ]

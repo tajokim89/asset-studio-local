@@ -139,7 +139,10 @@ def validate_pose_blueprint(value: Any) -> dict[str, Any]:
         _fail("$.topology", f"must equal {HUMANOID_BIPED_TOPOLOGY!r}")
     _enum(blueprint["direction"], "$.direction", DIRECTIONS)
     action = _identifier(blueprint["action"], "$.action")
-    beat_id = _identifier(blueprint["beat_id"], "$.beat_id")
+    if blueprint["beat_id"] in {"N", "L", "R"}:
+        beat_id = blueprint["beat_id"]
+    else:
+        beat_id = _identifier(blueprint["beat_id"], "$.beat_id")
     _integer(blueprint["frame_index"], "$.frame_index", minimum=0, maximum=255)
 
     canvas = _strict_object(blueprint["canvas"], "$.canvas", {"width", "height"})
@@ -226,9 +229,9 @@ def validate_pose_blueprint(value: Any) -> dict[str, Any]:
         _fail("$.support_foot", "none cannot include a planted or landing foot")
 
     if action == "walk":
-        expected_side = beat_id.split("-", 1)[0]
+        expected_side = {"L": "left", "R": "right"}.get(beat_id, beat_id.split("-", 1)[0])
         if expected_side not in {"left", "right"}:
-            _fail("$.beat_id", "walk beat must begin with left- or right-")
+            _fail("$.beat_id", "walk beat must identify left or right support")
         if support != expected_side:
             _fail("$.support_foot", f"must be {expected_side!r} for beat {beat_id!r}")
         if contact != support:

@@ -17,6 +17,7 @@ import server
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 SERVER = (ROOT / "server.py").read_text(encoding="utf-8")
+ACTOR_PROFILE = (ROOT / "profiles" / "generic-pixel-actor-v1.json").read_text(encoding="utf-8")
 FAMILIES = ("sprite", "tile", "ui", "object")
 
 
@@ -228,13 +229,13 @@ def test_server_has_one_family_normalizer_with_nested_family_isolation():
     )
 
 
-def test_server_normalizer_keeps_legacy_flat_sprite_payload_fallbacks():
+def test_server_normalizer_keeps_non_profile_legacy_flat_sprite_payload_fallbacks():
     _name, body = _server_normalizer()
     # Legacy clients currently send these at the root. New nested values may take
     # precedence, but all flat reads must remain valid during migration.
     for key in (
         "animation_mode", "direction_mode", "target_direction", "reference_direction",
-        "frame_count", "walk_frames", "chroma_mode",
+        "chroma_mode",
     ):
         assert re.search(rf"\b\w+\s*\.\s*get\s*\(\s*['\"]{key}['\"]", body), (
             f"Server normalizer lost legacy flat fallback for {key!r}"
@@ -345,15 +346,14 @@ def test_generation_endpoints_use_normalized_contract_and_gate_sprite_postproces
 
 def test_phase25_walk_and_action_constants_stay_present_during_payload_migration():
     # Payload normalization must wrap, not replace, the proven actor contract.
-    assert "neutral-left-cross-neutral-right-cross" in JS
+    assert "recipe.beats.join(',') !== 'N,L,N,R'" in JS
     for token in (
         "Reference Identity Lock", "Full-Frame Pose Lock", "Equipment Lock", "Direction Lock",
         "Root Lock", "Motion Read", "Loop Read", "Production Clean",
     ):
         assert token in JS and token in SERVER
     for action in ("idle", "walk", "attack", "jump", "cast", "hurt", "death"):
-        assert re.search(rf"['\"]?{action}['\"]?\s*:", JS)
-        assert re.search(rf"['\"]{action}['\"]\s*:", SERVER)
+        assert f'"id": "{action}"' in ACTOR_PROFILE
 
 
 def test_effect_client_contract_selects_static_or_sequence_mode_and_no_actor_direction():

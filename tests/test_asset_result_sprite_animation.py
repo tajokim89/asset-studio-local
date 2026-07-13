@@ -33,7 +33,7 @@ const desc=deriveResultSpriteAnimation(result);
 const rects=deriveSpriteFrameRectangles(desc,{width:128,height:32});
 const repeated=detectRepeatedAnimationFrames([new Uint8Array([0,0,0,255]),new Uint8Array([0,0,0,255]),new Uint8Array([1,0,0,255]),new Uint8Array([1,0,0,255])]);
 const moving=detectRepeatedAnimationFrames([new Uint8Array([0,0,0,255]),new Uint8Array([255,0,0,255]),new Uint8Array([0,255,0,255]),new Uint8Array([0,0,255,255])]);
-console.log(JSON.stringify({desc,rects,beats4:deriveWalkBeatLabels('walk4',4),beats6:deriveWalkBeatLabels('walk',6),repeated,moving,badGrid:capture(()=>deriveSpriteFrameRectangles(desc,{width:127,height:32})),implausibleStrip:capture(()=>deriveSpriteFrameRectangles(desc,{width:128,height:128})),budget:capture(()=>deriveSpriteFrameRectangles(desc,{width:32768,height:32768})),gateFail:resultWalkQaGate(desc,{status:'FAIL'},true),gatePending:resultWalkQaGate(desc,{status:'PASS'},false),gatePass:resultWalkQaGate(desc,{status:'PASS'},true)}));
+console.log(JSON.stringify({desc,rects,beats4:deriveWalkBeatLabels('walk',4),beats6:deriveWalkBeatLabels('walk',6),repeated,moving,badGrid:capture(()=>deriveSpriteFrameRectangles(desc,{width:127,height:32})),implausibleStrip:capture(()=>deriveSpriteFrameRectangles(desc,{width:128,height:128})),budget:capture(()=>deriveSpriteFrameRectangles(desc,{width:32768,height:32768})),gateFail:resultWalkQaGate(desc,{status:'FAIL'},true),gatePending:resultWalkQaGate(desc,{status:'PASS'},false),gatePass:resultWalkQaGate(desc,{status:'PASS'},true)}));
 '''
     cp=subprocess.run(['node','-e',script],cwd=ROOT,text=True,capture_output=True)
     assert cp.returncode==0,cp.stderr
@@ -45,7 +45,7 @@ def test_pure_descriptor_rectangles_and_fail_closed_budgets():
     assert [r['x'] for r in out['rects']]==[0,32,64,96]
     assert out['badGrid']['ok'] is False and out['implausibleStrip']['ok'] is False and out['budget']['ok'] is False
 
-def test_walk_labels_are_semantically_exact_only_for_walk4():
+def test_walk_labels_are_semantically_exact_only_for_canonical_four_frame_walk():
     out=runtime()
     assert out['beats4']==[{'label':'N','semantic':True},{'label':'L','semantic':True},{'label':'N','semantic':True},{'label':'R','semantic':True}]
     assert [x['label'] for x in out['beats6']]==['N','L','N','R','N','L']
@@ -68,5 +68,6 @@ def test_result_card_has_inline_controls_cleanup_and_safe_static_fallback():
 
 def test_single_direction_walk_prompt_has_four_explicit_beats_and_translation_lock():
     source=JS_PATH.read_text()
-    for phrase in ('neutral contact','left-foot stride','right-foot stride','whole-body translation','root baseline'):
+    assert "recipe.beats.join(',') !== 'N,L,N,R'" in source
+    for phrase in ('root_foot_lock', 'silhouette_lock'):
         assert phrase in source.lower()

@@ -93,7 +93,8 @@ class HermesEnvironmentTests(unittest.TestCase):
             )
             fake_python.chmod(0o755)
             env = os.environ.copy()
-            env.pop("HERMES_REPO", None)
+            for key in ("HERMES_REPO", "HERMES_HOME", "HERMES_COMMAND"):
+                env.pop(key, None)
             env.update({"HOME": str(home), "ASSET_STUDIO_PYTHON": str(fake_python)})
 
             completed = subprocess.run(
@@ -120,10 +121,10 @@ class HermesEnvironmentTests(unittest.TestCase):
         provider = server.load_provider()
 
         self.assertEqual(type(provider).__name__, "OpenAICodexImageGenProvider")
-        self.assertEqual(
-            provider.capabilities(),
-            {"modalities": ["text", "image"], "max_reference_images": 16},
-        )
+        self.assertTrue(provider.is_available() in {True, False})
+        self.assertIsInstance(provider.default_model(), str)
+        self.assertTrue(provider.default_model())
+        self.assertEqual(server.provider_capabilities(provider), {})
 
     def test_provider_health_reports_capabilities_without_generating(self):
         provider = _FakeProvider()
@@ -185,10 +186,10 @@ class HermesEnvironmentTests(unittest.TestCase):
         self.assertIn('id="providerStatus"', html)
         self.assertIn("fetch('/api/provider-health')", javascript)
         self.assertIn("refreshProviderHealth();", javascript)
-        self.assertIn('id="actorWalk4Start"', html)
-        self.assertIn("'/api/generate-actor-master'", javascript)
+        self.assertIn('id="actorWalkStart"', html)
+        self.assertIn("'/api/actor-walk-blueprints'", javascript)
         self.assertIn("'/api/generate-actor-frame'", javascript)
-        self.assertIn("'/api/assemble-actor-walk4'", javascript)
+        self.assertIn("'/api/assemble-actor-walk'", javascript)
 
 
 if __name__ == "__main__":

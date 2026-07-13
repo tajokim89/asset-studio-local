@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import io
+import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
+from PIL import Image
+
 from asset_studio.actor_blueprint import render_pose_blueprint_prompt_png, se_attack_blueprints, se_idle_blueprints, se_walk_blueprints
-from server import build_actor_identity_detail_png
+from server import build_actor_identity_detail_png, walk_blueprints
 from tests.helpers.fake_image_provider import FakeImageProvider, deterministic_png
 from tests.helpers.http_generation_harness import GenerationHttpHarness
 
@@ -55,12 +61,12 @@ class ActorFrameGenerationApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             provider, harness = self.make_harness(Path(temp_dir))
             master = image_data_url("master")
-            blueprint = se_walk_blueprints()[1]
+            blueprint = walk_blueprints()[0]
 
             response = harness.post_json("/api/generate-actor-frame", {
                 "prompt": "black-skinned muscular orc in a brown leather tunic",
                 "negative": "green skin, extra limbs",
-                "direction": "SE",
+                "direction": "S",
                 "action": "walk",
                 "frame_index": 1,
                 "direction_master": master,
@@ -73,9 +79,9 @@ class ActorFrameGenerationApiTests(unittest.TestCase):
             self.assertTrue(payload["success"])
             self.assertEqual(payload["generation_stage"], "actor-frame")
             self.assertEqual(payload["action"], "walk")
-            self.assertEqual(payload["beat"], "left-down")
+            self.assertEqual(payload["beat"], "L")
             self.assertEqual(payload["frame_index"], 1)
-            self.assertEqual(payload["frame_count"], 6)
+            self.assertEqual(payload["frame_count"], 4)
             self.assertEqual(len(provider.calls), 1)
             call = provider.calls[0]
             self.assertEqual(call["image_url"], master)
@@ -112,22 +118,31 @@ class ActorFrameGenerationApiTests(unittest.TestCase):
             provider, harness = self.make_harness(Path(temp_dir))
             master = image_data_url("master")
             continuity = image_data_url("approved-frame-1")
-            blueprint = se_walk_blueprints()[2]
+            first_blueprint, blueprint = walk_blueprints()
+
+            first = harness.post_json("/api/generate-actor-frame", {
+                "prompt": "elder knight with sword and shield",
+                "direction": "S", "action": "walk", "frame_index": 1,
+                "direction_master": master, "pose_blueprint": first_blueprint,
+                "background_mode": "chroma_green",
+            })
+            self.assertEqual(first.status, 200)
 
             response = harness.post_json("/api/generate-actor-frame", {
                 "prompt": "elder knight with sword and shield",
-                "direction": "SE",
+                "direction": "S",
                 "action": "walk",
-                "frame_index": 2,
+                "frame_index": 3,
                 "direction_master": master,
                 "continuity_reference": continuity,
                 "pose_blueprint": blueprint,
                 "background_mode": "chroma_green",
+                "run_id": first.json()["run_id"],
             })
 
             self.assertEqual(response.status, 200)
             self.assertTrue(response.json()["continuity_reference_used"])
-            call = provider.calls[0]
+            call = provider.calls[1]
             self.assertEqual(call["reference_image_urls"][-1], continuity)
             self.assertIn("IMAGE 4 is the approved Continuity Reference", call["prompt"])
 
@@ -184,129 +199,171 @@ class ActorFrameGenerationApiTests(unittest.TestCase):
             self.assertIn("pose_blueprint action", response.json()["error"])
             self.assertEqual(provider.calls, [])
 
-    def test_walk4_blueprints_include_opposite_crossing_passes(self):
+    def test_walk_blueprints_generate_only_canonical_opposite_step_beats(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             _provider, harness = self.make_harness(Path(temp_dir))
 
-            response = harness.get_json("/api/actor-walk4-blueprints")
+            response = harness.get_json("/api/actor-walk-blueprints")
             payload = response.json()
 
             self.assertEqual(response.status, 200)
+            self.assertEqual(payload["action"], "walk")
             self.assertEqual(payload["frame_count"], 4)
-            self.assertEqual(
-                payload["beats"],
-                ["left-contact", "left-passing", "right-contact", "right-passing"],
-            )
-            self.assertEqual(
-                [blueprint["frame_index"] for blueprint in payload["blueprints"]],
-                [0, 2, 3, 5],
-            )
+            self.assertEqual(payload["beats"], ["N", "L", "N", "R"])
+            self.assertEqual(payload["generated_frame_indices"], [1, 3])
+            self.assertEqual([item["frame_index"] for item in payload["blueprints"]], [1, 3])
+            self.assertEqual([item["beat_id"] for item in payload["blueprints"]], ["L", "R"])
+            self.assertTrue(all(item["direction"] == "S" for item in payload["blueprints"]))
 
-            left_pass, right_pass = payload["blueprints"][1], payload["blueprints"][3]
-            left_contact, right_contact = payload["blueprints"][0], payload["blueprints"][2]
-            left_joints = {joint["name"]: joint for joint in left_pass["joints"]}
-            right_joints = {joint["name"]: joint for joint in right_pass["joints"]}
-            left_contact_joints = {joint["name"]: joint for joint in left_contact["joints"]}
-            right_contact_joints = {joint["name"]: joint for joint in right_contact["joints"]}
-
-            self.assertLess(left_joints["toe_r"]["x"], left_joints["toe_l"]["x"])
-            self.assertGreater(right_joints["toe_l"]["x"], right_joints["toe_r"]["x"])
-            self.assertLess(left_joints["toe_r"]["y"], left_pass["baseline"])
-            self.assertLess(right_joints["toe_l"]["y"], right_pass["baseline"])
-            self.assertLessEqual(round(abs(left_contact_joints["toe_l"]["x"] - left_contact_joints["toe_r"]["x"]) * 31), 2)
-            self.assertLessEqual(round(abs(right_contact_joints["toe_l"]["x"] - right_contact_joints["toe_r"]["x"]) * 31), 2)
-            self.assertGreater(left_joints["hand_l"]["y"], left_joints["hand_r"]["y"])
-            self.assertLess(right_joints["hand_l"]["y"], right_joints["hand_r"]["y"])
-            self.assertEqual(
-                {(joint["x"], joint["y"]) for joint in [
-                    left_contact_joints["head"], left_joints["head"],
-                    right_contact_joints["head"], right_joints["head"],
-                ]},
-                {(17 / 31, 6 / 31)},
-            )
-
-    def test_walk4_assembly_requires_four_visually_approved_frames(self):
+    def test_walk_assembly_rejects_client_only_visual_labels(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             provider, harness = self.make_harness(Path(temp_dir))
-            frames = [
-                {"image": image_data_url(f"walk-{index}"), "visual_qa": "PASS"}
-                for index in range(4)
-            ]
-            frames[2]["visual_qa"] = "PENDING"
+            source = deterministic_png("uploaded-walk-source")
+            frames = {"0": {
+                "image": png_data_url(source),
+                "artifact_digest": hashlib.sha256(source).hexdigest(),
+                "visual_qa": "PASS",
+            }}
+            generated = harness.post_json("/api/generate-actor-frame", {
+                "prompt": "preserve uploaded walk source", "direction": "S", "action": "walk",
+                "frame_index": 1, "direction_master": png_data_url(source),
+                "pose_blueprint": walk_blueprints()[0], "background_mode": "chroma_green",
+            })
+            self.assertEqual(generated.status, 200)
 
-            response = harness.post_json("/api/assemble-actor-walk4", {"frames": frames})
+            response = harness.post_json("/api/assemble-actor-walk", {
+                "run_id": generated.json()["run_id"], "source_digest": generated.json()["source_digest"],
+                "frames": frames, "approvals": {},
+            })
 
             self.assertEqual(response.status, 400)
-            self.assertIn("visual_qa=PASS", response.json()["error"])
-            self.assertEqual(provider.calls, [])
+            self.assertIn("frame 1", response.json()["error"])
+            self.assertEqual(len(provider.calls), 1)
 
-    def test_walk4_assembly_returns_sheet_and_normalized_preview_frames_without_provider_call(self):
+    def test_fake_provider_runs_uploaded_source_two_generation_and_approved_assembly_flow(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             provider, harness = self.make_harness(Path(temp_dir))
-            frames = [
-                {"image": image_data_url(f"walk-{index}"), "visual_qa": "PASS"}
-                for index in range(4)
-            ]
-
-            response = harness.post_json("/api/assemble-actor-walk4", {
-                "frames": frames,
-                "cell_size": 64,
-                "padding": 4,
-            })
-            payload = response.json()
-
-            self.assertEqual(response.status, 200)
-            self.assertTrue(payload["export_ready"])
-            self.assertEqual(len(payload["frame_urls"]), 4)
-            self.assertEqual(payload["geometry"]["sheet_size"], [256, 64])
-            self.assertEqual(payload["geometry"]["alignment"], "head-and-ground-lock")
-            self.assertEqual(provider.calls, [])
-
-    def test_fake_provider_runs_complete_master_four_frame_and_assembly_flow(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            provider, harness = self.make_harness(Path(temp_dir))
-            blueprints = harness.get_json("/api/actor-walk4-blueprints").json()["blueprints"]
-            master_response = harness.post_json("/api/generate-actor-master", {
-                "prompt": "a flexible user-defined actor with a red coat",
-                "direction": "SE",
-                "background_mode": "chroma_green",
-            }).json()
-            master_data_url = png_data_url(Path(master_response["path"]).read_bytes())
-            approved_frames = []
+            blueprints = harness.get_json("/api/actor-walk-blueprints").json()["blueprints"]
+            source = deterministic_png("uploaded flexible actor with red coat")
+            source_url = png_data_url(source)
+            frames = {"0": {"image": source_url, "artifact_digest": hashlib.sha256(source).hexdigest()}}
+            approvals = {}
+            run_id = None
+            source_digest = hashlib.sha256(source).hexdigest()
 
             for blueprint in blueprints:
-                response = harness.post_json("/api/generate-actor-frame", {
-                    "prompt": "this value must be replaced by identity_spec",
-                    "identity_spec": master_response["identity_spec"],
-                    "direction": "SE",
+                request = {
+                    "prompt": "preserve the uploaded flexible actor with red coat",
+                    "direction": "S",
                     "action": "walk",
                     "frame_index": blueprint["frame_index"],
-                    "direction_master": master_data_url,
+                    "direction_master": source_url,
                     "pose_blueprint": blueprint,
                     "background_mode": "chroma_green",
-                })
+                }
+                if run_id is not None:
+                    request["run_id"] = run_id
+                response = harness.post_json("/api/generate-actor-frame", request)
                 self.assertEqual(response.status, 200)
                 frame = response.json()
-                approved_frames.append({
-                    "image": png_data_url(Path(frame["path"]).read_bytes()),
-                    "visual_qa": "PASS",
+                run_id = run_id or frame["run_id"]
+                raw = Path(frame["path"]).read_bytes()
+                index = blueprint["frame_index"]
+                frames[str(index)] = {"image": png_data_url(raw), "artifact_digest": frame["artifact_digest"]}
+                approved = harness.post_json("/api/approve-actor-walk-frame", {
+                    "run_id": run_id, "source_digest": source_digest,
+                    "artifact_digest": frame["artifact_digest"], "frame_index": index,
+                    "beat": blueprint["beat_id"], "decision": "APPROVED",
                 })
+                self.assertEqual(approved.status, 200)
+                approvals[str(index)] = approved.json()["approval_token"]
 
-            assembly = harness.post_json("/api/assemble-actor-walk4", {
-                "frames": approved_frames,
-                "cell_size": 64,
-                "padding": 4,
+            assembly = harness.post_json("/api/assemble-actor-walk", {
+                "run_id": run_id, "source_digest": source_digest,
+                "frames": frames, "approvals": approvals, "cell_size": 64, "padding": 4,
             })
 
             self.assertEqual(assembly.status, 200)
-            self.assertEqual(len(provider.calls), 5)
-            self.assertTrue(
-                all(
-                    "a flexible user-defined actor with a red coat" in call["prompt"]
-                    for call in provider.calls
-                )
-            )
+            self.assertEqual(len(provider.calls), 2)
+            self.assertTrue(all("uploaded flexible actor with red coat" in call["prompt"] for call in provider.calls))
             self.assertEqual(len(assembly.json()["frame_urls"]), 4)
+            with Image.open(io.BytesIO(source)) as uploaded:
+                self.assertEqual(assembly.json()["geometry"]["sheet_size"], [uploaded.width * 4, uploaded.height])
+
+    def test_walk_export_requires_real_server_token_and_preserves_uploaded_neutral_rgba(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider, harness = self.make_harness(Path(temp_dir))
+            source_image = Image.new("RGBA", (19, 23), (17, 29, 41, 0))
+            for y in range(4, 20):
+                for x in range(6, 13):
+                    source_image.putpixel((x, y), (173, 61, 37, 255))
+            source_buffer = io.BytesIO()
+            source_image.save(source_buffer, format="PNG")
+            source = source_buffer.getvalue()
+            source_url = png_data_url(source)
+            frames = {"0": {"image": source_url, "artifact_digest": hashlib.sha256(source).hexdigest()}}
+            approvals = {}
+            run_id = None
+            source_digest = hashlib.sha256(source).hexdigest()
+
+            for blueprint in harness.get_json("/api/actor-walk-blueprints").json()["blueprints"]:
+                request = {
+                    "prompt": "preserve uploaded actor",
+                    "direction": "S", "action": "walk",
+                    "frame_index": blueprint["frame_index"],
+                    "direction_master": source_url,
+                    "pose_blueprint": blueprint,
+                    "background_mode": "chroma_green",
+                }
+                if run_id is not None:
+                    request["run_id"] = run_id
+                generated_response = harness.post_json("/api/generate-actor-frame", request)
+                self.assertEqual(generated_response.status, 200)
+                generated = generated_response.json()
+                run_id = run_id or generated["run_id"]
+                raw = Path(generated["path"]).read_bytes()
+                index = blueprint["frame_index"]
+                frames[str(index)] = {"image": png_data_url(raw), "artifact_digest": generated["artifact_digest"]}
+                approval = harness.post_json("/api/approve-actor-walk-frame", {
+                    "run_id": run_id, "source_digest": source_digest,
+                    "artifact_digest": generated["artifact_digest"], "frame_index": index,
+                    "beat": blueprint["beat_id"], "decision": "APPROVED",
+                }).json()
+                approvals[str(index)] = approval["approval_token"]
+
+            assembly_response = harness.post_json("/api/assemble-actor-walk", {
+                "run_id": run_id, "source_digest": source_digest,
+                "frames": frames, "approvals": approvals, "cell_size": 64, "padding": 4,
+            })
+            self.assertEqual(assembly_response.status, 200)
+            assembly = assembly_response.json()
+            token = assembly["approval_provenance"]["assembly_token"]
+            self.assertNotEqual(token, assembly["approval_provenance"]["sheet_digest"])
+
+            forged = harness.post_json("/api/export-actor-walk", {
+                "assembly_token": "forged-client-token",
+                "approval_provenance": assembly["approval_provenance"],
+            })
+            self.assertEqual(forged.status, 400)
+
+            exported = harness.post_json("/api/export-actor-walk", {"assembly_token": token})
+            repeated = harness.post_json("/api/export-actor-walk", {"assembly_token": token})
+            self.assertEqual(exported.status, 200)
+            self.assertEqual(repeated.body, exported.body)
+            self.assertEqual(exported.headers["Content-Type"], "application/zip")
+            with zipfile.ZipFile(io.BytesIO(exported.body)) as package:
+                self.assertIsNone(package.testzip())
+                manifest = json.loads(package.read("manifest.json"))
+                self.assertEqual(manifest["beats"], ["N", "L", "N", "R"])
+                frame_1 = Image.open(io.BytesIO(package.read("frames/walk-000.png"))).convert("RGBA")
+                frame_3 = Image.open(io.BytesIO(package.read("frames/walk-002.png"))).convert("RGBA")
+                atlas = Image.open(io.BytesIO(package.read("atlas.png"))).convert("RGBA")
+                self.assertEqual(frame_1.size, source_image.size)
+                self.assertEqual(frame_3.size, source_image.size)
+                self.assertEqual(frame_1.tobytes(), source_image.tobytes())
+                self.assertEqual(frame_3.tobytes(), source_image.tobytes())
+                self.assertEqual(atlas.crop((0, 0, 19, 23)).tobytes(), source_image.tobytes())
+                self.assertEqual(atlas.crop((38, 0, 57, 23)).tobytes(), source_image.tobytes())
 
 
 if __name__ == "__main__":

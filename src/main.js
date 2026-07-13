@@ -381,14 +381,14 @@ function deriveResultSpriteAnimation(result) {
   const root=result?.normalizedContract||result?.sourceRequest||{},fallbackRoot=result?.sourceRequest||{},contract=root?.sprite||root,fallback=fallbackRoot?.sprite||fallbackRoot,frameCount=Number(contract.frame_count??contract.walk_frames??fallback.frame_count??fallback.walk_frames),url=result?.preview?.url||result?.artifacts?.find(a=>typeof a?.url==='string')?.url;
   if(result?.status!=='succeeded'||result?.family!=='sprite'||!['character','monster','npc'].includes(result?.type)||!Number.isSafeInteger(frameCount)||frameCount<=1||frameCount>RESULT_SPRITE_LIMITS.maxFrames||typeof url!=='string'||!url)return null;
   const direction=String(contract.target_direction??fallback.target_direction??'S').toUpperCase();if(!['S','N','W','SW','NW','E','SE','NE'].includes(direction))return null;
-  let action=String(contract.animation_mode??contract.action??fallback.animation_mode??fallback.action??'').toLowerCase();if(action==='walk'&&frameCount===4)action='walk4';else if(action==='walk'&&frameCount===6)action='walk6';return {url,frameCount,direction,action,fps:Math.min(24,Math.max(1,Number(contract.fps)||8)),autoPlay:true,horizontal:true};
+  const action=String(contract.animation_mode??contract.action??fallback.animation_mode??fallback.action??'').toLowerCase();return {url,frameCount,direction,action,fps:Math.min(24,Math.max(1,Number(contract.fps)||8)),autoPlay:true,horizontal:true};
 }
 function deriveSpriteFrameRectangles(descriptor,image) {
   if(!descriptor||!Number.isSafeInteger(descriptor.frameCount)||!image||!Number.isSafeInteger(image.width)||!Number.isSafeInteger(image.height)||image.width<1||image.height<1)throw new Error('invalid sprite animation geometry');
   const pixels=image.width*image.height,working=pixels*8;if(!Number.isSafeInteger(pixels)||pixels>RESULT_SPRITE_LIMITS.maxPixels||!Number.isSafeInteger(working)||working>RESULT_SPRITE_LIMITS.maxWorkingBytes)throw new Error('sprite animation memory budget exceeded');
   if(image.width%descriptor.frameCount!==0)throw new Error('sprite strip width is inconsistent with frame count');const width=image.width/descriptor.frameCount,height=image.height,aspect=width/height;if(!Number.isSafeInteger(width)||width<1)throw new Error('invalid sprite frame width');if(!Number.isFinite(aspect)||aspect<0.35||aspect>4)throw new Error('sprite frame aspect ratio is inconsistent with a horizontal strip');return Array.from({length:descriptor.frameCount},(_,index)=>({index,x:index*width,y:0,width,height}));
 }
-function deriveWalkBeatLabels(action,count) {if(!Number.isSafeInteger(count)||count<2||count%2)throw new Error('walk frame count must be even');const exact=String(action).toLowerCase()==='walk4'&&count===4,labels=['N','L','N','R'];return Array.from({length:count},(_,i)=>({label:labels[i%4],semantic:exact}));}
+function deriveWalkBeatLabels(action,count) {if(!Number.isSafeInteger(count)||count<2||count%2)throw new Error('walk frame count must be even');const exact=String(action).toLowerCase()==='walk'&&count===4,labels=['N','L','N','R'];return Array.from({length:count},(_,i)=>({label:labels[i%4],semantic:exact}));}
 function detectRepeatedAnimationFrames(frames) {
   if(!Array.isArray(frames)||frames.length<2)return {status:'UNKNOWN',reason:'insufficient frames'};const bytes=frames.map(f=>f instanceof Uint8Array||f instanceof Uint8ClampedArray?f:null);if(bytes.some(f=>!f||f.length!==bytes[0].length))return {status:'UNKNOWN',reason:'inconsistent pixel buffers'};
   const hash=f=>{let h=2166136261;for(let i=0;i<f.length;i++){h^=f[i];h=Math.imul(h,16777619)}return (h>>>0).toString(16)},hashes=bytes.map(hash),unique=new Set(hashes).size,staticSequence=unique===1||unique<=Math.floor(frames.length/2);return staticSequence?{status:'FAIL',reason:'duplicate or repeated frames',unique,total:frames.length,hashes}:{status:'PASS',reason:'deterministic frames differ',unique,total:frames.length,hashes};
@@ -686,120 +686,279 @@ async function refreshProviderHealth() {
   }
 }
 
-let actorWalk4State = null;
-let actorWalk4PreviewTimer = null;
+let actorWalkState = null;
+let actorWalkGenerationId = 0;
+let actorWalkGenerationInFlight = null;
+let actorWalkApprovalInFlight = null;
+let actorWalkAssemblyInFlight = null;
+const actorWalkAssemblyAdoptions = new Map();
 
-async function actorApi(path, payload = null) {
+const ACTOR_WALK_SOUTH_ONLY_MESSAGE = '제작용 walk 워크플로우는 현재 단일 방향 S(정면)만 지원합니다. 방향 모드를 1방향으로 설정하고 S를 선택하세요.';
+
+function actorWalkDirectionSupported() {
+  return ($('pixelDirectionMode')?.value || 'single') === 'single'
+    && ($('pixelTargetDirection')?.value || 'S') === 'S';
+}
+
+function syncActorWalkControls() {
+  const generating = !!actorWalkGenerationInFlight;
+  const approving = !!actorWalkApprovalInFlight;
+  const assembling = !!actorWalkAssemblyInFlight;
+  const busy = generating || approving || assembling;
+  const directionSupported = actorWalkDirectionSupported();
+  for (const id of ['actorWalkStart','actorWalkRetry']) if ($(id)) {
+    $(id).disabled = busy || !directionSupported;
+    $(id).title = directionSupported ? '' : ACTOR_WALK_SOUTH_ONLY_MESSAGE;
+  }
+  if ($('actorWalkApprove')) {
+    const reviewComplete = !!(actorWalkState?.approvals?.['1'] && actorWalkState?.approvals?.['3']);
+    $('actorWalkApprove').disabled = busy || !directionSupported || !actorWalkState || reviewComplete;
+    $('actorWalkApprove').title = directionSupported ? '' : ACTOR_WALK_SOUTH_ONLY_MESSAGE;
+  }
+  if ($('actorWalkAssemble')) {
+    $('actorWalkAssemble').disabled = busy || !directionSupported || !actorWalkState?.approvals?.['1'] || !actorWalkState?.approvals?.['3'];
+    $('actorWalkAssemble').title = directionSupported ? '' : ACTOR_WALK_SOUTH_ONLY_MESSAGE;
+  }
+  for (const id of ['familyGenerateAi','generateBtn','generatePixelAsset']) {
+    const control = $(id);
+    if (control) control.disabled = generating || (typeof isRecipeRegistryReady === 'function' && !isRecipeRegistryReady());
+  }
+}
+
+function actorWalkRunIsCurrent(run) {
+  return !!run && actorWalkGenerationId === run.generationId && !run.controller.signal.aborted;
+}
+
+async function actorApi(path, payload = null, signal = null) {
   const options = payload === null ? {} : { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) };
+  if (signal) options.signal = signal;
   const response = await fetch(path, options);
   const data = await response.json();
   if (!response.ok || data.success !== true) throw new Error(data.error || `actor request failed: ${response.status}`);
   return data;
 }
 
-function renderActorWalk4Review(url, message) {
-  $('actorWalk4Review')?.classList.remove('hidden');
-  if ($('actorWalk4Preview')) $('actorWalk4Preview').src = url;
-  if ($('actorWalk4Progress')) $('actorWalk4Progress').textContent = message;
-  $('actorWalk4Assemble')?.classList.add('hidden');
+async function imageDigest(dataUrl) {
+  const bytes = await (await fetch(dataUrl)).arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
 }
 
-async function generateActorWalk4Master() {
-  const prompt = String($('assetCorePrompt')?.value || '').trim();
-  if (!prompt) throw new Error('먼저 생성할 캐릭터 설명을 입력하세요.');
-  const health = await refreshProviderHealth();
-  if (!health?.available) throw new Error($('providerStatus')?.title || 'Hermes 설정이 필요합니다.');
-  const blueprintSet = await actorApi('/api/actor-walk4-blueprints');
-  setStatus('Walk4 방향 마스터 생성 중 · Hermes GPT Image');
-  const master = await actorApi('/api/generate-actor-master', {
-    prompt, direction:'SE', background_mode:'chroma_green',
-    negative:'duplicate character, extra limbs, malformed hands, malformed feet, cropped body, text, watermark',
-  });
-  actorWalk4State = { prompt, blueprints:blueprintSet.blueprints, beats:blueprintSet.beats, master, masterApproved:false, frames:[], current:null, currentSlot:0 };
-  renderActorWalk4Review(master.url, '마스터 확인 · 외형, 손 2개, 발 2개, SE 방향을 확인한 뒤 승인하세요.');
-  setStatus('Walk4 마스터 생성 완료 · 승인 전 다음 호출은 차단됨');
+function renderActorWalkReview(frameIndex) {
+  const state = actorWalkState, frame = state?.frames?.[frameIndex];
+  $('actorWalkReview')?.classList.remove('hidden');
+  if ($('actorWalkPreview') && frame) $('actorWalkPreview').src = frame.url || frame.image;
+  if ($('actorWalkProgress')) $('actorWalkProgress').textContent = `F${frameIndex + 1} · ${state.beats[frameIndex]} · 좌우 발 교대는 수치가 아닌 이미지를 직접 보고 판단하세요.`;
+  $('actorWalkAssemble')?.classList.add('hidden');
 }
 
-async function generateActorWalk4Frame() {
-  const state = actorWalk4State;
-  if (!state?.masterApproved) throw new Error('마스터 승인이 필요합니다.');
-  const blueprint = state.blueprints[state.currentSlot];
-  if (!blueprint) throw new Error('생성할 walk 프레임이 없습니다.');
-  const masterDataUrl = await srcToDataUrl(state.master.url);
-  const continuityDataUrl = state.frames[0]?.url ? await srcToDataUrl(state.frames[0].url) : null;
-  setStatus(`Walk4 ${state.currentSlot + 1}/4 · ${state.beats[state.currentSlot]} 생성 중`);
-  const payload = {
-    prompt:state.prompt,
-    identity_spec:state.master.identity_spec,
-    direction:'SE', action:'walk', frame_index:blueprint.frame_index,
-    direction_master:masterDataUrl, pose_blueprint:blueprint,
-    background_mode:'chroma_green', output_profile_id:'generic-pixel-actor-v1',
-    negative:'identity drift, costume drift, extra limbs, malformed hands, malformed feet, detached joints, text, watermark',
-  };
-  if (continuityDataUrl) payload.continuity_reference = continuityDataUrl;
-  state.current = await actorApi('/api/generate-actor-frame', payload);
-  renderActorWalk4Review(state.current.url, `프레임 ${state.currentSlot + 1}/4 · ${state.beats[state.currentSlot]} · 손·발·외형·접지를 확인하세요.`);
-  setStatus(`Walk4 ${state.currentSlot + 1}/4 생성 완료 · 승인 전 다음 호출은 차단됨`);
+function generateActorWalk() {
+  if (actorWalkGenerationInFlight) return actorWalkGenerationInFlight;
+  if (actorWalkApprovalInFlight || actorWalkAssemblyInFlight) return Promise.reject(new Error('walk 검토 작업이 끝난 뒤 다시 생성하세요.'));
+  if (!actorWalkDirectionSupported()) return Promise.reject(new Error(ACTOR_WALK_SOUTH_ONLY_MESSAGE));
+  const sourceObject = activeSpriteTarget();
+  if (!sourceObject) return Promise.reject(new Error('업로드한 투명 2D 픽셀 캐릭터 레이어를 선택하세요.'));
+  const recipe = actorActionRecipe('walk');
+  if (!recipe || recipe.id !== 'walk' || recipe.frame_count !== 4 || recipe.beats.join(',') !== 'N,L,N,R') return Promise.reject(new Error('walk 출력 프로필 계약을 불러오지 못했습니다.'));
+
+  const run = { generationId:++actorWalkGenerationId, controller:new AbortController() };
+  const request = (async () => {
+    const assertCurrent = () => {
+      if (!actorWalkRunIsCurrent(run)) {
+        const error = new Error('superseded walk generation discarded');
+        error.name = 'AbortError';
+        throw error;
+      }
+    };
+    const health = await refreshProviderHealth();
+    assertCurrent();
+    if (!health?.available) throw new Error($('providerStatus')?.title || 'Hermes 설정이 필요합니다.');
+    const source = await imageObjectDataUrl(sourceObject);
+    assertCurrent();
+    const sourceDigest = await imageDigest(source);
+    assertCurrent();
+    const blueprintSet = await actorApi('/api/actor-walk-blueprints', null, run.controller.signal);
+    assertCurrent();
+    const state = { generationId:run.generationId, sourceObject, source, sourceDigest, runId:null, beats:[...recipe.beats], frames:{0:{image:source,url:source,artifact_digest:sourceDigest}}, approvals:{}, blueprints:[...blueprintSet.blueprints] };
+    setStatus('walk L/R 생성 중 · 업로드 2D 픽셀 캐릭터를 기준 이미지로 사용');
+    for (const blueprint of state.blueprints) {
+      const result = await actorApi('/api/generate-actor-frame', {
+        prompt:String($('assetCorePrompt')?.value || 'preserve this uploaded pixel character').trim(),
+        direction:'S', action:'walk', frame_index:blueprint.frame_index,
+        direction_master:state.source, continuity_reference:state.source, pose_blueprint:blueprint,
+        background_mode:'chroma_green', output_profile_id:'generic-pixel-actor-v1',
+        negative:'identity drift, costume drift, 3D render, mannequin, extra limbs, malformed feet, text, watermark',
+        ...(state.runId ? {run_id:state.runId} : {}),
+      }, run.controller.signal);
+      assertCurrent();
+      if (!state.runId) {
+        if (!result.run_id || result.source_digest !== state.sourceDigest) throw new Error('walk 서버 run binding 응답이 올바르지 않습니다.');
+        state.runId = result.run_id;
+      } else if (result.run_id !== state.runId || result.source_digest !== state.sourceDigest) throw new Error('walk 서버 run binding이 생성 중 변경되었습니다.');
+      const image = await srcToDataUrl(result.url);
+      assertCurrent();
+      state.frames[blueprint.frame_index] = {image,url:result.url,artifact_digest:result.artifact_digest};
+    }
+    const preview = await actorApi('/api/preview-actor-walk', {run_id:state.runId,source_digest:state.sourceDigest,frames:state.frames,cell_size:512,padding:16}, run.controller.signal);
+    assertCurrent();
+    state.proof = preview;
+    actorWalkState = state;
+    $('actorWalkProofs')?.classList.remove('hidden');
+    if ($('actorWalkProofStrip')) $('actorWalkProofStrip').src = preview.proof_urls.strip;
+    if ($('actorWalkProofGif')) $('actorWalkProofGif').src = preview.proof_urls.walk_gif;
+    if ($('actorWalkF2F4Gif')) $('actorWalkF2F4Gif').src = preview.proof_urls.f2_f4_gif;
+    renderActorWalkReview(1);
+    setStatus('walk 시각 증거 준비됨 · F2와 F4를 직접 검토하고 각각 승인하세요.');
+    return state;
+  })();
+  actorWalkGenerationInFlight = request;
+  syncActorWalkControls();
+  request.finally(() => {
+    if (actorWalkGenerationInFlight === request) actorWalkGenerationInFlight = null;
+    syncActorWalkControls();
+  }).catch(() => {});
+  return request;
 }
 
-async function approveActorWalk4Current() {
-  const state = actorWalk4State;
-  if (!state) throw new Error('먼저 마스터를 생성하세요.');
-  if (!state.masterApproved) {
-    state.masterApproved = true;
-    await generateActorWalk4Frame();
-    return;
+function approveActorWalkCurrent() {
+  if (actorWalkApprovalInFlight) return actorWalkApprovalInFlight;
+  if (actorWalkGenerationInFlight || actorWalkAssemblyInFlight) return Promise.reject(new Error('walk 작업이 끝난 뒤 승인하세요.'));
+  if (!actorWalkDirectionSupported()) return Promise.reject(new Error(ACTOR_WALK_SOUTH_ONLY_MESSAGE));
+  const state = actorWalkState;
+  if (!state) return Promise.reject(new Error('먼저 walk를 생성하세요.'));
+  const frameIndex = state.approvals['1'] ? 3 : 1;
+  if (state.approvals[String(frameIndex)]) return Promise.resolve(state.approvals[String(frameIndex)]);
+  const frame = state.frames[frameIndex];
+  const request = (async () => {
+    if (!actorWalkDirectionSupported()) throw new Error(ACTOR_WALK_SOUTH_ONLY_MESSAGE);
+    const approved = await actorApi('/api/approve-actor-walk-frame', {
+      artifact_digest:frame.artifact_digest, frame_index:frameIndex,
+      beat:state.beats[frameIndex], decision:'APPROVED', run_id:state.runId, source_digest:state.sourceDigest,
+    });
+    if (!actorWalkDirectionSupported()) throw new Error(ACTOR_WALK_SOUTH_ONLY_MESSAGE);
+    if (actorWalkState !== state) return null;
+    state.approvals[String(frameIndex)] = approved.approval_token;
+    if (frameIndex === 1) {
+      renderActorWalkReview(3);
+      setStatus('F2 승인 기록됨 · F2↔F4 증거와 F4를 직접 검토하세요.');
+    } else {
+      if ($('actorWalkProgress')) $('actorWalkProgress').textContent = 'F2/F4 서버 결합 승인 완료 · 조립 가능';
+      $('actorWalkAssemble')?.classList.remove('hidden');
+      setStatus('walk F2/F4 승인 완료 · F3는 F1 exact copy로 서버에서 조립됩니다.');
+    }
+    return approved.approval_token;
+  })();
+  actorWalkApprovalInFlight = request;
+  syncActorWalkControls();
+  request.finally(() => {
+    if (actorWalkApprovalInFlight === request) actorWalkApprovalInFlight = null;
+    syncActorWalkControls();
+  }).catch(() => {});
+  return request;
+}
+
+async function loadActorWalkFrameImageData(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`walk frame load failed: ${response.status}`);
+  const bitmap = await createImageBitmap(await response.blob());
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width; canvas.height = bitmap.height;
+  const context = canvas.getContext('2d', {willReadFrequently:true});
+  context.drawImage(bitmap, 0, 0);
+  if (typeof bitmap.close === 'function') bitmap.close();
+  return context.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function buildActorWalkProductionArtifact(imageDatas, assetType = 'character', serverApprovalProvenance = null) {
+  if (!Array.isArray(imageDatas) || imageDatas.length !== 4) throw new Error('walk production artifact requires exactly four frames');
+  if (!['character','monster','npc'].includes(assetType)) throw new Error('walk production artifact subtype unsupported');
+  const provenance=validateActorWalkServerProvenance(serverApprovalProvenance);
+  if (!provenance) throw new Error('walk production artifact requires server assembly approval provenance');
+  const width=imageDatas[0]?.width,height=imageDatas[0]?.height,beats=['N','L','N','R'];
+  if (!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1) throw new Error('walk production frame geometry invalid');
+  for (const imageData of imageDatas) if (imageData?.width!==width||imageData?.height!==height||imageData?.data?.length!==width*height*4) throw new Error('walk production frames require one common RGBA canvas');
+  for (let i=0;i<imageDatas[0].data.length;i++) if (imageDatas[0].data[i]!==imageDatas[2].data[i]) throw new Error('walk frame 3 must exactly reuse frame 1');
+  const anchors={pivot:{x:.5,y:.875},root:{x:.5,y:.875},contact:{x:.5,y:.875}};
+  const contract={subtype:assetType,directions:{mode:'1dir',requested:['S'],row_order:['S']},actions:[{id:'walk',frame_count:4,fps:10,loop:true,beats}],grid:{cell:{width,height},gap:0},sourceSize:{width,height},anchors};
+  const frames=imageDatas.map((imageData,index)=>({direction:'S',action:'walk',index,beatId:beats[index],imageData:{width,height,data:new Uint8ClampedArray(imageData.data)},root:anchors.root,contact:anchors.contact}));
+  return {contract,frames,source:'server-approved-walk-assembly',exportable:true,serverApprovalProvenance:provenance,serverExportToken:provenance.assembly_token};
+}
+
+async function adoptActorWalkAssembly(result, state, assetType = 'character', frameLoader = loadActorWalkFrameImageData) {
+  if (!result?.export_ready||result.generation_stage!=='actor-walk-assembly'||result.action!=='walk'||JSON.stringify(result.beats)!==JSON.stringify(['N','L','N','R'])) throw new Error('서버 승인 완료 walk 결과만 채택할 수 있습니다.');
+  if (!Array.isArray(result.frame_urls)||result.frame_urls.length!==4) throw new Error('서버 walk 조립 결과는 네 프레임이어야 합니다.');
+  if (typeof result.package_url!=='string'||!/^\/assets\/generated\/actor_walk_package_[0-9a-f]{32}\.zip$/.test(result.package_url)) throw new Error('서버 durable walk package URL이 없습니다.');
+  const provenance=validateActorWalkServerProvenance(result.approval_provenance);
+  if (!provenance) throw new Error('서버 F2/F4 승인 provenance가 없는 walk 결과입니다.');
+  if (state?.approvals && (state.approvals['1']!==provenance.approvals[0].approval_token||state.approvals['3']!==provenance.approvals[1].approval_token)) throw new Error('서버 walk 조립 provenance가 현재 F2/F4 승인과 일치하지 않습니다.');
+  const identity=provenance.assembly_token;
+  const existing=actorWalkAssemblyAdoptions.get(identity);
+  if (existing?.promise) return existing.promise;
+  const adoption = (async () => {
+    let record=actorWalkAssemblyAdoptions.get(identity) || {};
+    let next=record.resultId ? assetResultStore.get(record.resultId) : null;
+    if (!next) {
+      const imageDatas = await Promise.all(result.frame_urls.map((url,index)=>frameLoader(url,index)));
+      const productionArtifact = buildActorWalkProductionArtifact(imageDatas,assetType,provenance);
+      productionArtifact.serverPackageUrl=result.package_url;
+      if (typeof window!=='undefined') {
+        window.__actorProductionArtifact=productionArtifact;
+        window.__actorVisualApproval={status:'APPROVED',reviewer:'server-bound-walk-review',source:'server-approved-walk-assembly',timestamp:new Date().toISOString(),artifact_digest:actorArtifactDigest(productionArtifact.frames,productionArtifact.contract),evidence_id:result.proof_urls?.strip||result.sheet_url};
+      }
+      const payload = {asset_family:'sprite',asset_type:assetType,sprite:{output_profile_id:'generic-pixel-actor-v1',animation_mode:'walk',frame_count:4,walk_frames:4,fps:10,beats:['N','L','N','R'],target_direction:'S'}};
+      const generation = {...result,url:result.sheet_url,artifacts:[{kind:'package',url:result.package_url,durable:true},{kind:'sheet',url:result.sheet_url},...result.frame_urls.map((url,index)=>({kind:'frame',url,index})),...Object.entries(result.proof_urls).map(([kind,url])=>({kind:`proof-${kind}`,url}))],qa:{status:'HUMAN_APPROVED',visual_approval_bound:true}};
+      next = assetResultFromGeneration(payload,generation,state.sourceObject);
+      assetResultStore.add(next);
+      record={resultId:next.id};
+      actorWalkAssemblyAdoptions.set(identity,{...actorWalkAssemblyAdoptions.get(identity),...record});
+    }
+    assetResultStore.select(next.id);
+    if (!assetResultStore.get(next.id)?.adopted) await adoptResult(next.id,'new-layer');
+    return assetResultStore.get(next.id) || next;
+  })();
+  actorWalkAssemblyAdoptions.set(identity,{...(existing || {}),promise:adoption});
+  try { return await adoption; }
+  finally {
+    const current=actorWalkAssemblyAdoptions.get(identity);
+    if (current?.promise===adoption) actorWalkAssemblyAdoptions.set(identity,{...(current.resultId ? {resultId:current.resultId} : {})});
   }
-  if (!state.current) throw new Error('승인할 프레임이 없습니다.');
-  state.frames.push({ ...state.current, visual_qa:'PASS', beat:state.beats[state.currentSlot] });
-  state.current = null;
-  state.currentSlot += 1;
-  if (state.currentSlot < 4) {
-    await generateActorWalk4Frame();
-    return;
-  }
-  if ($('actorWalk4Progress')) $('actorWalk4Progress').textContent = '4/4 승인 완료 · 시트 조립 준비됨';
-  $('actorWalk4Assemble')?.classList.remove('hidden');
-  setStatus('Walk4 4프레임 승인 완료 · 추가 생성 없이 조립 가능');
 }
 
-async function retryActorWalk4Current() {
-  const state = actorWalk4State;
-  if (!state || !state.masterApproved) {
-    await generateActorWalk4Master();
-    return;
-  }
-  await generateActorWalk4Frame();
+function assembleActorWalk() {
+  if (actorWalkAssemblyInFlight) return actorWalkAssemblyInFlight;
+  if (actorWalkGenerationInFlight || actorWalkApprovalInFlight) return Promise.reject(new Error('walk 작업이 끝난 뒤 조립하세요.'));
+  if (!actorWalkDirectionSupported()) return Promise.reject(new Error(ACTOR_WALK_SOUTH_ONLY_MESSAGE));
+  const state = actorWalkState;
+  if (!state?.approvals?.['1'] || !state?.approvals?.['3']) return Promise.reject(new Error('F2와 F4의 서버 결합 시각 승인이 필요합니다.'));
+  const request = (async () => {
+    if (!actorWalkDirectionSupported()) throw new Error(ACTOR_WALK_SOUTH_ONLY_MESSAGE);
+    const result = await actorApi('/api/assemble-actor-walk', {run_id:state.runId,source_digest:state.sourceDigest,frames:state.frames,approvals:state.approvals,cell_size:512,padding:16});
+    if (!actorWalkDirectionSupported()) throw new Error(ACTOR_WALK_SOUTH_ONLY_MESSAGE);
+    if (actorWalkState !== state) return null;
+    await adoptActorWalkAssembly(result,state,$('pixelAssetType')?.value || 'character');
+    if (actorWalkState !== state) return null;
+    addGallery(result.sheet_url, 'walk approved sheet');
+    setStatus('walk 투명 PNG 프레임/시트가 Result Tray와 새 레이어에 채택되었습니다.');
+    return result;
+  })();
+  actorWalkAssemblyInFlight = request;
+  syncActorWalkControls();
+  request.finally(() => {
+    if (actorWalkAssemblyInFlight === request) actorWalkAssemblyInFlight = null;
+    syncActorWalkControls();
+  }).catch(() => {});
+  return request;
 }
 
-async function assembleActorWalk4() {
-  const state = actorWalk4State;
-  if (!state || state.frames.length !== 4) throw new Error('승인된 walk 프레임 4장이 필요합니다.');
-  const frames = [];
-  for (const frame of state.frames) frames.push({ image:await srcToDataUrl(frame.url), visual_qa:'PASS' });
-  const result = await actorApi('/api/assemble-actor-walk4', { frames, cell_size:512, padding:16 });
-  state.assembly = result;
-  const stage = $('actorWalk4Animation');
-  if (stage) {
-    stage.classList.remove('hidden');
-    stage.innerHTML = '<img alt="walk4 animation frame"><span></span>';
-    let index = 0;
-    clearInterval(actorWalk4PreviewTimer);
-    const draw = () => { const image=stage.querySelector('img'), label=stage.querySelector('span'); if(image)image.src=result.frame_urls[index]; if(label)label.textContent=`${index + 1}/4 · ${state.beats[index]}`; index=(index+1)%4; };
-    draw(); actorWalk4PreviewTimer = setInterval(draw, 160);
-  }
-  addGallery(result.sheet_url, 'walk4 approved sheet');
-  setStatus('Walk4 시트 조립 및 애니메이션 미리보기 완료');
-}
-
-$('actorWalk4Start')?.addEventListener('click', () => generateActorWalk4Master().catch(error => { console.error(error); alert(error.message); setStatus(`Walk4 실패 · ${error.message}`); }));
-$('actorWalk4Approve')?.addEventListener('click', () => approveActorWalk4Current().catch(error => { console.error(error); alert(error.message); setStatus(`Walk4 실패 · ${error.message}`); }));
-$('actorWalk4Retry')?.addEventListener('click', () => retryActorWalk4Current().catch(error => { console.error(error); alert(error.message); setStatus(`Walk4 실패 · ${error.message}`); }));
-$('actorWalk4Assemble')?.addEventListener('click', () => assembleActorWalk4().catch(error => { console.error(error); alert(error.message); setStatus(`Walk4 조립 실패 · ${error.message}`); }));
+$('actorWalkStart')?.addEventListener('click', () => generateActorWalk().catch(error => { console.error(error); alert(error.message); setStatus(`walk 실패 · ${error.message}`); }));
+$('actorWalkApprove')?.addEventListener('click', () => approveActorWalkCurrent().catch(error => { console.error(error); alert(error.message); setStatus(`walk 승인 실패 · ${error.message}`); }));
+$('actorWalkRetry')?.addEventListener('click', () => generateActorWalk().catch(error => { console.error(error); alert(error.message); setStatus(`walk 재생성 실패 · ${error.message}`); }));
+$('actorWalkAssemble')?.addEventListener('click', () => assembleActorWalk().catch(error => { console.error(error); alert(error.message); setStatus(`walk 조립 실패 · ${error.message}`); }));
 
 function directionLabelsForMode(mode = $('pixelDirectionMode')?.value || 'single') {
-  const profileDirections = actorOutputProfileState.status === 'ready'
-    ? actorOutputProfileState.profile.directions.map(direction => direction.code)
+  const profileState = typeof actorOutputProfileState !== 'undefined' ? actorOutputProfileState : null;
+  const profileDirections = profileState?.status === 'ready'
+    ? profileState.profile.directions.map(direction => direction.code)
     : ['S', 'W', 'E', 'N'];
   if (mode === '8dir') return profileDirections.slice(0, 8);
   if (mode === '4dir') return profileDirections.slice(0, 4);
@@ -829,7 +988,7 @@ const RECIPE_GENERATION_CONTROL_IDS = [
 ];
 let assetRecipeRegistryState = { status:'loading', registry:null, production:{}, known:{} };
 let actorOutputProfileState = { status:'loading', profile:null, actions:new Map() };
-const ACTOR_ACTION_ALIASES = { idle4:'idle', walk4:'walk', walk6:'walk', attack4:'attack', jump4:'jump', cast4:'cast', hurt4:'hurt', death4:'death', death6:'death', hit:'hurt', hit2:'hurt' };
+const ACTOR_ACTION_ALIASES = { idle4:'idle', attack4:'attack', jump4:'jump', cast4:'cast', hurt4:'hurt', death4:'death', death6:'death', hit:'hurt', hit2:'hurt' };
 
 function validateActorOutputProfile(profile) {
   const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
@@ -1194,7 +1353,7 @@ function updateAssetFamilyUi() {
   });
   const actor = ['character', 'monster', 'npc'].includes(subtype);
   const effect = subtype === 'effect';
-  $('actorWalk4Workflow')?.classList.toggle('hidden', !actor || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk4');
+  $('actorWalkWorkflow')?.classList.toggle('hidden', !actor || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk');
   ['pixelMotionControls', 'pixelDirectionControls', 'pixelReferenceControls', 'pixelFrameControls', 'pixelLegacyDirectionControls', 'pixelAdvancedBatch'].forEach(id => $(id)?.classList.toggle('hidden', !actor));
   $('effectControls')?.classList.toggle('hidden', !effect);
   $('effectSequencePreviewPanel')?.classList.toggle('hidden', !effect);
@@ -1469,8 +1628,7 @@ window.__assetStudioDebug = { ...(window.__assetStudioDebug || {}), buildAssetGe
 let lastActorAnimationPreset = 'idle';
 const PIXEL_ANIMATION_PRESET_DEFAULT_FRAMES = {
   idle: 4,
-  walk4: 4,
-  walk6: 6,
+  walk: 4,
   attack: 4,
   jump: 4,
   cast: 4,
@@ -1480,7 +1638,7 @@ const PIXEL_ANIMATION_PRESET_DEFAULT_FRAMES = {
 };
 
 function pixelAnimationDefaultFrames(anim = effectivePixelAnimationPreset()) {
-  const recipe = actorActionRecipe(anim);
+  const recipe = typeof actorActionRecipe === 'function' ? actorActionRecipe(anim) : null;
   if (recipe) return recipe.frame_count;
   return PIXEL_ANIMATION_PRESET_DEFAULT_FRAMES[anim] || 4;
 }
@@ -1511,8 +1669,7 @@ function actionFrameBeats(anim, frames = pixelAnimationDefaultFrames(anim)) {
   if (recipe) return recipe.beats.map((beat, i) => `${i + 1}. ${beat}`).join('; ');
   const beats = {
     idle: ['neutral stance', 'subtle breath up', 'neutral stance', 'subtle breath down'],
-    walk4: ['neutral crossover/passing stance', 'LEFT leg swing-cross; RIGHT leg planted support', 'neutral crossover/passing stance reused', 'RIGHT leg swing-cross; LEFT leg planted support'],
-    walk6: ['contact A', 'down A', 'passing A', 'contact B', 'down B', 'passing B'],
+    walk: ['neutral stance', 'LEFT step', 'neutral stance exact reuse', 'RIGHT step'],
     attack: ['ready pose', 'wind-up, weapon/arm pulled back', 'clean body/weapon strike pose', 'recovery, returns toward stance'],
     jump: ['crouch/anticipation', 'takeoff', 'airborne peak', 'landing/recovery'],
     cast: ['ready pose', 'hand/stance anticipation', 'clean casting/release body pose', 'recover'],
@@ -1568,7 +1725,7 @@ function syncPixelAssetWorkflowUi({ silent = false } = {}) {
   const type = $('pixelAssetType')?.value || 'character';
   const actor = isPixelActorAssetType(type);
   const effect = isPixelEffectAssetType(type);
-  $('actorWalk4Workflow')?.classList.toggle('hidden', !actor || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk4');
+  $('actorWalkWorkflow')?.classList.toggle('hidden', !actor || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk');
   const motionIds = ['pixelMotionControls', 'pixelDirectionControls', 'pixelReferenceControls', 'pixelFrameControls', 'pixelLegacyDirectionControls'];
   motionIds.forEach(id => $(id)?.classList.toggle('hidden', !actor));
   $('pixelStaticModeNotice')?.classList.toggle('hidden', actor);
@@ -1623,7 +1780,7 @@ function buildDirectionalSpriteSheetContract(anim = effectivePixelAnimationPrese
     ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
     : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single target via one-direction generation. Generate exactly one target direction: ${directionLabel(targetDir)}. Do not generate a direction-candidate sheet, contact sheet, multi-direction atlas, or alternate direction candidates. Do not output all 8 directions; the app requests each direction separately. Screen-space directions: SW/W turn toward screen-left, SE/E turn toward screen-right.`);
   const actionRecipe = actorActionRecipe(anim);
-  const actionLabel = actionRecipe?.id.replaceAll('_', ' ') || ({ idle:'idle/breathing', walk4:'walk cycle', walk6:'walk cycle', attack:'attack', jump:'jump', cast:'cast', hurt:'hurt reaction', death:'death/collapse', ui_static:'static asset' })[anim] || anim;
+  const actionLabel = actionRecipe?.id.replaceAll('_', ' ') || ({ idle:'idle/breathing', walk:'walk cycle', attack:'attack', jump:'jump', cast:'cast', hurt:'hurt reaction', death:'death/collapse', ui_static:'static asset' })[anim] || anim;
   const actionContract = actionRecipe?.prompt_contract || `${actionLabel} motion must read clearly in the declared frame order`;
   const frameLine = anim === 'ui_static'
     ? 'Static contract: exactly one clean isolated asset frame.'
@@ -1656,8 +1813,7 @@ function buildPixelAssetPrompt(corePrompt = '') {
   const frameCount = anim === 'ui_static' ? 1 : requestedPixelFrameCount();
   const legacyAnimLine = {
     idle: `idle animation, ${frameCount}-frame subtle breathing loop (${actionFrameBeats(anim, frameCount)}), evenly spaced sprite sheet cells`,
-    walk4: `simple RPG crossover walk cycle, ${frameCount}-frame neutral-left-cross-neutral-right-cross animation (${actionFrameBeats(anim, frameCount)}). Frames 1 and 3 use the same neutral transition pose with feet close beneath the pelvis. Frame 2: LEFT leg is the lifted swing leg crossing from behind to just ahead beside the planted RIGHT stance/support leg. Frame 4 is the exact inverse: RIGHT leg is the lifted swing leg crossing beside the planted LEFT stance/support leg. The swing foot passes beside and visibly overlaps/crosses the planted support leg beneath the pelvis; leg front/back depth ordering reverses between frames 2 and 4. For S/front-facing, character LEFT = screen-right and character RIGHT = screen-left: frame 2 swing boot on screen-right, frame 4 swing boot on screen-left. Screen coordinates are final: column 2 only screen-right boot advances with knee crossing inward; column 4 only screen-left boot advances with knee crossing inward. Below-belt phases must be opposite/mirrored; reject the same-side front boot in both. Keep pelvis/root center at exactly 50% of each cell width and the same y-coordinate. Natural depth pass only, no X-locked legs or anatomical side swap. Fixed root/pivot anchor, stable head/torso center and contact baseline, coherent counter-motion, no one-limb fake, evenly spaced sprite sheet cells`,
-    walk6: `smooth walk cycle, ${frameCount}-frame walking animation (${actionFrameBeats(anim, frameCount)}), fixed root/pivot anchor, stable head/torso reference center and contact baseline, actor-appropriate alternating support/contact phases, connected passing beats, coherent counter-motion, no one-limb fake across all 6 frames, evenly spaced sprite sheet cells`,
+    walk: `canonical walk cycle, exactly four frames N → L → N → R (${actionFrameBeats(anim, frameCount)}). Frame 3 is an exact pixel reuse of frame 1. Frames 2 and 4 are opposite step beats that require human visual approval. Keep root, head, torso, identity, equipment, and contact baseline stable`,
     attack: `attack animation, ${frameCount} frames (${actionFrameBeats(anim, frameCount)}), readable ready/wind-up/strike/recovery body and weapon poses, evenly spaced sprite sheet cells`,
     jump: `jump animation, ${frameCount} frames (${actionFrameBeats(anim, frameCount)}), readable crouch/takeoff/airborne/landing beats, evenly spaced sprite sheet cells`,
     cast: `cast animation, ${frameCount} frames (${actionFrameBeats(anim, frameCount)}), readable ready/gather/release/recover casting body-language beats, evenly spaced sprite sheet cells`,
@@ -1740,7 +1896,9 @@ function updateGridCellSizeFromSelectedLayer({ renderExisting = false } = {}) {
 
 function applyPixelWorkflowGridDefaults(targetImg = null) {
   const effect = isPixelEffectAssetType();
-  const actorAction = !effect ? actorActionRecipe(effectivePixelAnimationPreset()) : null;
+  const actorAction = !effect && typeof actorActionRecipe === 'function'
+    ? actorActionRecipe(effectivePixelAnimationPreset())
+    : null;
   const frames = requestedPixelFrameCount();
   const dirs = directionLabelsForMode();
   const rows = effect ? Math.max(1, +($('effectRows')?.value || 1)) : Math.max(1, dirs.length);
@@ -1767,7 +1925,7 @@ function applyPixelWorkflowGridDefaults(targetImg = null) {
     if (effect) {
       const effectLoop = $('effectLoop')?.value || 'one-shot';
       $('animMode').value = effectLoop === 'ping-pong' ? 'pingpong' : (effectLoop === 'loop' ? 'loop' : 'once');
-    } else {
+    } else if (actorAction) {
       $('animMode').value = actorAction?.loop ? 'loop' : 'once';
     }
   }
@@ -2127,6 +2285,7 @@ async function buildProjectV2() {
     createdAt: identity.createdAt,
     updatedAt: identity.updatedAt,
     styleProfile,
+    motionStudio: globalThis.AssetStudioMotion?.serializeProjectState?.() || null,
     familyDrafts,
     selectedFamily,
     document: {
@@ -2177,6 +2336,7 @@ async function loadCanvasJson(json) {
 }
 
 async function loadLegacyProjectV1(project) {
+  const motionBridge=globalThis.AssetStudioMotion, motionBefore=motionBridge?.snapshotRuntimeState?.() ?? null;
   const storeBefore=assetResultStore.snapshot(), libraryBefore=JSON.parse(JSON.stringify(assetLibrary)), recordsBefore=JSON.parse(JSON.stringify(adoptionRecords));
   const styleBefore=normalizeStyleProfile(styleProfileFromControls()), draftsBefore=serializeProjectFamilyDrafts(), selectedFamilyBefore=currentAssetFamily(), identityBefore=projectV2Identity?{...projectV2Identity}:null;
   const canvasBefore=canvas.toJSON(SERIALIZED_PROPS), historyBefore=history.slice(), historyIndexBefore=historyIndex, editorStateBefore=currentEditorState();
@@ -2190,6 +2350,7 @@ async function loadLegacyProjectV1(project) {
     projectV2Identity=null;
     hydrateStyleProfileControls(DEFAULT_STYLE_PROFILE);
     hydrateProjectFamilyDrafts(undefined,'sprite');
+    motionBridge?.hydrateProjectState(null);
     history = [];
     historyIndex = -1;
     saveHistory('불러온 v1 프로젝트');
@@ -2201,7 +2362,7 @@ async function loadLegacyProjectV1(project) {
     assetLibrary.splice(0,assetLibrary.length,...libraryBefore); adoptionRecords.splice(0,adoptionRecords.length,...recordsBefore); assetResultStore.restore(storeBefore);
     try {
       await loadCanvasJson(canvasBefore); applyEditorState(editorStateBefore);
-      hydrateStyleProfileControls(styleBefore); hydrateProjectFamilyDrafts(draftsBefore,selectedFamilyBefore); projectV2Identity=identityBefore;
+      hydrateStyleProfileControls(styleBefore); hydrateProjectFamilyDrafts(draftsBefore,selectedFamilyBefore); motionBridge?.restoreRuntimeState(motionBefore); projectV2Identity=identityBefore;
       canvas.renderAll(); renderLayers(); renderHistory(); renderAssetResultTray();
     } catch (rollbackError) { console.error('Legacy project rollback failed',rollbackError); }
     finally { suppressHistory = false; }
@@ -2222,6 +2383,9 @@ async function loadProjectV2(project) {
   const resultState=validateProjectResultState(project.assetResults);
   const projectStyleProfile=normalizeStyleProfile(project.styleProfile===undefined?DEFAULT_STYLE_PROFILE:project.styleProfile);
   const projectFamilyDrafts=validateProjectFamilyDrafts(project.familyDrafts);
+  const motionBridge=globalThis.AssetStudioMotion;
+  if(project.motionStudio!=null&&!motionBridge)throw new Error('Motion Studio module is unavailable');
+  const projectMotionState=motionBridge?.validateProjectState(project.motionStudio) ?? null;
   const projectSelectedFamily=project.selectedFamily===undefined?'sprite':project.selectedFamily;
   if(!PROJECT_FAMILIES.includes(projectSelectedFamily))throw new Error('Invalid selectedFamily');
   validateCanvasResultReferences(editor.canvasJson||targetJson,resultState);
@@ -2236,7 +2400,7 @@ async function loadProjectV2(project) {
     return {entry,state};
   });
   const storeBefore=assetResultStore.snapshot(), libraryBefore=JSON.parse(JSON.stringify(assetLibrary)), recordsBefore=JSON.parse(JSON.stringify(adoptionRecords));
-  const styleBefore=normalizeStyleProfile(styleProfileFromControls()), draftsBefore=serializeProjectFamilyDrafts(), selectedFamilyBefore=currentAssetFamily(), identityBefore=projectV2Identity?{...projectV2Identity}:null;
+  const styleBefore=normalizeStyleProfile(styleProfileFromControls()), draftsBefore=serializeProjectFamilyDrafts(), selectedFamilyBefore=currentAssetFamily(), motionBefore=motionBridge?.snapshotRuntimeState?.() ?? null, identityBefore=projectV2Identity?{...projectV2Identity}:null;
   const canvasBefore=canvas.toJSON(SERIALIZED_PROPS), historyBefore=history.slice(), historyIndexBefore=historyIndex, editorStateBefore=currentEditorState();
   const rollback=async()=>{
     history=historyBefore; historyIndex=historyIndexBefore;
@@ -2245,7 +2409,7 @@ async function loadProjectV2(project) {
     try {
       await loadCanvasJson(canvasBefore);
       applyEditorState(editorStateBefore);
-      hydrateStyleProfileControls(styleBefore);hydrateProjectFamilyDrafts(draftsBefore,selectedFamilyBefore);projectV2Identity=identityBefore;
+      hydrateStyleProfileControls(styleBefore);hydrateProjectFamilyDrafts(draftsBefore,selectedFamilyBefore);motionBridge?.restoreRuntimeState(motionBefore);projectV2Identity=identityBefore;
       canvas.renderAll();renderLayers();renderHistory();renderAssetResultTray();
     } finally { suppressHistory=false; }
   };
@@ -2265,6 +2429,7 @@ async function loadProjectV2(project) {
         applyEditorState(editor.state || {});
         hydrateStyleProfileControls(projectStyleProfile);
         hydrateProjectFamilyDrafts(projectFamilyDrafts,projectSelectedFamily);
+        motionBridge?.hydrateProjectState(projectMotionState);
         projectV2Identity={createdAt:projectCreatedAt,updatedAt:projectUpdatedAt};
         assetLibrary.splice(0,assetLibrary.length,...resultState.library);
         adoptionRecords.splice(0,adoptionRecords.length,...(history[historyIndex]?.adoptionRecords||[]));
@@ -6409,26 +6574,34 @@ function validateActorVisualApproval(approval,digest){
   if(typeof approval.artifact_digest!=='string'||!/^[0-9a-f]{64}$/.test(approval.artifact_digest))return null;
   return approval.artifact_digest===digest?{status:'APPROVED',reviewer:approval.reviewer.trim(),source:approval.source.trim(),timestamp:approval.timestamp,artifact_digest:digest,...(approval.evidence_id===undefined?{}:{evidence_id:approval.evidence_id.trim()})}:false;
 }
-function evaluateActorProductionQA(frames,raw,visualApproval=null){
+function validateActorWalkServerProvenance(provenance){
+  const hex=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v),opaqueToken=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{32,128}$/.test(v);
+  if(!provenance||provenance.schema_version!=='asset-studio.walk-assembly-provenance/v1'||provenance.route!=='/api/assemble-actor-walk'||provenance.action!=='walk'||!hex(provenance.sheet_digest)||!opaqueToken(provenance.assembly_token)||!Array.isArray(provenance.approvals)||provenance.approvals.length!==2)return null;
+  const expected=[[1,'L'],[3,'R']],approvals=[];
+  for(let i=0;i<2;i++){const item=provenance.approvals[i],[frame_index,beat]=expected[i];if(!item||item.frame_index!==frame_index||item.beat!==beat||!hex(item.artifact_digest)||!hex(item.approval_token))return null;approvals.push({frame_index,beat,artifact_digest:item.artifact_digest,approval_token:item.approval_token});}
+  if(approvals[0].approval_token===approvals[1].approval_token||approvals[0].artifact_digest===approvals[1].artifact_digest)return null;
+  return {schema_version:provenance.schema_version,route:provenance.route,action:'walk',sheet_digest:provenance.sheet_digest,assembly_token:provenance.assembly_token,approvals};
+}
+function evaluateActorProductionQA(frames,raw,visualApproval=null,serverApprovalProvenance=null){
   let c;try{c=normalizeActorProductionContract(raw)}catch(e){return{status:'FAIL',deterministic_status:'FAIL',reasons:[{code:'CONTRACT',severity:'FAIL',message:e.message}],evidence:{motion_read:{status:'UNAVAILABLE'},visual_review:{status:'NOT_REVIEWED'}}}}const reasons=[],expected=c.directions.requested.reduce((n)=>n+c.actions.reduce((s,a)=>s+a.frame_count,0),0),fail=(code,message)=>reasons.push({code,severity:'FAIL',message}),metrics={sequences:[]};
   if(!Array.isArray(frames)||frames.length!==expected)fail('GRID_FRAME_COUNT',`expected ${expected} frames; received ${frames?.length??0}`);const map=new Map();for(const f of frames||[]){const k=`${f.direction}/${f.action}/${f.index}`;if(map.has(k))fail('FRAME_ORDER',`duplicate ${k}`);map.set(k,f)}
-  for(const d of c.directions.requested)for(const a of c.actions){const seq=[];for(let i=0;i<a.frame_count;i++){const f=map.get(`${d}/${a.id}/${i}`);if(!f){if(frames?.length===expected)fail('FRAME_ORDER',`missing ${d}/${a.id}/${i}`);continue}if(f.beatId!==a.beats[i])fail('BEAT_ORDER',`${d}/${a.id}/${i} beat mismatch`);if(f.imageData?.width!==c.sourceSize.width||f.imageData?.height!==c.sourceSize.height)fail('COMMON_CANVAS',`${d}/${a.id}/${i} canvas mismatch`);const n=c.sourceSize.width*c.sourceSize.height*4,data=f.imageData?.data;if(!data||data.length!==n){fail('ALPHA_CONTAINMENT',`${d}/${a.id}/${i} RGBA size mismatch`);continue}let opaque=0,minX=c.sourceSize.width,minY=c.sourceSize.height,maxX=-1,maxY=-1,left=0,right=0;for(let p=0;p<n;p+=4)if(data[p+3]){const px=(p/4)%c.sourceSize.width,py=Math.floor(p/4/c.sourceSize.width);opaque++;minX=Math.min(minX,px);maxX=Math.max(maxX,px);minY=Math.min(minY,py);maxY=Math.max(maxY,py);if(py>=c.sourceSize.height*.55){if(px<c.sourceSize.width/2)left++;else right++;}}if(!opaque)fail('ALPHA_CONTAINMENT',`${d}/${a.id}/${i} has no contained alpha`);else if(minX===0||minY===0||maxX===c.sourceSize.width-1||maxY===c.sourceSize.height-1)fail('ALPHA_EDGE_CONTACT',`${d}/${a.id}/${i} alpha touches cell edge`);for(const key of ['root','contact']){const q=f[key]||c.anchors[key],base=c.anchors[key];if(!Number.isFinite(q.x)||!Number.isFinite(q.y)||Math.hypot(q.x-base.x,q.y-base.y)>.125)fail(`${key.toUpperCase()}_DRIFT`,`${d}/${a.id}/${i} ${key} drift`)}seq.push({data,opaque,bbox:[minX,minY,maxX,maxY],support:left-right})}
-    if(seq.length===a.frame_count&&seq.length>1){const dif=(x,y,alpha)=>{let z=0,total=alpha?x.length/4:x.length;for(let p=0;p<x.length;p+=alpha?4:1)if(alpha?(x[p+3]!==y[p+3]):(x[p]!==y[p]))z++;return z/total},adj=[];for(let i=0;i<seq.length;i++)adj.push({alpha:dif(seq[i].data,seq[(i+1)%seq.length].data,true),rgba:dif(seq[i].data,seq[(i+1)%seq.length].data,false)});if(adj.every(x=>x.alpha===0))fail(adj.some(x=>x.rgba>0)?'COLOR_ONLY_MOTION':'IDENTICAL_FRAMES',`${d}/${a.id} has no silhouette motion`);if(a.id!=='walk'){const profiles={idle:[.002,2,.15],attack:[.012,3,.35],jump:[.01,3,.3],cast:[.008,3,.25],hurt:[.008,3,.25],death:[.015,4,.4],wave:[.008,3,.25]},p=profiles[a.id]||[.006,3,.2],area=c.sourceSize.width*c.sourceSize.height,maxAlpha=Math.max(...adj.map(x=>x.alpha)),maxRgba=Math.max(...adj.map(x=>x.rgba)),centers=seq.map(x=>[(x.bbox[0]+x.bbox[2])/2,(x.bbox[1]+x.bbox[3])/2]),disp=Math.max(...centers.map((x,i)=>Math.hypot(x[0]-centers[(i+1)%centers.length][0],x[1]-centers[(i+1)%centers.length][1])));if(maxAlpha*area<Math.max(p[1],Math.ceil(area*p[0]))||maxRgba*area*4<8&&disp<p[2])fail('MOTION_TOO_SMALL',`${d}/${a.id} motion is below the action-specific meaningful threshold`)}if(a.id==='walk'&&a.frame_count===4){const neutral=dif(seq[0].data,seq[2].data,true);if(neutral>.02)fail('LOOP_NEUTRAL_MISMATCH',`${d}/${a.id} neutral recurrence mismatch`);if(Math.sign(seq[1].support)===Math.sign(seq[3].support)||!seq[1].support||!seq[3].support)fail('SUPPORT_ALTERNATION',`${d}/${a.id} opposite support evidence missing`)}if(a.loop&&adj[adj.length-1].alpha>Math.max(.45,...adj.slice(0,-1).map(x=>x.alpha*3)))fail('LOOP_TRANSITION',`${d}/${a.id} closing transition discontinuity`);metrics.sequences.push({direction:d,action:a.id,occupancy:seq.map(x=>x.opaque/(c.sourceSize.width*c.sourceSize.height)),bboxes:seq.map(x=>x.bbox),support_balance:seq.map(x=>x.support),transitions:adj})}}
-  const uniq=[];for(const r of reasons)if(!uniq.some(x=>x.code===r.code&&x.message===r.message))uniq.push(r);const deterministic_status=uniq.some(x=>x.severity==='FAIL')?'FAIL':'PASS',digest=actorArtifactDigest(frames,c),validated=validateActorVisualApproval(visualApproval,digest),stale=validated===false,approved=!!validated,visualStatus=visualApproval?.status==='FAIL'?'FAIL':approved?'APPROVED':stale?'STALE':'NOT_REVIEWED';if(!approved)uniq.push({code:visualStatus==='FAIL'?'VISUAL_REVIEW_FAILED':stale?'VISUAL_APPROVAL_STALE':'VISUAL_APPROVAL_REQUIRED',severity:'FAIL',message:visualStatus==='FAIL'?'explicit visual review failed':stale?'visual approval does not match the current artifact':'explicit visual approval required'});return{status:deterministic_status==='PASS'&&approved?'PASS':'FAIL',deterministic_status,reasons:uniq,evidence:{motion_read:{status:deterministic_status==='PASS'?'MEASURED_PASS':'MEASURED_FAIL',metrics},visual_review:{status:visualStatus,approval:validated||null}}};
+  for(const d of c.directions.requested)for(const a of c.actions){const seq=[];for(let i=0;i<a.frame_count;i++){const f=map.get(`${d}/${a.id}/${i}`);if(!f){if(frames?.length===expected)fail('FRAME_ORDER',`missing ${d}/${a.id}/${i}`);continue}if(f.beatId!==a.beats[i])fail('BEAT_ORDER',`${d}/${a.id}/${i} beat mismatch`);if(f.imageData?.width!==c.sourceSize.width||f.imageData?.height!==c.sourceSize.height)fail('COMMON_CANVAS',`${d}/${a.id}/${i} canvas mismatch`);const n=c.sourceSize.width*c.sourceSize.height*4,data=f.imageData?.data;if(!data||data.length!==n){fail('ALPHA_CONTAINMENT',`${d}/${a.id}/${i} RGBA size mismatch`);continue}let opaque=0,minX=c.sourceSize.width,minY=c.sourceSize.height,maxX=-1,maxY=-1;for(let p=0;p<n;p+=4)if(data[p+3]){const px=(p/4)%c.sourceSize.width,py=Math.floor(p/4/c.sourceSize.width);opaque++;minX=Math.min(minX,px);maxX=Math.max(maxX,px);minY=Math.min(minY,py);maxY=Math.max(maxY,py);}if(!opaque)fail('ALPHA_CONTAINMENT',`${d}/${a.id}/${i} has no contained alpha`);else if(minX===0||minY===0||maxX===c.sourceSize.width-1||maxY===c.sourceSize.height-1)fail('ALPHA_EDGE_CONTACT',`${d}/${a.id}/${i} alpha touches cell edge`);for(const key of ['root','contact']){const q=f[key]||c.anchors[key],base=c.anchors[key];if(!Number.isFinite(q.x)||!Number.isFinite(q.y)||Math.hypot(q.x-base.x,q.y-base.y)>.125)fail(`${key.toUpperCase()}_DRIFT`,`${d}/${a.id}/${i} ${key} drift`)}seq.push({data,opaque,bbox:[minX,minY,maxX,maxY]})}
+    if(seq.length===a.frame_count&&seq.length>1){const dif=(x,y,alpha)=>{let z=0,total=alpha?x.length/4:x.length;for(let p=0;p<x.length;p+=alpha?4:1)if(alpha?(x[p+3]!==y[p+3]):(x[p]!==y[p]))z++;return z/total},adj=[];for(let i=0;i<seq.length;i++)adj.push({alpha:dif(seq[i].data,seq[(i+1)%seq.length].data,true),rgba:dif(seq[i].data,seq[(i+1)%seq.length].data,false)});if(adj.every(x=>x.alpha===0))fail(adj.some(x=>x.rgba>0)?'COLOR_ONLY_MOTION':'IDENTICAL_FRAMES',`${d}/${a.id} has no silhouette motion`);if(a.id!=='walk'){const profiles={idle:[.002,2,.15],attack:[.012,3,.35],jump:[.01,3,.3],cast:[.008,3,.25],hurt:[.008,3,.25],death:[.015,4,.4],wave:[.008,3,.25]},p=profiles[a.id]||[.006,3,.2],area=c.sourceSize.width*c.sourceSize.height,maxAlpha=Math.max(...adj.map(x=>x.alpha)),maxRgba=Math.max(...adj.map(x=>x.rgba)),centers=seq.map(x=>[(x.bbox[0]+x.bbox[2])/2,(x.bbox[1]+x.bbox[3])/2]),disp=Math.max(...centers.map((x,i)=>Math.hypot(x[0]-centers[(i+1)%centers.length][0],x[1]-centers[(i+1)%centers.length][1])));if(maxAlpha*area<Math.max(p[1],Math.ceil(area*p[0]))||maxRgba*area*4<8&&disp<p[2])fail('MOTION_TOO_SMALL',`${d}/${a.id} motion is below the action-specific meaningful threshold`)}if(a.id==='walk'&&a.frame_count===4){if(dif(seq[0].data,seq[2].data,false)!==0)fail('LOOP_NEUTRAL_MISMATCH',`${d}/${a.id} frame 3 must exactly reuse frame 1`)}if(a.loop&&adj[adj.length-1].alpha>Math.max(.45,...adj.slice(0,-1).map(x=>x.alpha*3)))fail('LOOP_TRANSITION',`${d}/${a.id} closing transition discontinuity`);metrics.sequences.push({direction:d,action:a.id,occupancy:seq.map(x=>x.opaque/(c.sourceSize.width*c.sourceSize.height)),bboxes:seq.map(x=>x.bbox),transitions:adj})}}
+  const requiresWalkReview=c.actions.some(a=>a.id==='walk'),walkProvenance=requiresWalkReview?validateActorWalkServerProvenance(serverApprovalProvenance):null;if(requiresWalkReview&&!walkProvenance)reasons.push({code:'WALK_SERVER_PROVENANCE_REQUIRED',severity:'FAIL',message:'canonical walk export requires server-bound F2/F4 assembly provenance'});const uniq=[];for(const r of reasons)if(!uniq.some(x=>x.code===r.code&&x.message===r.message))uniq.push(r);const deterministic_status=uniq.some(x=>x.severity==='FAIL')?'FAIL':'PASS',digest=actorArtifactDigest(frames,c),validated=validateActorVisualApproval(visualApproval,digest),stale=validated===false,approved=!!validated,visualStatus=visualApproval?.status==='FAIL'?'FAIL':approved?'APPROVED':stale?'STALE':'NOT_REVIEWED';if(!approved)uniq.push({code:visualStatus==='FAIL'?'VISUAL_REVIEW_FAILED':stale?'VISUAL_APPROVAL_STALE':'VISUAL_APPROVAL_REQUIRED',severity:'FAIL',message:visualStatus==='FAIL'?'explicit visual review failed':stale?'visual approval does not match the current artifact':'explicit visual approval required'});const motionEvidence=requiresWalkReview?{status:'HUMAN_REVIEW_REQUIRED',note:'Visible visual alternation of the walk step beats requires human review; pixel coordinates and balance metrics cannot establish it.',metrics}:{status:deterministic_status==='PASS'?'STRUCTURE_PASS':'STRUCTURE_FAIL',metrics};return{status:deterministic_status==='PASS'&&approved?'PASS':'FAIL',deterministic_status,reasons:uniq,evidence:{motion_read:motionEvidence,visual_review:{status:visualStatus,approval:validated||null},server_walk_provenance:walkProvenance}};
 }
-function buildActorExportPackage(frames,raw,visualApproval=null){
-  const c=normalizeActorProductionContract(raw),count=c.directions.requested.length*c.actions.reduce((n,a)=>n+a.frame_count,0),pixels=c.sourceSize.width*c.sourceSize.height,columns=Math.max(...c.actions.map(a=>a.frame_count)),rows=c.directions.requested.length*c.actions.length,gap=c.grid.gap,W=columns*c.sourceSize.width+(columns-1)*gap,H=rows*c.sourceSize.height+(rows-1)*gap;if(!Number.isSafeInteger(W)||!Number.isSafeInteger(H)||W>ACTOR_EXPORT_LIMITS.maxDimension||H>ACTOR_EXPORT_LIMITS.maxDimension||count>ACTOR_EXPORT_LIMITS.maxFrames||pixels*count>ACTOR_EXPORT_LIMITS.maxPixels||pixels*count*12>ACTOR_EXPORT_LIMITS.maxWorkingBytes)throw new Error('actor export memory/frame/atlas budget exceeded');const qa=evaluateActorProductionQA(frames,c,visualApproval);if(qa.status!=='PASS'){const e=new Error('actor export blocked by hard QA and explicit visual approval');e.qa=qa;throw e}const enc=new TextEncoder(),payload=[],mapping=[],atlas=new Uint8ClampedArray(W*H*4),lookup=new Map(frames.map(f=>[`${f.direction}/${f.action}/${f.index}`,f]));let row=0;
+function buildActorExportPackage(frames,raw,visualApproval=null,serverApprovalProvenance=null){
+  const c=normalizeActorProductionContract(raw);if(c.actions.some(action=>action.id==='walk'))throw new Error('canonical walk requires server export endpoint');const count=c.directions.requested.length*c.actions.reduce((n,a)=>n+a.frame_count,0),pixels=c.sourceSize.width*c.sourceSize.height,columns=Math.max(...c.actions.map(a=>a.frame_count)),rows=c.directions.requested.length*c.actions.length,gap=c.grid.gap,W=columns*c.sourceSize.width+(columns-1)*gap,H=rows*c.sourceSize.height+(rows-1)*gap;if(!Number.isSafeInteger(W)||!Number.isSafeInteger(H)||W>ACTOR_EXPORT_LIMITS.maxDimension||H>ACTOR_EXPORT_LIMITS.maxDimension||count>ACTOR_EXPORT_LIMITS.maxFrames||pixels*count>ACTOR_EXPORT_LIMITS.maxPixels||pixels*count*12>ACTOR_EXPORT_LIMITS.maxWorkingBytes)throw new Error('actor export memory/frame/atlas budget exceeded');const qa=evaluateActorProductionQA(frames,c,visualApproval,serverApprovalProvenance);if(qa.status!=='PASS'){const e=new Error('actor export blocked by hard QA and explicit visual approval');e.qa=qa;throw e}const enc=new TextEncoder(),payload=[],mapping=[],atlas=new Uint8ClampedArray(W*H*4),lookup=new Map(frames.map(f=>[`${f.direction}/${f.action}/${f.index}`,f]));let row=0;
   for(const d of c.directions.requested)for(const a of c.actions){for(let i=0;i<a.frame_count;i++){const f=lookup.get(`${d}/${a.id}/${i}`),x=i*(c.sourceSize.width+gap),y=row*(c.sourceSize.height+gap),path=`frames/${d}/${a.id}-${String(i).padStart(3,'0')}.png`;for(let yy=0;yy<c.sourceSize.height;yy++)atlas.set(f.imageData.data.subarray(yy*c.sourceSize.width*4,(yy+1)*c.sourceSize.width*4),((y+yy)*W+x)*4);payload.push({name:path,bytes:encodeEffectFramePng(c.sourceSize.width,c.sourceSize.height,f.imageData.data)});mapping.push({direction:d,action:a.id,index:i,beat_id:f.beatId,path,atlas:{row,column:i,x,y,w:c.sourceSize.width,h:c.sourceSize.height},pivot:c.anchors.pivot,root:f.root||c.anchors.root,contact:f.contact||c.anchors.contact,mirror_provenance:f.mirrorProvenance||null})}row++}payload.unshift({name:'atlas.png',bytes:encodeEffectFramePng(W,H,atlas)});
   const inventory=payload.map(f=>({path:f.name,bytes:f.bytes.length,crc32:crc32Bytes(f.bytes).toString(16).padStart(8,'0'),sha256:tileSha256(f.bytes)})),manifest={schema_version:'asset-studio.actor-package/v1',family:'actor',subtype:c.subtype,requested_directions:c.directions.requested,actual_directions:[...new Set(mapping.map(x=>x.direction))],directions:c.directions,actions:c.actions,grid:{rows,columns,cell:c.grid.cell,gap},sourceSize:c.sourceSize,anchors:c.anchors,frames:mapping,atlas:{path:'atlas.png',width:W,height:H},qa,inventory_policy:'payload-files-only; manifest.json excluded to avoid self-reference',inventory},files=[{name:'manifest.json',bytes:enc.encode(tileJson(manifest))},...payload];if(files.reduce((n,f)=>n+f.bytes.length,0)>ACTOR_EXPORT_LIMITS.maxArchiveBytes)throw new Error('actor export archive budget exceeded');const zipBytes=tileZipBytes(files);return{manifest,files,zipBytes,zipBlob:new Blob([zipBytes],{type:'application/zip'}),zipName:'actor-package.zip'};
 }
 function renderActorProductionFrame(){if(typeof window==='undefined')return;const art=window.__actorProductionArtifact,cv=$('actorPreviewCanvas');if(!art||!cv)return;const d=$('actorDirectionSelect').value,a=$('actorActionSelect').value,list=art.frames.filter(f=>f.direction===d&&f.action===a);if(!list.length)return;const f=list[Math.floor(Date.now()/(1000/(art.contract.actions.find(x=>x.id===a)?.fps||8)))%list.length],ctx=cv.getContext('2d'),tmp=document.createElement('canvas');tmp.width=f.imageData.width;tmp.height=f.imageData.height;tmp.getContext('2d').putImageData(new ImageData(f.imageData.data,f.imageData.width,f.imageData.height),0,0);ctx.clearRect(0,0,cv.width,cv.height);ctx.imageSmoothingEnabled=false;ctx.drawImage(tmp,0,0,cv.width,cv.height);const p=art.contract.anchors.pivot,r=f.root||art.contract.anchors.root,k=f.contact||art.contract.anchors.contact;ctx.lineWidth=2;ctx.strokeStyle='#ff4d67';ctx.beginPath();ctx.moveTo(p.x*cv.width-7,p.y*cv.height);ctx.lineTo(p.x*cv.width+7,p.y*cv.height);ctx.moveTo(p.x*cv.width,p.y*cv.height-7);ctx.lineTo(p.x*cv.width,p.y*cv.height+7);ctx.stroke();ctx.strokeStyle='#49d6ff';ctx.beginPath();ctx.arc(r.x*cv.width,r.y*cv.height,6,0,Math.PI*2);ctx.stroke();ctx.strokeStyle='#6dff8a';ctx.beginPath();ctx.moveTo(0,k.y*cv.height);ctx.lineTo(cv.width,k.y*cv.height);ctx.stroke();window.__actorPreviewTimer=requestAnimationFrame(renderActorProductionFrame)}
 function resetActorVisualApproval(message='시각 승인이 필요합니다'){if(typeof window==='undefined')return;window.__actorVisualApproval=null;const box=$('actorVisualApproval'),button=$('exportActorPackageZip');if(box)box.checked=false;if(button)button.disabled=true;if(message&&$('actorQaSummary'))$('actorQaSummary').textContent=message}
-function buildActorSyntheticArtifact(){const directions=['S','W','E','N'],beats=['contact','down','passing','up'],contract={subtype:'character',directions:{mode:'4dir',requested:directions,row_order:directions},actions:[{id:'walk',frame_count:4,fps:8,loop:true,beats}],grid:{cell:{width:16,height:16},gap:0},sourceSize:{width:16,height:16},anchors:{pivot:{x:.5,y:.75},root:{x:.5,y:.75},contact:{x:.5,y:.75}}},frames=[];for(let d=0;d<4;d++)for(let i=0;i<4;i++){const data=new Uint8ClampedArray(16*16*4),paint=(x,y)=>data.set([80+d*35,150,220,255],(y*16+x)*4);for(let y=3;y<10;y++)for(let x=6;x<10;x++)paint(x,y);if(i===0||i===2){for(let y=10;y<14;y++){paint(6,y);paint(9,y)}}else if(i===1){for(let y=10;y<14;y++){paint(5,y);paint(6,y)}for(let y=10;y<12;y++)paint(9,y)}else{for(let y=10;y<14;y++){paint(9,y);paint(10,y)}for(let y=10;y<12;y++)paint(6,y)}frames.push({direction:directions[d],action:'walk',index:i,beatId:beats[i],imageData:{width:16,height:16,data},root:contract.anchors.root,contact:contract.anchors.contact})}window.__actorProductionArtifact={contract,frames};resetActorVisualApproval('결정적 측정 완료 · 명시적 시각 승인이 필요합니다');const q=evaluateActorProductionQA(frames,contract);$('actorQaSummary').textContent=`deterministic ${q.deterministic_status} · visual ${q.evidence.visual_review.status}`;cancelAnimationFrame(window.__actorPreviewTimer);renderActorProductionFrame()}
+function buildActorSyntheticArtifact(){const directions=['S','W','E','N'],beats=['contact','down','passing','up'],contract={subtype:'character',directions:{mode:'4dir',requested:directions,row_order:directions},actions:[{id:'walk',frame_count:4,fps:8,loop:true,beats}],grid:{cell:{width:16,height:16},gap:0},sourceSize:{width:16,height:16},anchors:{pivot:{x:.5,y:.75},root:{x:.5,y:.75},contact:{x:.5,y:.75}}},frames=[];for(let d=0;d<4;d++)for(let i=0;i<4;i++){const data=new Uint8ClampedArray(16*16*4),paint=(x,y)=>data.set([80+d*35,150,220,255],(y*16+x)*4);for(let y=3;y<10;y++)for(let x=6;x<10;x++)paint(x,y);if(i===0||i===2){for(let y=10;y<14;y++){paint(6,y);paint(9,y)}}else if(i===1){for(let y=10;y<14;y++){paint(5,y);paint(6,y)}for(let y=10;y<12;y++)paint(9,y)}else{for(let y=10;y<14;y++){paint(9,y);paint(10,y)}for(let y=10;y<12;y++)paint(6,y)}frames.push({direction:directions[d],action:'walk',index:i,beatId:beats[i],imageData:{width:16,height:16,data},root:contract.anchors.root,contact:contract.anchors.contact})}window.__actorProductionArtifact={contract,frames,source:'synthetic-preview',exportable:false,serverApprovalProvenance:null};resetActorVisualApproval('결정적 측정 완료 · 명시적 시각 승인이 필요합니다');const q=evaluateActorProductionQA(frames,contract);$('actorQaSummary').textContent=`deterministic ${q.deterministic_status} · visual ${q.evidence.visual_review.status}`;cancelAnimationFrame(window.__actorPreviewTimer);renderActorProductionFrame()}
 if(typeof document!=='undefined'&&$('buildActorSyntheticPreview'))$('buildActorSyntheticPreview').onclick=buildActorSyntheticArtifact;
 function actorFramesFromImageData(imageData,contract){const c=normalizeActorProductionContract(contract),out=[];let row=0;for(const d of c.directions.requested)for(const a of c.actions){for(let i=0;i<a.frame_count;i++){const data=new Uint8ClampedArray(c.sourceSize.width*c.sourceSize.height*4),x=i*(c.sourceSize.width+c.grid.gap),y=row*(c.sourceSize.height+c.grid.gap);for(let yy=0;yy<c.sourceSize.height;yy++)data.set(imageData.data.subarray(((y+yy)*imageData.width+x)*4,((y+yy)*imageData.width+x+c.sourceSize.width)*4),yy*c.sourceSize.width*4);out.push({direction:d,action:a.id,index:i,beatId:a.beats[i],imageData:{width:c.sourceSize.width,height:c.sourceSize.height,data},root:c.anchors.root,contact:c.anchors.contact})}row++}return out}
-async function exportActorPackageZip(){const button=$('exportActorPackageZip');if(!button)return;button.disabled=true;try{if(!window.__actorProductionArtifact)throw new Error('Actor preview를 먼저 생성하세요');const result=buildActorExportPackage(window.__actorProductionArtifact.frames,window.__actorProductionArtifact.contract,window.__actorVisualApproval);downloadBlob(result.zipBlob,result.zipName);$('actorQaSummary').textContent=`${result.manifest.qa.status} · ${result.manifest.frames.length} actual frames`;}catch(e){if($('actorQaSummary'))$('actorQaSummary').textContent=e.message;throw e}finally{button.disabled=!window.__actorVisualApproval}}
+async function exportActorPackageZip(){const button=$('exportActorPackageZip');if(!button)return;button.disabled=true;try{if(!window.__actorProductionArtifact)throw new Error('Actor preview를 먼저 생성하세요');const art=window.__actorProductionArtifact,isWalk=art.contract?.actions?.some(action=>action.id==='walk');if(isWalk){if(art.source!=='server-approved-walk-assembly'||(!art.serverPackageUrl&&!art.serverExportToken))throw new Error('canonical walk requires durable server package');const response=art.serverPackageUrl?await fetch(art.serverPackageUrl):await fetch('/api/export-actor-walk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assembly_token:art.serverExportToken})});if(!response.ok){let message=`walk server export failed: ${response.status}`;try{message=(await response.json()).error||message}catch(_){}throw new Error(message)}downloadBlob(await response.blob(),'actor-walk-package.zip');$('actorQaSummary').textContent='PASS · durable server canonical walk package';return}const result=buildActorExportPackage(art.frames,art.contract,window.__actorVisualApproval,art.serverApprovalProvenance);downloadBlob(result.zipBlob,result.zipName);$('actorQaSummary').textContent=`${result.manifest.qa.status} · ${result.manifest.frames.length} actual frames`;}catch(e){if($('actorQaSummary'))$('actorQaSummary').textContent=e.message;throw e}finally{const art=window.__actorProductionArtifact,isWalk=art?.contract?.actions?.some(action=>action.id==='walk'),walkReady=!isWalk||(art?.source==='server-approved-walk-assembly'&&!!(art?.serverPackageUrl||art?.serverExportToken));button.disabled=!(isWalk?walkReady:window.__actorVisualApproval)}}
 if(typeof document!=='undefined'&&$('exportActorPackageZip'))$('exportActorPackageZip').onclick=()=>exportActorPackageZip().catch(()=>{});
-if(typeof document!=='undefined'&&$('actorVisualApproval'))$('actorVisualApproval').onchange=e=>{const button=$('exportActorPackageZip');if(e.target.checked&&window.__actorProductionArtifact){const art=window.__actorProductionArtifact;window.__actorVisualApproval={status:'APPROVED',reviewer:'local-user',source:'manual-browser-review',timestamp:new Date().toISOString(),artifact_digest:actorArtifactDigest(art.frames,art.contract)};if(button)button.disabled=false;$('actorQaSummary').textContent='시각 승인 완료 · 프레임/계약 변경 시 초기화';}else resetActorVisualApproval()};
+if(typeof document!=='undefined'&&$('actorVisualApproval'))$('actorVisualApproval').onchange=e=>{const button=$('exportActorPackageZip'),art=window.__actorProductionArtifact,isWalk=art?.contract?.actions?.some(action=>action.id==='walk');if(isWalk){e.target.checked=false;const serverReady=!!validateActorWalkServerProvenance(art.serverApprovalProvenance)&&window.__actorVisualApproval?.source==='server-approved-walk-assembly';if(button)button.disabled=!serverReady;$('actorQaSummary').textContent=serverReady?'서버 F2/F4 승인 provenance 적용 완료':'walk은 서버 F2/F4 승인 조립 결과만 export할 수 있습니다.';return;}if(e.target.checked&&art){window.__actorVisualApproval={status:'APPROVED',reviewer:'local-user',source:'manual-browser-review',timestamp:new Date().toISOString(),artifact_digest:actorArtifactDigest(art.frames,art.contract)};if(button)button.disabled=false;$('actorQaSummary').textContent='시각 승인 완료 · 프레임/계약 변경 시 초기화';}else resetActorVisualApproval()};
 if(typeof document!=='undefined')for(const id of ['actorDirectionSelect','actorActionSelect'])$(id)?.addEventListener('change',()=>resetActorVisualApproval('방향/동작 변경 · 시각 승인이 초기화되었습니다'));
 if(typeof window!=='undefined')window.__assetStudioDebug={...(window.__assetStudioDebug||{}),normalizeActorProductionContract,actorArtifactDigest,evaluateActorProductionQA,buildActorExportPackage,actorFramesFromImageData,normalizeStyleProfile,hydrateStyleProfileControls,validateProjectFamilyDrafts,serializeProjectFamilyDrafts,hydrateProjectFamilyDrafts,buildProjectV2,loadProjectV2};
 
@@ -6843,8 +7016,12 @@ if ($('runDirectionalPixelPack')) $('runDirectionalPixelPack').onclick = () => r
 ['pixelFrameW','pixelFrameH','pixelAnimationPreset','pixelDirectionMode','pixelTargetDirection','pixelWalkFrames'].forEach(id => {
   if ($(id)) $(id).addEventListener('change', () => {
     if (id === 'pixelAnimationPreset' && $('pixelWalkFrames')) $('pixelWalkFrames').value = String(pixelAnimationDefaultFrames($('pixelAnimationPreset')?.value || 'idle'));
-    if (id === 'pixelAnimationPreset') $('actorWalk4Workflow')?.classList.toggle('hidden', !isPixelActorAssetType() || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk4');
+    if (id === 'pixelAnimationPreset') $('actorWalkWorkflow')?.classList.toggle('hidden', !isPixelActorAssetType() || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk');
     applyPixelWorkflowGridDefaults();
+    if (id === 'pixelDirectionMode' || id === 'pixelTargetDirection') {
+      syncActorWalkControls();
+      if (($('pixelAnimationPreset')?.value || 'idle') === 'walk' && !actorWalkDirectionSupported()) setStatus(ACTOR_WALK_SOUTH_ONLY_MESSAGE);
+    }
   });
 });
 if ($('pixelAssetType')) $('pixelAssetType').addEventListener('change', () => { syncPixelAssetWorkflowUi(); syncPixelAssetPrompt(); });
@@ -6932,11 +7109,24 @@ $('loadProject').onchange = e => {
   r.readAsText(f);
 };
 
+function isActorWalkProductionRequest(family, subtype, action, sourceObject) {
+  return family === 'sprite' && ['character','monster','npc'].includes(subtype)
+    && action === 'walk' && sourceObject?.type === 'image';
+}
+
 function generateAiAsset() {
   if (!isRecipeRegistryReady()) return Promise.reject(blockAssetGeneration());
   if (assetGenerationInFlight) return assetGenerationInFlight;
   const family = currentAssetFamily();
   const subtype = currentAssetSubtype();
+  if (isActorWalkProductionRequest(family,subtype,effectivePixelAnimationPreset(),activeSpriteTarget())) {
+    const request = generateActorWalk();
+    assetGenerationInFlight = request;
+    request.finally(() => {
+      if (assetGenerationInFlight === request) assetGenerationInFlight = null;
+    }).catch(() => {});
+    return request;
+  }
   const corePrompt = ($('assetCorePrompt')?.value || '').trim();
   if (!corePrompt) { alert('생성할 내용을 입력하세요.'); return Promise.resolve(null); }
   const prompt = corePrompt;
@@ -7031,17 +7221,11 @@ function animationPresetSpec(presetRaw) {
       motion: 'idle/breathing loop: standing in place, planted feet, same facing/pivot/baseline, small torso/shoulder/head breathing motion only',
       acceptance: actionVisualAcceptanceGate('idle')
     },
-    walk4: {
-      key: 'walk4', label: 'Walk', frames,
-      frameOrder: actionFrameBeats('walk4', frames),
-      motion: 'simple RPG walk4: neutral crossover -> LEFT leg swing-cross -> same neutral crossover -> RIGHT leg swing-cross. Frames 1 and 3 repeat the same neutral transition pose with feet close beneath pelvis. In frame 2 the LEFT swing foot travels from behind the planted support leg, passes beside/overlaps it beneath the pelvis, and emerges ahead while the RIGHT stance/support foot stays planted; frame 4 is the exact inverse. Reverse leg front/back depth ordering between frames 2 and 4. For S/front-facing, character LEFT = screen-right and character RIGHT = screen-left: frame 2 swing boot on screen-right, frame 4 swing boot on screen-left. Keep pelvis/root center at exactly 50% of each cell width and identical y. Never swap anatomical side identity or make an X-locked pose. Keep head/torso/contact baseline fixed; held tool stays on the same hand/side',
-      acceptance: actionVisualAcceptanceGate('walk4')
-    },
-    walk6: {
-      key: preset === 'walk6' ? 'walk6' : `walk${frames}`, label: 'Walk', frames,
-      frameOrder: actionFrameBeats('walk6', frames),
-      motion: 'six-phase walk cycle: alternating left/right foot contacts, connected down/passing beats, opposite arm/leg phases, implied locomotion while centered, held tool stays on same hand/side across all frames',
-      acceptance: actionVisualAcceptanceGate('walk6')
+    walk: {
+      key: 'walk', label: 'Walk', frames: 4,
+      frameOrder: actionFrameBeats('walk', 4),
+      motion: 'canonical four-frame walk: N → L → exact N reuse → R; opposite step beats require human visual review',
+      acceptance: actionVisualAcceptanceGate('walk')
     },
     attack: {
       key: 'attack4', label: 'Attack', frames,
@@ -7148,7 +7332,7 @@ Background cleanup contract: after removal there must be true transparent backgr
 }
 
 async function generateFrontIdleFromSelected() {
-  if (!isRecipeRegistryReady()) throw blockAssetGeneration();
+  if (typeof isRecipeRegistryReady === 'function' && !isRecipeRegistryReady()) throw blockAssetGeneration();
   const referenceObj = selectedLayerObject();
   const type = $('pixelAssetType')?.value || 'character';
   const actor = isPixelActorAssetType(type);
@@ -7162,7 +7346,9 @@ async function generateFrontIdleFromSelected() {
   const preset = effectivePixelAnimationPreset();
   const spec = animationPresetSpec(preset);
   const targetDirection = $('pixelTargetDirection')?.value || 'S';
-  const referenceDirection = inferReferenceDirection();
+  const referenceDirection = actor && typeof inferReferenceDirection === 'function'
+    ? inferReferenceDirection()
+    : 'AUTO';
   const prompt = buildSelectedActionSpritePrompt(referenceObj, spec);
   const effect = isPixelEffectAssetType(type);
   const statusPrefix = actor
@@ -7182,9 +7368,9 @@ async function generateFrontIdleFromSelected() {
     no_baked_vfx: !effect,
   });
   try {
-    beginGenerationProgress('1/3 · 기준 이미지와 동작 요청 준비 중');
+    if (typeof beginGenerationProgress === 'function') beginGenerationProgress('1/3 · 기준 이미지와 동작 요청 준비 중');
     setStatus(`${statusPrefix} 자동 생성 중...`);
-    updateGenerationProgress('2/3 · AI 이미지 생성 대기 중');
+    if (typeof updateGenerationProgress === 'function') updateGenerationProgress('2/3 · AI 이미지 생성 대기 중');
     const res = await fetch('/api/generate-reference', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -7192,7 +7378,7 @@ async function generateFrontIdleFromSelected() {
     });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'direction/action generation failed');
-    updateGenerationProgress('3/3 · 배경 제거·QA·미리보기 처리 중');
+    if (typeof updateGenerationProgress === 'function') updateGenerationProgress('3/3 · 배경 제거·QA·미리보기 처리 중');
     const url = withCacheBust(data.url);
     const resultLabel = actor ? `${targetDirection} ${spec.label} ${spec.frames}f` : `${type} ${preset} ${spec.frames}f`;
     addGallery(url, data.method || data.model || resultLabel);
@@ -7212,11 +7398,11 @@ async function generateFrontIdleFromSelected() {
     }
     recordPixelAssetResult(url, data.method || data.model || resultLabel);
     setStatus(actor ? `${directionLabel(targetDirection)} ${spec.label} ${spec.frames}프레임 자동 생성 완료 · grid/preview 연결됨` : `${type} ${preset} 자동 생성 완료 · ${spec.frames}프레임 그리드 연결됨`);
-    finishGenerationProgress(true, '완료 · 결과와 애니메이션 미리보기가 준비됐습니다');
+    if (typeof finishGenerationProgress === 'function') finishGenerationProgress(true, '완료 · 결과와 애니메이션 미리보기가 준비됐습니다');
     return { url, img, data };
   } catch (err) {
     console.error(err);
-    finishGenerationProgress(false, `실패 · ${err.message}`);
+    if (typeof finishGenerationProgress === 'function') finishGenerationProgress(false, `실패 · ${err.message}`);
     alert(`방향/동작 자동 생성 실패: ${err.message}`);
     setStatus(`방향/동작 자동 생성 실패: ${err.message}`);
     return null;
@@ -7256,7 +7442,7 @@ async function runPixelWorkflow() {
 async function runDirectionalPixelWorkflow(animationMode = 'idle') {
   if ($('pixelAssetType')) $('pixelAssetType').value = 'character';
   if ($('pixelDirectionMode')) $('pixelDirectionMode').value = '8dir';
-  if ($('pixelAnimationPreset')) $('pixelAnimationPreset').value = animationMode === 'walk' ? 'walk4' : 'idle';
+  if ($('pixelAnimationPreset')) $('pixelAnimationPreset').value = animationMode === 'walk' ? 'walk' : 'idle';
   if ($('pixelDirection')) $('pixelDirection').value = '8dir';
   syncPixelAssetPrompt();
   return runPixelWorkflow();
@@ -7293,7 +7479,7 @@ async function runPixelSamplePack() {
   const palette = ($('pixelPalette')?.value || 'limited dark game palette').trim();
   const jobs = [
     { type: 'character', anim: 'idle', subject: `${subjectBase}, idle animation sprite sheet` },
-    { type: 'character', anim: 'walk4', subject: `${subjectBase}, walking animation sprite sheet, same character design` },
+    { type: 'character', anim: 'walk', subject: `${subjectBase}, walking animation sprite sheet, same character design` },
     { type: 'ui_panel', anim: 'ui_static', subject: 'dark game UI panel and button asset sheet, muted brass trim, black plate, reusable interface parts' },
   ];
   const packBtn = $('runPixelSamplePack');

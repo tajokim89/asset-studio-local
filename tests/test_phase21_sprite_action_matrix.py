@@ -31,17 +31,15 @@ def test_phase21_action_matrix_defines_idle_walk_attack_hurt_death_contracts():
         "dodge", "jump", "hurt", "death", "interact", "pickup",
     ]
     assert SPRITE_ACTION_MATRIX["idle"]["frames"] == 4
-    assert SPRITE_ACTION_MATRIX["walk"]["frames"] == 6
+    assert SPRITE_ACTION_MATRIX["walk"]["frames"] == 4
     assert SPRITE_ACTION_MATRIX["attack"]["frames"] == 6
     assert SPRITE_ACTION_MATRIX["jump"]["frames"] == 6
     assert SPRITE_ACTION_MATRIX["cast"]["frames"] == 6
     assert SPRITE_ACTION_MATRIX["hurt"]["frames"] == 4
     assert SPRITE_ACTION_MATRIX["death"]["frames"] == 6
-    assert SPRITE_ACTION_MATRIX["walk"]["columns"] == [
-        "left-contact", "left-down", "left-passing",
-        "right-contact", "right-down", "right-passing",
-    ]
-    assert "continuous walking" in SPRITE_ACTION_MATRIX["walk"]["acceptance"]
+    assert SPRITE_ACTION_MATRIX["walk"]["columns"] == ["N", "L", "N", "R"]
+    assert "opposite-foot steps" in SPRITE_ACTION_MATRIX["walk"]["acceptance"]
+    assert "exact pixel copy of frame 1" in SPRITE_ACTION_MATRIX["walk"]["acceptance"]
     assert SPRITE_ACTION_MATRIX["dodge"]["fps"] == 14
     assert SPRITE_ACTION_MATRIX["death"]["terminal"] is True
 

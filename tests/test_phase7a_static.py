@@ -38,7 +38,7 @@ def test_phase7a_pan_zoom_shortcuts_exist():
     ]:
         assert token in JS
     assert "styles/app.css?v=20260710.6" in INDEX
-    assert "src/main.js?v=20260710.8" in INDEX
+    assert "src/main.js?v=20260711.2" in INDEX
     assert ".workspace.is-panning" in CSS
 
 

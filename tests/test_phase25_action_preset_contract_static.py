@@ -52,8 +52,6 @@ def test_phase25_server_action_matrix_has_full_canonical_action_contracts():
 def test_phase25_animation_action_normalization_aliases_payload_keys():
     expected = {
         "idle4": "idle",
-        "walk4": "walk",
-        "walk6": "walk",
         "attack4": "attack",
         "jump4": "jump",
         "cast4": "cast",
@@ -67,6 +65,9 @@ def test_phase25_animation_action_normalization_aliases_payload_keys():
     }
     for raw, canonical in expected.items():
         assert normalize_animation_action(raw) == canonical
+    assert normalize_animation_action("walk") == "walk"
+    assert normalize_animation_action("walk4") == "walk4"
+    assert normalize_animation_action("walk6") == "walk6"
 
 
 def test_phase25_core_animation_locks_are_non_negotiable_for_all_actor_actions():
@@ -134,8 +135,8 @@ def test_phase25_action_visual_qa_uses_whitelist_acceptance_for_every_actor_acti
 
     expectations = {
         "idle4": ["stable actor breathing in place", "closing frame returns cleanly"],
-        "walk6": ["continuous walking", "left and right support phases", "no skating"],
-        "attack4": ["complete attack", "weapon, hands, body"],
+        "walk": ["human visual review", "opposite-foot steps", "exact pixel copy"],
+        "attack4": ["complete attack", "equipment, hands, body"],
         "jump4": ["real vertical pose change", "contained landing"],
         "cast4": ["clearly communicates casting", "baked particles"],
         "hurt4": ["hit reaction", "through the recoil"],
@@ -144,7 +145,7 @@ def test_phase25_action_visual_qa_uses_whitelist_acceptance_for_every_actor_acti
         "pickup": ["picking up an item", "coherent crouch and rise"],
     }
     for mode, tokens in expectations.items():
-        prompt = build_reference_sprite_prompt("cleanup worker", animation_mode=mode, frame_count=6 if mode == "walk6" else 4)
+        prompt = build_reference_sprite_prompt("cleanup worker", animation_mode=mode, frame_count=4)
         for token in tokens:
             assert token in prompt
 
@@ -177,17 +178,17 @@ def test_phase25_action_visual_qa_uses_whitelist_acceptance_for_every_actor_acti
 
 
 def test_phase25_action_prompts_include_generic_reference_identity_and_full_frame_pose_rules():
-    walk = build_reference_sprite_prompt("generic actor", animation_mode="walk4", frame_count=4)
+    walk = build_reference_sprite_prompt("generic actor", animation_mode="walk", frame_count=4)
     for token in [
         "one accepted reference identity is the standard for the whole action set",
         "complete coherent full-frame poses",
         "do not merely upscale, crop, copy, cut/paste, or move isolated parts",
-        "Frame count: exactly 6",
-        "left-contact, left-down, left-passing, right-contact, right-down, right-passing",
-        "alternating support feet",
+        "Frame count: exactly 4",
+        "N, L, N, R",
+        "left step, exact neutral reuse, right step",
         "fixed root and contact baseline",
-        "continuous walking",
-        "no skating, hopping, repeated same-side step, or root drift",
+        "human visual review",
+        "opposite-foot steps",
     ]:
         assert token in walk
     assert "left/support foot step" not in walk
@@ -201,15 +202,15 @@ def test_phase25_action_prompts_include_generic_reference_identity_and_full_fram
     ]:
         assert forbidden not in walk
 
-    sprite_prompt = build_sprite_action_prompt("generic actor", action="walk4", direction="SW")
+    sprite_prompt = build_sprite_action_prompt("generic actor", action="walk", direction="SW")
     for token in [
         "Global reference identity rule",
         "whole action set",
         "complete full-frame pose",
         "cutting, pasting, sliding, warping",
-        "left-contact, left-down, left-passing, right-contact, right-down, right-passing",
-        "Six-phase in-place walk cycle",
-        "alternating support feet",
+        "N, L, N, R",
+        "Four-frame in-place walk",
+        "opposite-foot steps",
     ]:
         assert token in sprite_prompt
 
@@ -263,7 +264,7 @@ def test_phase25_cleanup_removes_dark_cell_borders_and_reports_residue():
         background_mode="chroma_green",
         direction_mode="single",
         target_direction="S",
-        animation_mode="walk4",
+        animation_mode="walk",
         chroma_mode="global",
     )
     cleaned = Image.open(io.BytesIO(out)).convert("RGBA")

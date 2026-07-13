@@ -1,5 +1,6 @@
 {
   "schema_version": "asset-studio.actor-qa-regression/v1",
+  "status": "historical_legacy_6f",
   "artifact_ref": "assets/generated/black_orc_se_sample/black_orc_se_walk_6f.png",
   "result_manifest_ref": "assets/generated/black_orc_se_sample/latest.json",
   "artifact_sha256": "36697af4d5de6cc141ad53c39e5c6a760fd435f6e28b827ba3447aae8e9fc16d",

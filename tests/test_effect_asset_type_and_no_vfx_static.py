@@ -16,8 +16,8 @@ def test_effect_asset_type_exists_in_ui_and_frontend_contracts():
     assert "선택 이미지에 맞는 이펙트 생성" in JS
     assert "effect-only game VFX asset" in JS
     assert "No baked VFX" in JS
-    assert "asset_type: type" in JS
-    assert "preset: type === 'effect' ? 'effect' : 'pixel'" in JS
+    assert "asset_type: subtype" in JS
+    assert "preset: effect ? 'effect' : 'pixel'" in JS
 
 
 def test_non_effect_generation_prompts_exclude_baked_vfx():

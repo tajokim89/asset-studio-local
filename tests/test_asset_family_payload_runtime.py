@@ -18,6 +18,7 @@ import server
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 REGISTRY = json.loads((ROOT / "contracts" / "asset-recipes.json").read_text(encoding="utf-8"))
+ACTOR_PROFILE = json.loads((ROOT / "profiles" / "generic-pixel-actor-v1.json").read_text(encoding="utf-8"))
 FAMILY_KEYS = {"sprite", "tile", "ui", "object"}
 REPRESENTATIVES = (
     ("sprite", "character"),
@@ -81,7 +82,7 @@ EXPECTED_BROWSER_CONTRACTS = {
         },
         "values": {
             "animation_mode": "walk", "direction_mode": "8dir", "target_direction": "NE",
-            "reference_direction": "S", "frame_count": 6, "walk_frames": 6,
+            "reference_direction": "AUTO", "frame_count": 4, "walk_frames": 4,
             "chroma_mode": "outer", "no_baked_vfx": True,
         },
     },
@@ -229,7 +230,8 @@ def browser_runtime_payloads():
         "validateAndBuildRecipeViews", "recipeGenerationSubtypesForFamily",
         "projectAssetSubtypesForFamily",
         "normalizeStyleProfile", "resolveStyleProfileForFamily", "styleProfileFromControls",
-        "currentAssetFamily", "currentAssetSubtype", "buildSpriteContract",
+        "currentAssetFamily", "currentAssetSubtype", "actorActionRecipe",
+        "inferReferenceDirection", "buildSpriteContract",
         "buildTileContract", "buildUiContract", "buildObjectContract",
         "buildAssetGenerationPayload",
     ))
@@ -251,10 +253,14 @@ const document = {{ getElementById: $ }};
 {_variable_source("assetRecipeRegistryState")}
 {_variable_source("assetFamilyDrafts")}
 {_variable_source("PROJECT_FAMILIES")}
+{_variable_source("ACTOR_ACTION_ALIASES")}
 let selectedAssetFamily = 'sprite';
 {helper_sources}
-// Unrelated deterministic dependency required by buildSpriteContract().
-const pixelPresetFrameCount = raw => raw === 'walk6' ? 6 : 4;
+const actorProfile = {json.dumps(ACTOR_PROFILE)};
+let actorOutputProfileState = {{
+  status: 'ready', profile: actorProfile,
+  actions: new Map(actorProfile.actions.map(action => [action.id, action])),
+}};
 {functions}
 const recipeRegistry = {json.dumps(REGISTRY)};
 const recipeViews = validateAndBuildRecipeViews(recipeRegistry);
@@ -278,7 +284,7 @@ function build(family, subtype, extra = {{}}) {{
     assetOutputWidth: 640,
     assetOutputHeight: 384,
     assetBackground: family === 'tile' ? 'opaque' : 'transparent',
-    pixelAnimationPreset: 'walk6',
+    pixelAnimationPreset: 'walk',
     pixelDirectionMode: '8dir',
     pixelTargetDirection: 'NE',
     pixelReferenceDirection: 'S',

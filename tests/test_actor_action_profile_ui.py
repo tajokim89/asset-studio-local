@@ -23,6 +23,7 @@ class ActorActionProfileUiTests(unittest.TestCase):
                 "validateActorOutputProfile",
                 "actorActionRecipe",
                 "applyActorOutputProfileUi",
+                "inferReferenceDirection",
                 "buildSpriteContract",
             ),
             prelude="""
@@ -69,7 +70,7 @@ console.log(JSON.stringify({{
         for action_id in expected_actions:
             self.assertIn(f'value="{action_id}"', result["actionHtml"])
         self.assertTrue(result["frameDisabled"])
-        self.assertEqual("6", result["frameValue"])
+        self.assertEqual(str(next(action["frame_count"] for action in PROFILE["actions"] if action["id"] == "dodge")), result["frameValue"])
         self.assertEqual("8dir", result["directionMode"])
         self.assertFalse(result["directionalPackHidden"])
 

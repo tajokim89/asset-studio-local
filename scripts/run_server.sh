@@ -11,7 +11,7 @@ if [[ -z "${HERMES_REPO:-}" ]]; then
     HERMES_REPO="$HERMES_HOME"
   else
     HERMES_REPO="$HOME/.hermes/hermes-agent"
-    HERMES_BIN="${HERMES_COMMAND:-$(command -v hermes 2>/dev/null || true)}"
+    HERMES_BIN="${HERMES_COMMAND:-}"
     if [[ -n "$HERMES_BIN" ]]; then
       SEARCH_DIR="$(cd "$(dirname "$HERMES_BIN")" && pwd -P)"
       for _ in 1 2 3 4 5 6; do

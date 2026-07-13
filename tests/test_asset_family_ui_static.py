@@ -285,10 +285,10 @@ def test_recipe_registry_initialization_runs_after_actor_state_and_tool_wiring()
     )
 
 
-def test_walk4_and_phase25_action_lock_source_contracts_remain_represented():
+def test_canonical_walk_and_phase25_action_lock_source_contracts_remain_represented():
     # Guardrails for Phase 2 migration: classification must not rewrite sprite QA.
     for token in (
-        "neutral-left-cross-neutral-right-cross",
+        "recipe.beats.join(',') !== 'N,L,N,R'",
         "Reference Identity Lock", "Full-Frame Pose Lock", "Equipment Lock",
         "Direction Lock", "Root Lock", "Motion Read", "Loop Read", "Production Clean",
     ):
@@ -394,7 +394,9 @@ def test_reference_direction_and_chroma_strategy_are_advanced_but_still_wired():
     assert "pixelAdvancedReference" in JS
     assert "ensureAdvancedReferenceUi" in JS
     sprite = _function_body("buildSpriteContract")
-    assert "pixelReferenceDirection" in sprite
+    assert "inferReferenceDirection" in JS
+    assert "reference_direction: inferReferenceDirection()" in sprite
+    assert "pixelReferenceDirection" not in sprite
     assert "pixelChromaMode" in sprite
 
 

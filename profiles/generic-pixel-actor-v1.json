@@ -35,15 +35,15 @@
     },
     {
       "id": "walk",
-      "frame_count": 6,
+      "frame_count": 4,
       "fps": 10,
       "loop": true,
       "terminal": false,
-      "beats": ["left-contact", "left-down", "left-passing", "right-contact", "right-down", "right-passing"],
-      "prompt_contract": "Six-phase in-place walk cycle with alternating support feet, opposite arm swing, and a fixed root and contact baseline.",
-      "acceptance": "Reads as continuous walking with left and right support phases, no skating, hopping, repeated same-side step, or root drift.",
+      "beats": ["N", "L", "N", "R"],
+      "prompt_contract": "Four-frame in-place walk ordered neutral, left step, exact neutral reuse, right step, with a fixed root and contact baseline.",
+      "acceptance": "A human visual review must confirm that frames 2 and 4 read as opposite-foot steps; frame 3 must be an exact pixel copy of frame 1.",
       "pivot": { "unit": "pixels", "x": 16, "y": 28 },
-      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 6, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3, 4, 5] }
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 4, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3] }
     },
     {
       "id": "run",

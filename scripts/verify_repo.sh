@@ -4,14 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-export HERMES_REPO="${HERMES_REPO:-$HOME/.hermes/hermes-agent}"
+HERMES_REPO_PATH="${HERMES_REPO:-$HOME/.hermes/hermes-agent}"
 
 PYTHON_BIN="${ASSET_STUDIO_PYTHON:-}"
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$ROOT/.venv/bin/python" ]]; then
     PYTHON_BIN="$ROOT/.venv/bin/python"
-  elif [[ -x "$HERMES_REPO/venv/bin/python" ]]; then
-    PYTHON_BIN="$HERMES_REPO/venv/bin/python"
+  elif [[ -x "$HERMES_REPO_PATH/venv/bin/python" ]]; then
+    PYTHON_BIN="$HERMES_REPO_PATH/venv/bin/python"
   else
     PYTHON_BIN="$(command -v python3)"
   fi
@@ -28,6 +28,8 @@ run_static_checks() {
   printf 'python: PASS\n'
 
   node --check src/main.js
+  node --check src/motion-studio-core.js
+  node --check src/motion-studio.js
   printf 'javascript: PASS\n'
 
   "$PYTHON_BIN" - <<'PY'

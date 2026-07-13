@@ -46,9 +46,18 @@ class GenerationHttpHarness:
         handler.end_headers = lambda: None
 
         self.generated_dir.mkdir(parents=True, exist_ok=True)
+        def fake_actor_frame(prompt, images, roles):
+            result = self.provider.generate(
+                prompt, image_url=images[0], reference_image_urls=images[1:],
+            )
+            raw = Path(result["image"]).read_bytes()
+            import base64
+            return base64.b64encode(raw).decode("ascii"), result["model"], "test"
+
         with mock.patch.object(server, "load_provider", return_value=self.provider):
-            with mock.patch.object(server, "GENERATED", self.generated_dir):
-                handler.do_POST()
+            with mock.patch.object(server, "collect_codex_actor_frame_b64", side_effect=fake_actor_frame):
+                with mock.patch.object(server, "GENERATED", self.generated_dir):
+                    handler.do_POST()
 
         if len(status) != 1:
             raise AssertionError(f"Expected one response status, received {status!r}")

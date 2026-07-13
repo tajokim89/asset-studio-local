@@ -134,7 +134,8 @@ class OutputProfileContractTests(unittest.TestCase):
             "block", "dodge", "jump", "hurt", "death", "interact", "pickup",
         }, set(actions))
         self.assertEqual((4, 6, True), (actions["idle"]["frame_count"], actions["idle"]["fps"], actions["idle"]["loop"]))
-        self.assertEqual((6, 10, True), (actions["walk"]["frame_count"], actions["walk"]["fps"], actions["walk"]["loop"]))
+        self.assertEqual((4, 10, True), (actions["walk"]["frame_count"], actions["walk"]["fps"], actions["walk"]["loop"]))
+        self.assertEqual(["N", "L", "N", "R"], actions["walk"]["beats"])
         self.assertEqual((6, 12, False), (actions["attack"]["frame_count"], actions["attack"]["fps"], actions["attack"]["loop"]))
         for action in actions.values():
             self.assertEqual(action["frame_count"], len(action["beats"]))

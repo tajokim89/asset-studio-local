@@ -70,7 +70,7 @@ def test_phase17_directional_prompt_and_payload_are_explicit():
         "W/left true side profile",
         "8-direction",
         "N, NE, E, SE, S, SW, W, NW",
-        "neutral crossover -> LEFT leg swing-cross -> same neutral crossover -> RIGHT leg swing-cross",
+        "N,L,N,R",
         "reference_direction",
         "direction_mode",
         "animation_mode",

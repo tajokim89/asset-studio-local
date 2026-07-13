@@ -26,9 +26,16 @@ def load_fixture() -> dict:
 
 
 class ActorQARegressionTests(unittest.TestCase):
-    def test_black_orc_walk_splits_into_six_exact_horizontal_cells(self):
+    def require_historical_artifact(self, fixture, key):
+        artifact = ROOT / fixture[key]
+        if not artifact.is_file():
+            self.skipTest("historical legacy 6-frame artifact is not installed")
+        return artifact
+
+    def test_historical_black_orc_walk_splits_into_six_exact_horizontal_cells(self):
         fixture = load_fixture()
-        artifact = ROOT / fixture["artifact_ref"]
+        self.assertEqual(fixture["status"], "historical_legacy_6f")
+        artifact = self.require_historical_artifact(fixture, "artifact_ref")
 
         self.assertTrue(artifact.is_file())
         self.assertEqual(
@@ -42,8 +49,9 @@ class ActorQARegressionTests(unittest.TestCase):
 
     def test_black_orc_walk_records_geometry_without_anatomy_claims(self):
         fixture = load_fixture()
+        artifact = self.require_historical_artifact(fixture, "artifact_ref")
         metrics = measure_actor_sheet(
-            ROOT / fixture["artifact_ref"], frame_count=fixture["frame_count"]
+            artifact, frame_count=fixture["frame_count"]
         )
 
         self.assertEqual(metrics["summary"]["nonempty_frames"], 6)
@@ -75,7 +83,7 @@ class ActorQARegressionTests(unittest.TestCase):
     def test_cleanup_pass_does_not_hide_anatomy_and_continuity_failure(self):
         fixture = load_fixture()
         manifest = json.loads(
-            (ROOT / fixture["result_manifest_ref"]).read_text(encoding="utf-8")
+            self.require_historical_artifact(fixture, "result_manifest_ref").read_text(encoding="utf-8")
         )
 
         self.assertIs(manifest["walk_response"]["qa"]["cleanup_qa"]["pass"], True)
