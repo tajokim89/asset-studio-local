@@ -1058,6 +1058,48 @@ GIF 또는 스프라이트시트는 시각 검증용으로 bake할 수 있지만
 
 2개 레이어 × 3프레임이 6개 파일을 생성하는 공식 예는 파트 분리가 언제나 노동을 줄이지 않는다는 반례다.
 
+#### Unity 6 Transform Hierarchy
+
+- URL: https://docs.unity3d.com/6000.0/Documentation/Manual/class-Transform.html
+- 증거 유형: 해외 공식 엔진 문서
+- 직접 확인 문구:
+  > “A child GameObject moves, rotates, and scales exactly as its parent does.”
+  > “These values are called local coordinates.”
+
+자식 파트가 부모 베이스의 이동·회전·스케일을 상속하고, 자신의 값은 부모 기준 로컬 좌표로 저장된다는 근거다. 단, 이것은 런타임 계층을 뒷받침할 뿐 파트 제작과 조합 비용이 낮다는 보장은 아니다.
+
+#### Aseprite Slices와 Pivot
+
+- URL: https://www.aseprite.org/docs/slices/
+- 증거 유형: 해외 공식 제작 도구 문서
+- 직접 확인 문구:
+  > “a pivot to specify the central/base location of the sprite inside the slice”
+
+Slice별 bounds와 pivot을 JSON 스프라이트시트 데이터로 내보낼 수 있다. 따라서 Asset Studio의 파트별 기준점을 이미지 중심으로 추측하지 않고 명시적 메타데이터로 저장해야 한다. Slice 자체는 부모·자식 계층이나 리그를 정의하지 않으므로, assembly manifest는 별도로 필요하다.
+
+#### 국내 실제 구현 사례: 몸체 분리와 장비 회전
+
+- URL: https://gall.dcinside.com/mgallery/board/view/?id=game_dev&no=132750
+- 증거 유형: 국내 개인 개발자의 공개 구현 기록
+- 직접 확인 문구:
+  > “그래서 머리/몸통/팔/다리/ 따로 분리해서 스프라이트를 만든다음에, 몸에 장비 이미지를 추가로 끼우고 회전시키는 방식으로 하면 나쁘지않더라.”
+
+파트 분리와 장비 회전이 실제 프로젝트에서 교체 가능한 장비 표현에 쓰였다는 사례다. 다만 단일 개인 프로젝트 경험이므로 일반 성능 보장으로 확대하지 않는다.
+
+#### 국내 실패 반례: 조합 폭증
+
+- URL: https://gall.dcinside.com/mgallery/board/view/?id=game_dev&no=183813
+- 증거 유형: 국내 개인 개발자의 공개 실패·비용 기록
+- 직접 확인 문구:
+  > “몸통 다 분리해서 적용하려고 하니까 gif 파일 개수가 진짜 상상이상이더라. 이거 애니메이션 마다 드로우 하는 코드도 쓰는데 진짜 개노가다였음.”
+  > “이미 gif만 100개가 넘게 만들어버려서”
+
+파트 수, 방향, 무기, 동작 조합을 동시에 늘리면 파일과 구현 노동이 폭증한다는 직접 반례다. 따라서 이 모드는 `base 1개 + 강체 파트 1~4개`로 제한하며 전신 분해형 범용 리그와 조합별 GIF 대량 생성은 제외한다.
+
+#### 해외·국내 증거 종합
+
+해외 공식 문서는 부모–자식 로컬 변환, 렌더 순서, 피벗, 정수 픽셀 정렬과 내보내기 계약을 뒷받침한다. 국내 실제 기록은 그 방식이 장비 교체에 유효할 수 있지만 범위를 넓히면 파일·코드 노동이 급격히 증가한다는 현장 경계를 제공한다.
+
 ### 20.3.3 적용 조건
 
 다음 조건을 만족할 때만 이 모드를 사용한다.
