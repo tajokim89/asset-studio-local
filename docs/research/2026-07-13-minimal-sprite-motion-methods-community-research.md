@@ -1608,3 +1608,342 @@ Studio는 다음 보기를 제공해야 한다.
 국내 지정 사례는 검증 실패로 채택하지 않았고, 해외 공식 문서가 입증하는 범위 안에서만 결론을 내린다.
 
 이 항목은 조사 완료로 판정한다.
+
+---
+
+## 20.5 VFX 주도형 동작
+
+### 20.5.1 조사 범위
+
+정적 또는 최소 프레임 본체 위에 별도 효과를 재생해 동작의 힘, 방향, 접촉, 속도와 잔류감을 보완하는 방식이다.
+
+- 포함: 먼지, 섬광, 연기, 불꽃, 파편, 충격파, 잔상, trail, glow, screen shake cue
+- 제외: 본체의 anticipation·contact·recovery 실루엣을 전부 효과로 감추는 방식
+- 제외: 상태별 정적 이미지 교체만 있는 방식
+- 제외: 전신 리깅과 장비 페이퍼돌
+
+### 20.5.2 해외 공식 근거
+
+#### Unity Particle System Main Module
+
+- URL: https://docs.unity3d.com/Manual/PartSysMainModule.html
+- 증거 유형: 해외 공식 엔진 문서
+- 직접 확인 기능:
+  - `Duration`: 시스템 실행 길이
+  - `Looping`: duration 종료 후 반복
+  - `Start Lifetime`: 파티클 초기 수명
+  - `Start Speed`: 파티클 초기 속도
+  - `Simulation Space`: local, world 또는 custom object 기준
+  - `Max Particles`: 동시에 존재할 수 있는 최대 파티클 수
+  - `Auto Random Seed=false`: 매 재생마다 동일한 결과
+  - `Random Seed`: 반복 가능한 효과 생성
+
+이 문서는 VFX recipe가 단순 이미지 한 장이 아니라 수명, 속도, 공간, 동시 개수, seed를 포함해야 한다는 근거다.
+
+#### Unity Particle System Modules
+
+- URL: https://docs.unity3d.com/Manual/ParticleSystemModules.html
+- 증거 유형: 해외 공식 엔진 문서
+- 확인 기능:
+  - Emission: 방출 시점과 비율
+  - Shape: 방출 영역
+  - Color over Lifetime
+  - Size over Lifetime
+  - Noise
+  - Collision
+  - Trails
+
+효과의 appearance와 behavior를 분리된 모듈로 표현할 수 있다. Asset Studio 역시 texture와 emitter recipe를 분리해 내보내야 한다.
+
+#### Godot GPUParticles2D
+
+- 공식 원문 저장소: https://github.com/godotengine/godot-docs/blob/master/classes/class_gpuparticles2d.rst
+- 문서 URL: https://docs.godotengine.org/en/stable/classes/class_gpuparticles2d.html
+- 증거 유형: 해외 공식 엔진 문서
+- 확인 속성:
+  - `amount`
+  - `lifetime`
+  - `one_shot`
+  - `local_coords`
+  - `randomness`
+  - `seed`
+  - `fixed_fps`
+  - `visibility_rect`
+
+Godot 문서 사이트의 Cloudflare 검증 때문에 공식 GitHub 원문으로 속성을 교차 확인했다. 수량·수명·단발 여부·공간·난수·고정 업데이트·가시 범위가 VFX 계약의 핵심임을 뒷받침한다.
+
+#### Godot ParticleProcessMaterial
+
+- 공식 원문 저장소: https://github.com/godotengine/godot-docs/blob/master/classes/class_particleprocessmaterial.rst
+- 문서 URL: https://docs.godotengine.org/en/stable/classes/class_particleprocessmaterial.html
+- 증거 유형: 해외 공식 엔진 문서
+- 확인 기능:
+  - emission shape
+  - direction
+  - gravity와 가속 계열
+  - scale curve
+  - color와 color ramp
+  - collision mode
+  - lifetime에 따른 curve/gradient 변화
+
+하나의 VFX는 방출 형상, 운동, 크기, 색, 충돌을 가진 recipe로 모델링해야 하며 PNG만 출력해서는 재현되지 않는다.
+
+#### Phaser ParticleEmitter
+
+- URL: https://docs.phaser.io/api-documentation/class/gameobjects-particles-particleemitter
+- 증거 유형: 해외 공식 엔진 API
+- 확인 기능:
+  - lifespan
+  - frequency와 flow mode
+  - `frequency=-1`인 explode mode
+  - `explode()`
+  - `startFollow(target, offsetX, offsetY)`
+  - emit zones와 death zones
+  - duration와 stopAfter
+
+지속 emitter와 단발 burst를 구분하고, 본체 target 또는 socket을 따라가는 방식이 실제 API에 존재한다.
+
+#### Aseprite CLI
+
+- URL: https://www.aseprite.org/docs/cli/
+- 증거 유형: 해외 공식 제작 도구 문서
+- 확인 기능:
+  - `--layer`: 특정 VFX layer만 분리 출력
+  - `--tag`: 지정 애니메이션 tag의 frame만 출력
+  - `--sheet`와 `--data`: sprite sheet와 JSON metadata
+  - `--shape-padding`, `--border-padding`, `--extrude`: atlas bleed 방지
+
+프레임 기반 픽셀 VFX도 본체와 분리된 layer/tag로 관리하고 atlas+JSON으로 패키징할 수 있다.
+
+### 20.5.3 해외 실제 구현과 반례
+
+#### Godot 공식 2D Particles Demo
+
+- 저장소: https://github.com/godotengine/godot-demo-projects/tree/master/2d/particles
+- Asset Library: https://godotengine.org/asset-library/asset/2724
+- 증거 유형: 해외 공식 오픈소스 데모
+- README 직접 확인 문구:
+  > “This demo showcases how 2D particle systems work in Godot.”
+  > “It uses `GPUParticles2D` nodes with `ParticleProcessMaterial` materials.”
+
+실제 scene에는 fire, smoke, spark, flipbook texture가 각각 분리돼 있고 emission shape, gravity, scale curve, color ramp, additive blend와 particle flipbook 설정이 별도 resource로 구성돼 있다.
+
+#### Godot Dodge the Creeps Player
+
+- 파일: https://github.com/godotengine/godot-demo-projects/blob/master/2d/dodge_the_creeps/player.tscn
+- 증거 유형: 해외 공식 오픈소스 구현
+- 확인 내용:
+  - 본체 이동은 방향별 2프레임 `AnimatedSprite2D`
+  - 별도 `GPUParticles2D` Trail이 자식 노드로 존재
+  - Trail은 `z_index=-1`, `amount=10`, 별도 scale curve와 color ramp 사용
+
+이 구조는 중요한 반례다.
+
+> Trail VFX는 걷는 본체의 최소 프레임을 보강하지만 본체 프레임을 대체하지 않는다.
+
+본체의 방향, 발 위치, 접촉 자세가 읽혀야 하는 동작에서 먼지·trail만 추가해도 실루엣 문제는 해결되지 않는다.
+
+### 20.5.4 VFX가 잘 맞는 에셋과 동작
+
+- 고정 기계의 증기 배출
+- 횃불·용광로의 불꽃과 연기
+- 채굴·타격 순간의 접촉 섬광과 파편
+- 차량 정지·출발의 먼지
+- 짧은 대시의 잔상과 trail
+- 상자 개봉의 작은 glow와 별가루
+- 피격 지점의 flash와 impact ring
+- 파괴 상태 진입 시 파편 burst
+- 환경 오브젝트의 눈·재·빗방울
+
+### 20.5.5 부적합 경계
+
+다음 정보가 본체 실루엣에서 읽혀야 하면 VFX만으로 대체하지 않는다.
+
+- 공격 anticipation 방향
+- 무기 접촉 위치와 판정 시점
+- recovery와 취소 가능 시점
+- 보행 중 발 접지와 방향
+- 상호작용 대상과 손 위치
+- 피격 후 자세 변화
+- 문·뚜껑·레버의 실제 기계적 이동
+
+이 경우 최소 transition frame, 움직이는 파트 또는 완전 애니메이션이 먼저 필요하며 VFX는 보조로 붙인다.
+
+### 20.5.6 Asset Studio 출력 계약
+
+```yaml
+vfx:
+  id: impact_dust_small
+  schema_version: 1
+  trigger_event: hit_contact
+  attachment:
+    target: owner
+    socket: impact
+    offset_px: [0, 0]
+    simulation_space: world
+  playback:
+    mode: burst
+    duration_ms: 280
+    lifetime_ms: [180, 320]
+    amount: 8
+    seed_policy: fixed
+    seed: 12041
+  emission:
+    shape: point
+    direction_deg: [-155, -25]
+    speed_px_s: [24, 48]
+  visual:
+    texture: vfx_dust_01.png
+    blend_mode: normal
+    palette_profile: project_dust
+    draw_order: 30
+  budget:
+    max_alive: 16
+    pool_size: 8
+  collision:
+    affects_gameplay: false
+```
+
+### 20.5.7 분리 자산 구조
+
+```text
+impact_dust_small/
+  manifest.json
+  preview.png
+  textures/
+    dust_01.png
+    dust_02.png
+  flipbooks/
+    impact_flash.png
+    impact_flash.json
+  recipes/
+    emitter.json
+```
+
+본체 texture와 VFX texture를 같은 이미지로 굽지 않는다. VFX는 독립 수명과 draw order를 가지며 필요할 때 별도 pooling과 culling이 가능해야 한다.
+
+### 20.5.8 Attachment와 Socket
+
+필수 필드:
+
+- target asset 또는 owner
+- socket ID
+- 정수 offset
+- local/world/custom simulation space
+- follow 여부
+- owner 삭제 후 생존 정책
+
+정책 예:
+
+- `local`: 본체와 함께 이동하는 glow, 엔진 불꽃
+- `world`: 발밑 먼지, 폭발 연기, 떨어지는 파편
+- `custom`: 차량 속도나 바람장을 따르는 효과
+
+### 20.5.9 Trigger와 Event
+
+효과는 의미 event에 연결한다.
+
+- `attack_anticipation`
+- `attack_contact`
+- `hit_confirmed`
+- `foot_contact`
+- `dash_start`
+- `state_destroyed`
+- `interaction_complete`
+
+프레임 번호를 직접 하드코딩하기보다 animation marker 또는 gameplay event ID에 연결한다. 상태 교체형에서는 transition trigger와 연결할 수 있다.
+
+### 20.5.10 Determinism
+
+- 고정 seed preview 지원
+- runtime random과 deterministic replay 모드 분리
+- fixed timestep 또는 fixed FPS 선택
+- 동일 seed, recipe, trigger에서 동일 결과 검증
+- burst와 continuous emitter 구분
+
+QA와 네트워크 replay에는 fixed seed를 사용하고, 일반 플레이에서는 허용 범위 안의 random seed를 선택할 수 있다.
+
+### 20.5.11 Blend와 Palette
+
+- `normal`, `additive`, 제한적 `screen`만 명시 지원
+- 픽셀 프로젝트 팔레트 profile 지정
+- 반투명 색 단계 상한
+- nearest sampling
+- premultiplied alpha 여부 명시
+- 밝은 배경과 어두운 배경 모두에서 halo 검사
+
+additive 효과는 검은 배경에서만 검수하면 과도한 백색 섬광과 배경 소실을 놓칠 수 있다.
+
+### 20.5.12 Draw Order와 Collision Independence
+
+- 본체 뒤 먼지
+- 본체 위 접촉 섬광
+- UI 아래 월드 VFX
+- foreground 파편의 상한
+
+시각 VFX는 기본적으로 gameplay collision과 분리한다. 실제 판정은 본체의 hitbox/hurtbox 또는 gameplay event가 담당한다. 시각 파티클 충돌이 필요하면 별도 비용 등급과 fallback을 둔다.
+
+### 20.5.13 Budget와 Pooling
+
+필수 예산:
+
+- emitter당 max alive
+- 장면 전체 max alive
+- burst당 particle 수
+- texture/flipbook 메모리
+- draw order와 blend mode별 overdraw 등급
+- pool size
+- off-screen 정책
+- 저사양 fallback
+
+Unity의 `Max Particles`와 Godot의 `amount`, `visibility_rect`는 무제한 방출이 아닌 명시적 상한과 culling이 필요하다는 근거다.
+
+### 20.5.14 Preview
+
+필수 미리보기:
+
+1. 본체 없이 VFX만
+2. 본체와 조합
+3. local/world simulation 비교
+4. 고정 seed 반복 재생
+5. 최소·최대 random 범위
+6. 1× 실제 픽셀과 정수 확대
+7. 체커보드·밝은색·어두운색·복잡한 배경
+8. draw order 전후 비교
+9. 저사양 budget fallback
+10. 다중 동시 재생 스트레스 프리뷰
+11. VFX off 비교
+
+`VFX off`에서도 핵심 동작과 판정 시점이 읽히는지 확인한다.
+
+### 20.5.15 QA
+
+자동 검사:
+
+- texture와 flipbook frame 누락
+- socket 누락과 정수 offset 위반
+- local/world space 오설정
+- duration보다 lifetime이 과도하게 긴 잔류 파티클
+- owner 삭제 후 고아 emitter
+- atlas clipping과 padding 부족
+- 투명 halo와 premultiplied alpha 불일치
+- 과도한 additive overdraw
+- palette 이탈
+- 화면 전체를 덮는 섬광 빈도
+- 광과민성 위험이 있는 반복 flash
+- 복잡한 배경에서 contact cue 소실
+- 본체 실루엣을 가리는 연기·파편
+- max alive와 scene budget 초과
+- deterministic seed 재현 실패
+
+### 20.5.16 판정
+
+VFX 주도형은 다음 구조로 채택한다.
+
+> 최소한 읽히는 본체 동작 + 분리된 VFX texture/flipbook + event/socket 기반 emitter recipe + 명시적 수명·공간·seed·budget
+
+VFX는 정적 또는 저프레임 자산의 힘과 반응성을 크게 높일 수 있다. 그러나 anticipation, contact, recovery처럼 gameplay 판독에 필요한 본체 자세를 대신할 수 없다.
+
+따라서 제품은 VFX를 **대체 수단이 아니라 보강 수단**으로 취급해야 한다. `VFX off` 상태에서도 핵심 행동이 읽히지 않으면 최소 transition frame 또는 완전 애니메이션으로 승격한다.
+
+이 항목은 조사 완료로 판정한다.
