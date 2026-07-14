@@ -7,7 +7,7 @@ JS = (ROOT / "src" / "main.js").read_text(encoding="utf-8")
 
 def test_phase16_page_asset_pack_ui_exists():
     required = [
-        "src/main.js?v=20260714.6",
+        "src/main.js?v=20260714.11",
         "runPixelSamplePack",
         "샘플팩 생성",
         "선택한 이미지 레이어를 기준 이미지로 사용",

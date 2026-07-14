@@ -1,5 +1,7 @@
 from pathlib import Path
 import io
+import json
+import subprocess
 import sys
 
 from PIL import Image
@@ -8,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 JS = (ROOT / "src" / "main.js").read_text()
+HTML = (ROOT / "index.html").read_text()
 SERVER_TEXT = (ROOT / "server.py").read_text()
 
 from server import (  # noqa: E402
@@ -102,6 +105,76 @@ def test_phase25_core_animation_locks_are_non_negotiable_for_all_actor_actions()
         for lock in lock_names:
             assert lock in gate
         assert gate.index("Core animation locks") < gate.index(f"Whitelist visual acceptance gate for {action}")
+
+
+def test_selected_reference_generation_locks_the_complete_foreground_and_exposes_optional_changes():
+    assert 'id="pixelReferenceChangeRequest"' in HTML
+    assert "<summary>추가 변경 요청(선택)</summary>" in HTML
+    assert "<summary>고급: 프롬프트 미리보기</summary>" not in HTML
+    assert "비워두면 선택 이미지의 캐릭터·탈것·장비·부속을 포함한 전체 전경 구성을 필수로 잠급니다" in HTML
+    for token in [
+        "WHOLE-IMAGE FOREGROUND LOCK — NON-NEGOTIABLE",
+        "every visible foreground element",
+        "mounts or vehicles",
+        "Never output the rider alone",
+        "pixelReferenceChangeRequest",
+        "NO OPTIONAL CHANGES REQUESTED",
+        "EXPLICIT OPTIONAL CHANGES",
+    ]:
+        assert token in JS
+
+    prompt = build_reference_sprite_prompt(
+        "NO OPTIONAL CHANGES REQUESTED — preserve the selected image composition exactly",
+        target_direction="S",
+        animation_mode="idle",
+    )
+    for token in [
+        "whole visible foreground lock",
+        "one indivisible required subject",
+        "mounts or vehicles",
+        "same rider on that same mount/vehicle",
+        "Never output the rider alone",
+        "Unrequested changes are forbidden",
+    ]:
+        assert token in prompt
+
+
+def test_selected_reference_4dir_prompt_requests_the_complete_direction_set_without_single_target_conflicts():
+    start = JS.index("function buildSelectedActionSpritePrompt")
+    end = JS.index("async function generateFrontIdleFromSelected", start)
+    function_source = JS[start:end]
+    script = f"""
+const controls = {{
+  pixelSubject: {{value: ''}}, pixelReferenceChangeRequest: {{value: ''}},
+  pixelPalette: {{value: 'dark palette'}}, pixelAssetType: {{value: 'character'}},
+  pixelTargetDirection: {{value: 'N'}}, pixelDirectionMode: {{value: '4dir'}}
+}};
+const $ = id => controls[id] || null;
+const isPixelActorAssetType = () => true;
+const isPixelEffectAssetType = () => false;
+const directionLabel = code => code;
+{function_source}
+const prompt = buildSelectedActionSpritePrompt({{}}, {{label:'Idle',frames:4,frameOrder:'a,b,c,d',motion:'idle',acceptance:''}});
+process.stdout.write(JSON.stringify({{prompt}}));
+"""
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=ROOT, text=True, capture_output=True, check=True,
+    )
+    prompt = json.loads(completed.stdout)["prompt"]
+    assert "4-direction output" in prompt
+    assert "S, W, E, N" in prompt
+    assert "Target direction:" not in prompt
+    assert "alternate directions" not in prompt
+    assert "multiple rows" not in prompt
+
+
+def test_selected_reference_multidirection_result_keeps_direction_rows_in_grid():
+    start = JS.index("async function generateFrontIdleFromSelected")
+    end = JS.index("async function runPixelWorkflow", start)
+    generation_source = JS[start:end]
+    assert "if (effect || directionMode !== 'single') applyPixelWorkflowGridDefaults(img);" in generation_source
+    assert "else setFrontIdleGridForImage(img, spec.frames);" in generation_source
 
 
 def test_phase25_action_prompts_include_beat_sheets_and_cell_cleanup_contract():

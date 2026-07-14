@@ -10,10 +10,10 @@ def test_phase16_reference_ui_exists():
     required = [
         "pixelUseReference",
         "선택한 이미지 레이어를 기준 이미지로 사용",
-        "기준 이미지 레이어를 보고",
     ]
     for token in required:
         assert token in INDEX
+    assert "선택 이미지의 캐릭터·탈것·장비·부속을 포함한 전체 전경을 필수로 잠그고" in JS
 
 
 def test_phase16_reference_frontend_posts_reference_image():

@@ -1808,7 +1808,7 @@ function syncPixelAssetWorkflowUi({ silent = false } = {}) {
     : effect
     ? '선택한 이미지 레이어의 스타일과 맥락에 맞는 별도 이펙트 시퀀스를 생성합니다. 캐릭터 방향/장비 설정 없음.'
     : (actor
-      ? '선택한 이미지 레이어를 기준으로 현재 동작/방향/프레임 수를 생성합니다. 선택 이미지가 없으면 위의 “새 도트 에셋 생성”을 쓰세요.'
+      ? '선택 이미지의 캐릭터·탈것·장비·부속을 포함한 전체 전경을 필수로 잠그고 현재 동작/방향만 생성합니다. 추가 변경 요청에 적지 않은 구성요소는 삭제하거나 바꾸지 않습니다.'
       : '선택한 이미지 레이어의 스타일로 정적 에셋을 생성합니다. 선택 이미지가 없으면 위의 “새 도트 에셋 생성”을 쓰세요.');
   const workflowHint = effectSingle
     ? '이펙트 이미지 1장을 생성하고 배경을 제거해 일반 투명 이미지 레이어로 올립니다.'
@@ -1838,7 +1838,7 @@ function buildDirectionalSpriteSheetContract(anim = effectivePixelAnimationPrese
   const columns = frameCount;
   const directionLine = staticActor
     ? (mode === '8dir'
-      ? '8-direction static character sheet: one pose per direction. Row order: N, NE, E, SE, S, SW, W, NW. Production method: S/N/W/SW/NW sources + E/SE/NE exact horizontal flips (5-source+mirror).'
+      ? '8-direction static character sheet: one pose per direction. Row order: N, NE, E, SE, S, SW, W, NW. Production method: N/NE/E/SE/S sources + NW/W/SW exact horizontal flips (5-source+mirror).'
       : mode === '4dir'
         ? '4-direction static character sheet: one pose per direction. Row order: S, W, E, N; E is an exact horizontal flip of W.'
         : `Single-frame actor contract: exactly one standalone actor image facing ${directionLabel(targetDir)}; no direction sheet, alternate poses, animation strip, contact sheet, or duplicate character.`)
@@ -2797,12 +2797,23 @@ function fitToCanvasObject(obj, max=560) {
   obj.set({ left: canvas.width / 2, top: canvas.height / 2, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale });
 }
 
-function addImageUrl(url, label='Image') {
+function addImageUrl(url, label='Image', { preserveOriginalSize = false } = {}) {
   return new Promise((resolve, reject) => {
     fabric.Image.fromURL(url, (img) => {
       try {
         img._originalSrc = url;
-        fitToCanvasObject(img);
+        if (preserveOriginalSize) {
+          img.set({
+            left: canvas.width / 2,
+            top: canvas.height / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: 1,
+            scaleY: 1,
+          });
+        } else {
+          fitToCanvasObject(img);
+        }
         addToCanvas(img, label);
         setStatus(`${label} added to canvas.`);
         resolve(img);
@@ -5425,7 +5436,7 @@ async function handleFiles(files) {
     if (!file.type.startsWith('image/')) continue;
     const dataUrl = await fileToDataUrl(file);
     addGallery(dataUrl, file.name.replace(/\.[^.]+$/, '').slice(0,20));
-    addImageUrl(dataUrl, file.name);
+    await addImageUrl(dataUrl, file.name, { preserveOriginalSize: true });
   }
   setStatus(`${files.length} file(s) loaded.`);
 }
@@ -7528,6 +7539,10 @@ function animationPresetSpec(presetRaw) {
 
 function buildSelectedActionSpritePrompt(referenceObj, spec) {
   const baseSubject = ($('pixelSubject')?.value || '').trim();
+  const changeRequest = ($('pixelReferenceChangeRequest')?.value || '').trim();
+  const requestedChanges = changeRequest
+    ? `EXPLICIT OPTIONAL CHANGES — change only these details and preserve everything else exactly: ${changeRequest}`
+    : 'NO OPTIONAL CHANGES REQUESTED — preserve the selected image composition exactly; change only facing direction and the requested action pose.';
   const palette = ($('pixelPalette')?.value || 'limited dark fantasy palette').trim();
   const type = $('pixelAssetType')?.value || 'character';
   const actor = isPixelActorAssetType(type);
@@ -7554,21 +7569,39 @@ Refined 32-bit game-ready pixel art, crisp hard pixels, clean silhouette, ${pale
 Flat exact #00FF00 chroma green background edge-to-edge.
 No text, labels, numbers, watermark, mockup frame, scenery, extra characters, or sprite sheet.`;
   }
+  const directionMode = actor ? ($('pixelDirectionMode')?.value || 'single') : 'single';
   const targetDirection = $('pixelTargetDirection')?.value || 'S';
   const directionText = directionLabel(targetDirection);
-  const frameText = spec.frames === 1
-    ? 'Exactly one isolated sprite frame.'
-    : `Exactly one horizontal row of ${spec.frames} evenly spaced frames.`;
-  return `${baseSubject ? baseSubject + '\n\n' : ''}Create a ${spec.label.toLowerCase()} pixel-art sprite from the selected reference character.
-Target direction: ${directionText}. Keep the visible character facing this target direction in every frame.
-Infer the supplied reference image's current facing from the image itself. Use the reference for identity, costume, colors, proportions, pixel density, outline weight, and scale, then rotate only as needed to reach the target direction.
+  const directionOrder = directionMode === '8dir'
+    ? ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+    : (directionMode === '4dir' ? ['S', 'W', 'E', 'N'] : [targetDirection]);
+  const directionContract = directionMode === 'single'
+    ? `Single-direction output only. Target direction: ${directionText}. Keep the entire locked foreground subject facing this target direction in every frame.\nInfer the supplied reference image's current facing from the image itself, then rotate the entire locked foreground composition only as needed to reach the target direction.`
+    : `${directionOrder.length}-direction output. Generate the complete direction set as separate rows in this exact row order: ${directionOrder.join(', ')}. The target-direction selector does not limit multi-direction output. Preserve the entire locked foreground composition in every direction. Side rows must be true side profiles; the N row must be a true back view; the S row must face front.`;
+  const frameText = directionMode === 'single'
+    ? (spec.frames === 1
+      ? 'Exactly one isolated sprite frame.'
+      : `Exactly one horizontal row of ${spec.frames} evenly spaced frames.`)
+    : `Exactly ${directionOrder.length} rows x ${spec.frames} columns. Every direction row contains the complete ${spec.frames}-frame action in the declared order.`;
+  const outputBans = directionMode === 'single'
+    ? 'No text, labels, numbers, watermark, mockup frame, scenery, extra characters, multiple rows, contact sheet, or alternate directions.'
+    : 'No text, labels, numbers, watermark, mockup frame, scenery, extra characters, omitted direction rows, duplicate direction rows, wrong row order, or single-direction-only output.';
+  return `${baseSubject ? baseSubject + '\n\n' : ''}Create a ${spec.label.toLowerCase()} pixel-art sprite from the selected reference image.
+WHOLE-IMAGE FOREGROUND LOCK — NON-NEGOTIABLE:
+- Treat every visible foreground element in the selected image as one indivisible required subject, not merely as character identity or style reference.
+- Preserve the complete composition: all characters/riders, mounts or vehicles, seats, handlebars, weapons, held items, clothing, equipment, bags, harnesses, attachments, accessories, and their spatial/physical relationships.
+- A rider on a mount/vehicle must remain the same rider on the same mount/vehicle in every output frame. Never output the rider alone. Never delete, replace, simplify, detach, or reinterpret the mount/vehicle or any other visible foreground component.
+- Do not add optional elements that are absent from the reference.
+- Only direction and the requested action pose may change unless the explicit optional-change field below says otherwise.
+${requestedChanges}
+${directionContract}
 ${frameText}
 Frame order: ${spec.frameOrder}.
 Motion rule: ${spec.motion}.
-${spec.acceptance ? `${spec.acceptance}\n` : ''}Preserve the same identity, face/species, costume, colors, silhouette, pixel density, outline weight, scale, and pivot across all frames. No color drift between frames.
+${spec.acceptance ? `${spec.acceptance}\n` : ''}Preserve the entire locked foreground subject, complete composition, colors, silhouette, pixel density, outline weight, scale, contact baseline, and pivot across all frames. No component loss and no color drift between frames.
 Refined 32-bit dark fantasy pixel art, crisp hard pixels, clean outline, ${palette}.
 Flat exact #00FF00 chroma green background edge-to-edge.
-No text, labels, numbers, watermark, mockup frame, scenery, extra characters, multiple rows, contact sheet, or alternate directions.
+${outputBans}
 Background cleanup contract: after removal there must be true transparent background only; no visible rectangular cell boxes, dark/green residue, chroma spill, halo, or fringe around sprites.`;
 }
 
@@ -7586,6 +7619,7 @@ async function generateFrontIdleFromSelected() {
   if (btn) btn.disabled = true;
   const preset = effectivePixelAnimationPreset();
   const spec = animationPresetSpec(preset);
+  const directionMode = actor ? ($('pixelDirectionMode')?.value || 'single') : 'single';
   const targetDirection = $('pixelTargetDirection')?.value || 'S';
   const referenceDirection = actor && typeof inferReferenceDirection === 'function'
     ? inferReferenceDirection()
@@ -7597,12 +7631,15 @@ async function generateFrontIdleFromSelected() {
     : `선택 이미지 스타일 기준 ${type} ${spec.label}`;
   const referenceImage = imageObjectToDataUrl(referenceObj);
   const effectNegative = 'caster, target, character, monster, object body, prop body, floor, environment, UI frame, text, numbers, watermark, white background, full scene, copied reference image';
+  const actorNegative = directionMode === 'single'
+    ? 'wrong facing direction, alternate directions, turntable, contact sheet, multiple rows, labels, text, numbers, watermark, different character per frame, color drift, costume changes, white background, scenery, cropped feet, malformed limbs, root slide, hopping, skating, dancing, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura'
+    : 'missing direction rows, duplicate direction rows, wrong direction row order, single-direction-only output, labels, text, numbers, watermark, different character per frame, color drift, costume changes, white background, scenery, cropped feet, malformed limbs, root slide, hopping, skating, dancing, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura';
   const requestPayload = buildAssetGenerationPayload({
     reference_image: referenceImage,
     prompt,
     negative: effect
       ? effectNegative
-      : (actor ? 'wrong facing direction, alternate directions, turntable, contact sheet, multiple rows, labels, text, numbers, watermark, different character per frame, color drift, costume changes, white background, scenery, cropped feet, malformed limbs, root slide, hopping, skating, dancing, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura' : 'animation frames, sprite sheet, character pose sheet, directional views, labels, text, numbers, watermark, white background, scenery, mockup frame, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura'),
+      : (actor ? actorNegative : 'animation frames, sprite sheet, character pose sheet, directional views, labels, text, numbers, watermark, white background, scenery, mockup frame, slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura'),
     preset: effect ? 'effect' : 'pixel',
     aspect_ratio: 'square',
     background_mode: 'chroma_green',
@@ -7622,7 +7659,7 @@ async function generateFrontIdleFromSelected() {
     const img = await addImageUrl(url, `${resultLabel} - ${nameOf(referenceObj)}`);
     canvas.setActiveObject(img);
     rememberSelectedLayer(img);
-    if (effect) applyPixelWorkflowGridDefaults(img);
+    if (effect || directionMode !== 'single') applyPixelWorkflowGridDefaults(img);
     else setFrontIdleGridForImage(img, spec.frames);
     if (spec.frames > 1) {
       removeSpriteGuideObjects();

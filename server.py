@@ -1042,18 +1042,18 @@ PRESET_SUFFIX = {
 }
 
 CANONICAL_8DIR_ORDER = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-MIRRORED_8DIR_SOURCE_DIRECTIONS = ["S", "N", "W", "SW", "NW"]
-SPRITE_MIRROR_MAP = {"E": "W", "SE": "SW", "NE": "NW"}
+MIRRORED_8DIR_SOURCE_DIRECTIONS = ["N", "NE", "E", "SE", "S"]
+SPRITE_MIRROR_MAP = {"NW": "NE", "W": "E", "SW": "SE"}
 
 DIRECTION_PROMPT_CONTRACTS = {
     "S": "front-facing, looking straight toward camera/front; do not turn left or right",
     "N": "back-facing, looking away from camera; show back of head/body only, no face",
-    "W": "true side profile facing screen-left only; absolutely not screen-right",
-    "SW": "front-left three-quarter view facing screen-left while retaining front details; absolutely not screen-right",
-    "NW": "back-left three-quarter view facing screen-left/back-left; mostly back/side, no front face; absolutely not screen-right",
-    "E": "derived only by app-side horizontal flip from W; never generated directly",
-    "SE": "derived only by app-side horizontal flip from SW; never generated directly",
-    "NE": "derived only by app-side horizontal flip from NW; never generated directly",
+    "E": "true side profile facing screen-right only; absolutely not screen-left",
+    "SE": "front-right three-quarter view facing screen-right while retaining front details; absolutely not screen-left",
+    "NE": "back-right three-quarter view facing screen-right/back-right; mostly back/side, no front face; absolutely not screen-left",
+    "W": "derived only by app-side horizontal flip from E; never generated directly",
+    "SW": "derived only by app-side horizontal flip from SE; never generated directly",
+    "NW": "derived only by app-side horizontal flip from NE; never generated directly",
 }
 
 # Frame-by-frame actor generation may author any requested view directly.  This
@@ -2303,7 +2303,7 @@ def sprite_alpha_bbox_stats(raw: bytes) -> dict:
 def evaluate_sprite_source_geometry_quality(
     sources: dict,
     *,
-    required_directions=("S", "N", "W", "SW", "NW"),
+    required_directions=("N", "NE", "E", "SE", "S"),
     min_height_ratio: float = 0.82,
     min_width_ratio: float = 0.55,
     min_area_ratio: float = 0.55,
@@ -2403,16 +2403,16 @@ def select_geometry_consistent_source_set(source_dirs, max_geometry_attempts: in
 def build_8dir_mirror_sheet_from_source_pngs(sources: dict, cell_size: int = 420, layout: str = "row") -> tuple[bytes, dict]:
     """Build canonical 8-direction sheet from 5 generated sources plus exact flips.
 
-    Only S/N/W/SW/NW are accepted as source directions. E/SE/NE must be derived
-    by horizontal mirror so right-facing consistency is deterministic.
+    Only N/NE/E/SE/S are accepted as source directions. NW/W/SW must be derived
+    by horizontal mirror so left-facing consistency is deterministic.
     """
     from PIL import Image, ImageOps
-    required = ["S", "N", "W", "SW", "NW"]
-    forbidden = ["E", "SE", "NE"]
+    required = ["N", "NE", "E", "SE", "S"]
+    forbidden = ["NW", "W", "SW"]
     present = {str(k).upper() for k in sources.keys()}
     bad = [d for d in forbidden if d in present]
     if bad:
-        raise ValueError(f"right-facing source directions are forbidden; derive by flip only: {', '.join(bad)}")
+        raise ValueError(f"left-facing source directions are forbidden; derive by flip only: {', '.join(bad)}")
     missing = [d for d in required if d not in present]
     if missing:
         raise ValueError(f"missing source directions: {', '.join(missing)}")
@@ -2422,9 +2422,9 @@ def build_8dir_mirror_sheet_from_source_pngs(sources: dict, cell_size: int = 420
         raise ValueError(f"sprite source geometry QA failed: {geometry_qa}")
 
     sprites = {d: _trim_and_center_sprite(sources[d], cell_size) for d in required}
-    sprites["NE"] = ImageOps.mirror(sprites["NW"])
-    sprites["E"] = ImageOps.mirror(sprites["W"])
-    sprites["SE"] = ImageOps.mirror(sprites["SW"])
+    sprites["NW"] = ImageOps.mirror(sprites["NE"])
+    sprites["W"] = ImageOps.mirror(sprites["E"])
+    sprites["SW"] = ImageOps.mirror(sprites["SE"])
     order = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
     if layout == "atlas_2x4":
@@ -3054,13 +3054,13 @@ def sprite_action_matrix_for_ui() -> dict:
 def build_static_direction_reference_prompt(prompt: str, direction: str, negative: str = "") -> str:
     direction = (direction or "S").upper()
     if direction not in MIRRORED_8DIR_SOURCE_DIRECTIONS:
-        raise ValueError(f"source direction must be one of {', '.join(MIRRORED_8DIR_SOURCE_DIRECTIONS)}; right-facing directions are flip-derived")
+        raise ValueError(f"source direction must be one of {', '.join(MIRRORED_8DIR_SOURCE_DIRECTIONS)}; left-facing directions are flip-derived")
     neg = f"\nAvoid: {negative.strip()}" if negative and negative.strip() else ""
     return f"""Static direction reference generation contract.
 Generate SOURCE DIRECTION {direction} only: {DIRECTION_PROMPT_CONTRACTS[direction]}.
 Generate exactly one direction in this request.
 Do not output an 8-direction sheet, 4-direction sheet, contact sheet, or multiple direction variants.
-Do not generate E, SE, or NE source sprites; right-facing views are created by app-side horizontal flip.
+Do not generate W, SW, or NW source sprites; left-facing views are created by app-side horizontal flip.
 Preserve one stable character identity, outfit, equipment, palette, outline thickness, pixel scale, pivot, and feet baseline.
 Use a flat exact RGB(0,255,0) / #00FF00 chroma-key background edge-to-edge.
 No text, no numbers, no watermark, no mockup frame.
@@ -3077,7 +3077,7 @@ def build_sprite_action_prompt(prompt: str, action: str = "idle", direction: str
         raise ValueError(f"direction must be one of {', '.join(CANONICAL_8DIR_ORDER)}")
     spec = SPRITE_ACTION_MATRIX[action]
     acceptance_contract = sprite_action_acceptance_contract(action)
-    direction_contract = DIRECTION_PROMPT_CONTRACTS.get(direction, "")
+    direction_contract = ACTOR_FRAME_DIRECTION_CONTRACTS.get(direction, "")
     if direction in SPRITE_MIRROR_MAP:
         direction_contract = f"{direction_contract}; normally derive this from {SPRITE_MIRROR_MAP[direction]} by app-side flip unless explicitly animating the mirrored sheet"
     note = f"\nSource reference note: {source_reference_note.strip()}" if source_reference_note and source_reference_note.strip() else ""
@@ -3371,14 +3371,14 @@ User request: {prompt.strip()}
         direction_contract = """
 Directional sprite-sheet contract:
 - 8-direction output. Direction row order must be exactly: {direction_order}.
-- {reference_view_contract} Preserve that view most closely, then rotate the same character design into the other seven directions.
+- {reference_view_contract} Preserve the entire locked foreground composition most closely, then rotate that same complete composition into the other seven directions.
 - Side rows must read as true side profiles. Back rows must remove front-only face/chest details.
 - Keep identical scale, pivot, costume, outline thickness, palette, and lighting across all rows.""".format(reference_view_contract=reference_view_contract, direction_order=", ".join(direction_codes))
     elif direction_mode == "4dir":
         direction_contract = """
 Directional sprite-sheet contract:
 - 4-direction output. Direction row order must be exactly: {direction_order}.
-- {reference_view_contract} Preserve that view most closely, then rotate the same character design into the other directions.
+- {reference_view_contract} Preserve the entire locked foreground composition most closely, then rotate that same complete composition into the other directions.
 - Side rows must read as true side profiles. Back row must remove front-only face/chest details.""".format(reference_view_contract=reference_view_contract, direction_order=", ".join(direction_codes))
     else:
         direction_contract = """
@@ -3388,7 +3388,7 @@ Single-target one-direction generation contract:
 - Do not output all 8 directions. The app will request each direction separately.
 - Direction meaning is screen-space: SW/W turn toward screen-left, SE/E turn toward screen-right.
 - Diagonal meaning is explicit: SE is a front-right three-quarter view; SW is front-left; NE is back-right; NW is back-left.
-- {reference_view_contract} Use it for identity/style, then rotate only into the requested target direction.
+- {reference_view_contract} Rotate the entire locked foreground composition only into the requested target direction; do not treat any component as optional.
 - If target_direction is W or E, the sprite must be a true side profile.
 - If target_direction is S, the sprite must face camera/front.
 - Keep exactly one direction and arrange it as one horizontal row of exactly {requested_frames} animation frames with transparent/chroma margins and no additional rows.""".format(reference_view_contract=reference_view_contract, target_direction=target_direction, requested_frames=requested_frames)
@@ -3406,7 +3406,7 @@ Single-target one-direction generation contract:
 - {action['prompt_contract']}.
 - {acceptance_contract}.
 - {sprite_animation_core_lock_contract()}.
-- Global reference identity rule: one accepted reference identity is the standard for the whole action set; preserve identity, equipment/attachments, palette, proportions, pivot, scale, and contact baseline between frames.
+- Global whole-subject rule: one accepted complete foreground composition is the standard for the whole action set; preserve every component, component count, spatial relationship, palette, proportions, pivot, scale, and contact baseline between frames.
 - Full-frame pose rule: each frame must be a complete coherent pose of the same actor; do not create motion by cutting, pasting, sliding, warping, or redrawing isolated limbs/parts.
 - Cell-boundary rule: treat every frame as a separate boxed cell with a wide empty #00FF00 gutter between cells.
 - Containment rule: every body part, weapon, held object, shadow, and silhouette must stay fully inside its own cell.
@@ -3416,9 +3416,13 @@ Single-target one-direction generation contract:
 - Cleanup rule: output must support clean background removal; avoid dark/green residue, visible rectangular cell boxes, green spill, halo, or fringe around sprites after chroma-key cleanup."""
     return f"""Create a new pixel-art game asset sprite sheet from the supplied reference image.
 
-Reference contract:
-- The input image is the source/reference actor or asset. Its accepted reference identity is the global standard for the whole action set; keep the same identity, costume/attachments/equipment, silhouette language, palette, outline thickness, pixel scale, lighting, and camera angle.
-- Generate the requested animation/asset sheet as a NEW output with complete coherent full-frame poses; do not merely upscale, crop, copy, cut/paste, or move isolated parts from the reference.
+Reference contract — whole visible foreground lock:
+- The input image's complete visible foreground is one indivisible required subject, not merely an identity/style reference.
+- Preserve every visible foreground component and its relationships: all characters/riders, mounts or vehicles, seats, handlebars, clothing, weapons, held items, equipment, bags, harnesses, attachments, and accessories.
+- If the reference contains a rider on a mount/vehicle, every output frame must contain that same rider on that same mount/vehicle. Never output the rider alone; never delete, replace, simplify, detach, or reinterpret the mount/vehicle or another visible foreground component.
+- Preserve the complete composition, component count, identity, design, silhouette language, palette, outline thickness, pixel scale, lighting, camera angle, contact baseline, and relative proportions; one accepted reference identity is the standard for the whole action set, and that identity includes the complete locked foreground composition rather than the character alone.
+- Only the requested facing direction and action pose may change, except for changes explicitly requested in the User request. Unrequested changes are forbidden.
+- Generate the requested animation/asset sheet as a NEW output with complete coherent full-frame poses of the entire locked foreground subject; do not merely upscale, crop, copy, cut/paste, or move isolated parts from the reference.
 - Use evenly spaced sprite-sheet cells when animation frames are requested.
 - Use a flat exact RGB(0,255,0) / #00FF00 chroma-key background edge-to-edge so the app can remove it after generation.
 - No text, no numbers, no watermark, no mockup frame.
@@ -3700,10 +3704,10 @@ def select_valid_direction_candidate(direction: str, max_source_attempts: int, g
 
 
 def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, negative: str = "", background_mode: str = "chroma_green", reference_direction: str = "S", chroma_mode: str = "global", animation_mode: str = "idle", initial_sources=None) -> tuple[bytes, str, str, dict]:
-    """Web/API pipeline for 8-dir sprites: generate only 5 source views, mirror the right side.
+    """Web/API pipeline for 8-dir sprites: generate only 5 source views, mirror the left side.
 
-    This intentionally never requests E/SE/NE from the model. Those views are exact
-    flips of W/SW/NW, avoiding mixed right-facing source mistakes.
+    This intentionally never requests NW/W/SW from the model. Those views are exact
+    flips of NE/E/SE, avoiding mixed left-facing source mistakes.
     """
     source_dirs = list(MIRRORED_8DIR_SOURCE_DIRECTIONS)
     source_pngs = {}
@@ -3766,7 +3770,7 @@ def generate_reference_8dir_mirror_sheet(reference_data_url: str, prompt: str, n
     qa["source_qa"] = source_qa
     qa["geometry_set_qa"] = geometry_set_qa
     qa["sprite_set_visual_qa"] = sprite_set_qa
-    qa["direction_qa"] = {"status": "pass", "target_direction": "8dir", "method": "S/N/W/SW/NW sources + E/SE/NE flips"}
+    qa["direction_qa"] = {"status": "pass", "target_direction": "8dir", "method": "N/NE/E/SE/S sources + NW/W/SW flips"}
     return sheet, model, quality, qa
 
 

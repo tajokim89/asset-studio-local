@@ -13,15 +13,15 @@ from server import (
 )
 
 
-def test_phase21_locks_source_direction_generation_to_left_side_plus_flips():
+def test_phase21_locks_source_direction_generation_to_right_side_plus_flips():
     assert CANONICAL_8DIR_ORDER == ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-    assert MIRRORED_8DIR_SOURCE_DIRECTIONS == ["S", "N", "W", "SW", "NW"]
-    prompt = build_static_direction_reference_prompt("armored cleanup worker", "W")
-    assert "SOURCE DIRECTION W only" in prompt
+    assert MIRRORED_8DIR_SOURCE_DIRECTIONS == ["N", "NE", "E", "SE", "S"]
+    prompt = build_static_direction_reference_prompt("armored cleanup worker", "E")
+    assert "SOURCE DIRECTION E only" in prompt
     assert "Generate exactly one direction in this request" in prompt
-    assert "true side profile facing screen-left" in prompt
-    assert "Do not generate E, SE, or NE" in prompt
-    assert "right-facing views are created by app-side horizontal flip" in prompt
+    assert "true side profile facing screen-right" in prompt
+    assert "Do not generate W, SW, or NW" in prompt
+    assert "left-facing views are created by app-side horizontal flip" in prompt
     assert "Do not output an 8-direction sheet" in prompt
 
 
@@ -69,5 +69,5 @@ def test_phase21_action_matrix_ui_payload_is_serializable_and_complete():
     assert payload["output_profile_id"] == "generic-pixel-actor-v1"
     assert payload["directions"] == CANONICAL_8DIR_ORDER
     assert payload["source_directions"] == MIRRORED_8DIR_SOURCE_DIRECTIONS
-    assert payload["mirror_map"] == {"E": "W", "SE": "SW", "NE": "NW"}
+    assert payload["mirror_map"] == {"NW": "NE", "W": "E", "SW": "SE"}
     assert set(payload["actions"]) == set(SPRITE_ACTION_MATRIX)
