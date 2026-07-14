@@ -112,6 +112,8 @@ let canvasPanOffset = { x: 0, y: 0 };
 let temporaryPanPreviousTool = null;
 let activeDrawingLayerId = null;
 let selectedLayerId = null;
+const editorLayerSubscribers = new Set();
+const editorLayerMotionPreviews = new Map();
 let isCropDragging = false;
 let cropStart = null;
 let cropPreview = null;
@@ -138,7 +140,7 @@ let animationPreviewFrames = [];
 const $ = (id) => document.getElementById(id);
 const appEl = document.querySelector('.app');
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
-const SERIALIZED_PROPS = ['id','name','_originalSrc','_preservedOriginal','_assetId','_assetName','excludeFromLayers','excludeFromExport','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId','resultId','resultFamily','resultType','replacesLayerId'];
+const SERIALIZED_PROPS = ['id','name','_originalSrc','_preservedOriginal','_assetId','_assetName','excludeFromLayers','excludeFromExport','isDrawingStroke','isDrawingLayer','layerId','locked','parentLayerName','isMaskOverlay','maskRegionId','maskRole','targetLayerId','resultId','resultFamily','resultType','replacesLayerId','motionManifest'];
 const PROJECT_MAX_BYTES = 64 * 1024 * 1024;
 
 function createAssetResult(input, deps = {}) {
@@ -623,6 +625,31 @@ function finishGenerationProgress(success, stage) {
   updateGenerationProgress(stage);
 }
 
+async function submitGenerationJob(endpoint, payload) {
+  const response = await fetch('/api/generation-jobs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({endpoint, payload})
+  });
+  const job = await response.json();
+  if (!response.ok || !job.success || !job.job_id) throw new Error(job.error || 'generation job submission failed');
+  return job;
+}
+
+async function waitForGenerationJob(jobId, {pollMs = 1500, timeoutMs = 15 * 60 * 1000} = {}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await fetch(`/api/generation-jobs/${encodeURIComponent(jobId)}`, {cache:'no-store'});
+    const job = await response.json();
+    if (!response.ok || !job.success) throw new Error(job.error || 'generation job status failed');
+    if (job.status === 'succeeded') return job.result;
+    if (job.status === 'failed') throw new Error(job.error || 'generation failed');
+    updateGenerationProgress(`2/3 · 서버에서 AI 이미지 생성 중 · 작업 ${jobId.slice(0, 8)}`);
+    await new Promise(resolve => setTimeout(resolve, pollMs));
+  }
+  throw new Error('generation job exceeded 15 minutes');
+}
+
 function ensureAdvancedReferenceUi() {
   const controls = $('pixelReferenceControls');
   if (!controls || $('pixelAdvancedReference')) return;
@@ -1021,7 +1048,7 @@ function applyActorOutputProfileUi() {
   const actionSelect = $('pixelAnimationPreset');
   if (actionSelect) {
     const previous = ACTOR_ACTION_ALIASES[actionSelect.value] || actionSelect.value;
-    actionSelect.innerHTML = profile.actions.map(action => `<option value="${action.id}">${action.id.replaceAll('_', ' ')}</option>`).join('');
+    actionSelect.innerHTML = profile.actions.map(action => `<option value="${action.id}">${action.id === 'static' ? '단일 이미지 (1장)' : action.id.replaceAll('_', ' ')}</option>`).join('');
     actionSelect.value = actorOutputProfileState.actions.has(previous) ? previous : profile.actions[0].id;
   }
   const targetSelect = $('pixelTargetDirection');
@@ -1045,6 +1072,7 @@ function applyActorOutputProfileUi() {
   }
   const directionalPack = $('runDirectionalPixelPack');
   if (directionalPack) directionalPack.hidden = profile.directions.length < 8;
+  if (typeof syncSingleFrameSpriteUi === 'function') syncSingleFrameSpriteUi();
 }
 
 async function loadActorOutputProfile(profileId) {
@@ -1612,7 +1640,7 @@ $('effectSequenceMode')?.addEventListener('change', () => {
   if ($('effectSequenceHint')) $('effectSequenceHint').textContent = isStatic
     ? '정적 모드는 payload와 그리드/미리보기/내보내기를 1프레임으로 사용하며 시퀀스 공통 설정은 유지합니다.'
     : '시퀀스 프레임 수가 프롬프트, 그리드, 미리보기와 내보내기에 공통 적용됩니다.';
-  applyPixelWorkflowGridDefaults();
+  syncPixelAssetWorkflowUi({ silent: true });
 });
 ['effectFrameCount', 'effectRows', 'effectColumns', 'effectGap', 'effectEnvelopeWidth', 'effectEnvelopeHeight', 'effectFps', 'effectLoop', 'effectTrimPolicy', 'effectPivotX', 'effectPivotY'].forEach(id => {
   $(id)?.addEventListener('change', () => {
@@ -1721,10 +1749,34 @@ function requestedPixelFrameCount() {
   return pixelAnimationDefaultFrames(anim);
 }
 
+function syncSingleFrameSpriteUi() {
+  const actorStatic = isPixelActorAssetType() && ($('pixelAnimationPreset')?.value || 'idle') === 'static';
+  const effectStatic = isPixelEffectAssetType() && ($('effectSequenceMode')?.value || 'static') === 'static';
+
+  if ($('pixelDirectionMode')) $('pixelDirectionMode').hidden = false;
+  const directionLabel = $('pixelDirectionControls')?.querySelector('label');
+  if (directionLabel) directionLabel.textContent = actorStatic ? '방향 구성 / 목표 방향' : '시트 방식 / 목표 방향';
+  $('pixelFrameControls')?.classList.toggle('hidden', !isPixelActorAssetType() || actorStatic);
+  $('pixelAdvancedBatch')?.classList.toggle('hidden', !isPixelActorAssetType() || actorStatic);
+
+  const sequenceOnlyIds = ['effectLoop', 'effectFrameCount', 'effectFps', 'effectRows', 'effectColumns', 'effectGap'];
+  sequenceOnlyIds.forEach(id => { if ($(id)) $(id).disabled = effectStatic; });
+  for (const id of ['effectFrameCount', 'effectRows']) {
+    const group = $(id)?.parentElement;
+    if (group) group.classList.toggle('hidden', effectStatic);
+    const label = group?.previousElementSibling;
+    if (label?.tagName === 'LABEL') label.classList.toggle('hidden', effectStatic);
+  }
+  if ($('effectSequenceHint')) $('effectSequenceHint').textContent = effectStatic
+    ? '단일 이미지 모드 · 스프라이트 시트 없이 이펙트 1장만 생성합니다.'
+    : '시퀀스 프레임 수가 프롬프트, 그리드, 미리보기와 내보내기에 공통 적용됩니다.';
+}
+
 function syncPixelAssetWorkflowUi({ silent = false } = {}) {
   const type = $('pixelAssetType')?.value || 'character';
   const actor = isPixelActorAssetType(type);
   const effect = isPixelEffectAssetType(type);
+  const effectSingle = effect && ($('effectSequenceMode')?.value || 'static') === 'static';
   $('actorWalkWorkflow')?.classList.toggle('hidden', !actor || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk');
   const motionIds = ['pixelMotionControls', 'pixelDirectionControls', 'pixelReferenceControls', 'pixelFrameControls', 'pixelLegacyDirectionControls'];
   motionIds.forEach(id => $(id)?.classList.toggle('hidden', !actor));
@@ -1746,15 +1798,21 @@ function syncPixelAssetWorkflowUi({ silent = false } = {}) {
   }
 
   const typeLabel = ({ character:'캐릭터', monster:'몬스터', item:'아이템', ui_panel:'UI 패널', button:'버튼', icon:'아이콘', tile:'타일', effect:'이펙트' })[type] || type;
-  const staticModeNotice = effect
+  const staticModeNotice = effectSingle
+    ? '이펙트 단일 이미지 · 스프라이트 시트 없이 투명 이미지 1장으로 생성합니다.'
+    : effect
     ? '이펙트 시퀀스 · 1회/반복, 프레임 수와 피벗을 설정합니다. 캐릭터 방향/장비 설정 없음.'
     : '정적 에셋 모드 · 아이템/UI/버튼/아이콘/타일은 동작·방향 선택을 숨기고 1프레임으로 생성합니다.';
-  const referenceGenerationHint = effect
+  const referenceGenerationHint = effectSingle
+    ? '선택한 이미지 레이어의 스타일과 맥락에 맞는 단일 이펙트 이미지 1장을 생성합니다.'
+    : effect
     ? '선택한 이미지 레이어의 스타일과 맥락에 맞는 별도 이펙트 시퀀스를 생성합니다. 캐릭터 방향/장비 설정 없음.'
     : (actor
       ? '선택한 이미지 레이어를 기준으로 현재 동작/방향/프레임 수를 생성합니다. 선택 이미지가 없으면 위의 “새 도트 에셋 생성”을 쓰세요.'
       : '선택한 이미지 레이어의 스타일로 정적 에셋을 생성합니다. 선택 이미지가 없으면 위의 “새 도트 에셋 생성”을 쓰세요.');
-  const workflowHint = effect
+  const workflowHint = effectSingle
+    ? '이펙트 이미지 1장을 생성하고 배경을 제거해 일반 투명 이미지 레이어로 올립니다.'
+    : effect
     ? '설정한 1회/반복, 프레임 수와 피벗을 적용하고 배경 제거 후 프레임 시퀀스 유지 상태로 정리합니다.'
     : (actor
       ? '생성 후 배경 제거와 그리드 값을 자동으로 맞춥니다. 애니메이션 확인은 오른쪽 스프라이트 도구에서 실행합니다.'
@@ -1763,37 +1821,54 @@ function syncPixelAssetWorkflowUi({ silent = false } = {}) {
   if ($('pixelReferenceGenerationHint')) $('pixelReferenceGenerationHint').textContent = referenceGenerationHint;
   if ($('pixelWorkflowHint')) $('pixelWorkflowHint').textContent = workflowHint;
   if ($('generatePixelAsset')) $('generatePixelAsset').textContent = effect ? `새 ${typeLabel} 생성` : (actor ? `새 ${typeLabel} 스프라이트 생성` : `${typeLabel} 정적 에셋 생성`);
-  if ($('generateFrontIdleFromSelected')) $('generateFrontIdleFromSelected').textContent = effect ? '선택 이미지에 맞는 이펙트 생성' : (actor ? '선택 이미지 기준 방향/동작 생성' : '선택 이미지 스타일로 정적 에셋 생성');
-  if ($('runPixelWorkflow')) $('runPixelWorkflow').textContent = effect ? '이펙트 생성 → 배경 제거' : (actor ? '생성 → 배경 제거 → 그리드 값 맞춤' : '정적 에셋 생성 → 배경 제거');
+  if ($('generateFrontIdleFromSelected')) $('generateFrontIdleFromSelected').textContent = effectSingle ? '선택 이미지에 맞는 단일 이펙트 생성' : (effect ? '선택 이미지에 맞는 이펙트 생성' : (actor ? '선택 이미지 기준 방향/동작 생성' : '선택 이미지 스타일로 정적 에셋 생성'));
+  if ($('runPixelWorkflow')) $('runPixelWorkflow').textContent = effectSingle ? '이펙트 1장 생성 → 배경 제거' : (effect ? '이펙트 생성 → 배경 제거' : (actor ? '생성 → 배경 제거 → 그리드 값 맞춤' : '정적 에셋 생성 → 배경 제거'));
   if (!silent) setStatus(effect ? `${typeLabel} 모드 · 선택 레이어 맥락 또는 단독 이펙트 생성` : (actor ? `${typeLabel} 모드 · 동작/방향 선택 사용` : `${typeLabel} 모드 · 동작/방향 숨김 · 1프레임 생성`));
+  syncSingleFrameSpriteUi();
   applyPixelWorkflowGridDefaults();
 }
 
 function buildDirectionalSpriteSheetContract(anim = effectivePixelAnimationPreset()) {
+  const staticActor = anim === 'static';
   const mode = $('pixelDirectionMode')?.value || 'single';
   const dirs = directionLabelsForMode(mode);
   const refDir = inferReferenceDirection();
   const targetDir = $('pixelTargetDirection')?.value || 'S';
-  const frameCount = anim === 'ui_static' ? 1 : requestedPixelFrameCount();
+  const frameCount = (staticActor || anim === 'ui_static') ? 1 : requestedPixelFrameCount();
   const columns = frameCount;
-  const directionLine = mode === '8dir'
-    ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
-    : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single target via one-direction generation. Generate exactly one target direction: ${directionLabel(targetDir)}. Do not generate a direction-candidate sheet, contact sheet, multi-direction atlas, or alternate direction candidates. Do not output all 8 directions; the app requests each direction separately. Screen-space directions: SW/W turn toward screen-left, SE/E turn toward screen-right.`);
+  const directionLine = staticActor
+    ? (mode === '8dir'
+      ? '8-direction static character sheet: one pose per direction. Row order: N, NE, E, SE, S, SW, W, NW. Production method: S/N/W/SW/NW sources + E/SE/NE exact horizontal flips (5-source+mirror).'
+      : mode === '4dir'
+        ? '4-direction static character sheet: one pose per direction. Row order: S, W, E, N; E is an exact horizontal flip of W.'
+        : `Single-frame actor contract: exactly one standalone actor image facing ${directionLabel(targetDir)}; no direction sheet, alternate poses, animation strip, contact sheet, or duplicate character.`)
+    : mode === '8dir'
+      ? '8-direction sprite sheet. Row order: N, NE, E, SE, S, SW, W, NW.'
+      : (mode === '4dir' ? '4-direction sprite sheet. Row order: S, W, E, N.' : `Single target via one-direction generation. Generate exactly one target direction: ${directionLabel(targetDir)}. Do not generate a direction-candidate sheet, contact sheet, multi-direction atlas, or alternate direction candidates. Do not output all 8 directions; the app requests each direction separately. Screen-space directions: SW/W turn toward screen-left, SE/E turn toward screen-right.`);
   const actionRecipe = actorActionRecipe(anim);
+  const staticDirectionSet = staticActor && mode !== 'single';
   const actionLabel = actionRecipe?.id.replaceAll('_', ' ') || ({ idle:'idle/breathing', walk:'walk cycle', attack:'attack', jump:'jump', cast:'cast', hurt:'hurt reaction', death:'death/collapse', ui_static:'static asset' })[anim] || anim;
   const actionContract = actionRecipe?.prompt_contract || `${actionLabel} motion must read clearly in the declared frame order`;
-  const frameLine = anim === 'ui_static'
-    ? 'Static contract: exactly one clean isolated asset frame.'
-    : `${actionLabel} columns: exactly ${frameCount} frames per requested direction, evenly spaced in one horizontal row; frame beats: ${actionFrameBeats(anim, frameCount)}; action contract: ${actionContract}. Global reference identity rule: one accepted reference identity is the standard for the whole action set; every frame must be a complete coherent full-frame pose, not a cut/paste/part-slide edit; ${spriteAnimationCoreLockContract()}`;
-  const gridLine = mode === 'single'
-    ? `Sheet grid: 1 row x ${columns} columns. The visible character must face ${directionLabel(targetDir)} in every cell.`
-    : `Sheet grid: ${dirs.length} rows x ${columns} columns, evenly spaced cells, same scale and pivot in every cell.`;
-  const cellSafetyLine = anim === 'ui_static'
-    ? 'Cell safety: keep the single asset fully inside the canvas with clear empty margin on all sides.'
-    : `Cell safety: treat each animation frame as a separate boxed cell. Put a wide empty transparent/chroma gutter between cells. Every body part, weapon, held object, shadow, and silhouette must stay fully inside its own cell with at least 15% empty side margin. Nothing may touch or cross a cell boundary; if the motion would cross, shrink the body/weapon pose rather than spilling into the next frame. No VFX: do not draw slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, or background effects; those are separate effect-only assets composited in-game.`;
-  const visualGateLine = anim === 'ui_static'
-    ? ''
-    : actionVisualAcceptanceGate(anim);
+  const frameLine = staticActor
+    ? (staticDirectionSet
+      ? 'Static direction-set contract: exactly one clean isolated full-body pose per direction; no animation frames or alternate action poses.'
+      : 'Static actor contract: exactly one clean isolated full-body pose in one image.')
+    : anim === 'ui_static'
+      ? 'Static contract: exactly one clean isolated asset frame.'
+      : `${actionLabel} columns: exactly ${frameCount} frames per requested direction, evenly spaced in one horizontal row; frame beats: ${actionFrameBeats(anim, frameCount)}; action contract: ${actionContract}. Global reference identity rule: one accepted reference identity is the standard for the whole action set; every frame must be a complete coherent full-frame pose, not a cut/paste/part-slide edit; ${spriteAnimationCoreLockContract()}`;
+  const gridLine = staticActor
+    ? (staticDirectionSet
+      ? `Sheet grid: ${dirs.length} rows x 1 column, same scale, pivot, and foot baseline in every direction.`
+      : 'Canvas layout: one character only, centered with clear empty margin; do not divide the canvas into cells.')
+    : mode === 'single'
+      ? `Sheet grid: 1 row x ${columns} columns. The visible character must face ${directionLabel(targetDir)} in every cell.`
+      : `Sheet grid: ${dirs.length} rows x ${columns} columns, evenly spaced cells, same scale and pivot in every cell.`;
+  const cellSafetyLine = staticActor
+    ? 'Image safety: keep the complete actor, equipment, and silhouette inside the canvas with clean transparent/chroma margin on every side.'
+    : anim === 'ui_static'
+      ? 'Cell safety: keep the single asset fully inside the canvas with clear empty margin on all sides.'
+      : `Cell safety: treat each animation frame as a separate boxed cell. Put a wide empty transparent/chroma gutter between cells. Every body part, weapon, held object, shadow, and silhouette must stay fully inside its own cell with at least 15% empty side margin. Nothing may touch or cross a cell boundary; if the motion would cross, shrink the body/weapon pose rather than spilling into the next frame. No VFX: do not draw slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, or background effects; those are separate effect-only assets composited in-game.`;
+  const visualGateLine = staticActor || anim === 'ui_static' ? '' : actionVisualAcceptanceGate(anim);
   return `${directionLine}\nReference image direction: ${directionLabel(refDir)}. Use it only as the source view/style identity. Target direction is ${directionLabel(targetDir)}.\n${frameLine}\n${gridLine}\n${cellSafetyLine}${visualGateLine ? `\n${visualGateLine}` : ''}`;
 }
 
@@ -1802,7 +1877,8 @@ function buildPixelAssetPrompt(corePrompt = '') {
   const actor = isPixelActorAssetType(type);
   const anim = effectivePixelAnimationPreset();
   const style = $('assetStylePreset')?.value || '32bit_refined';
-  const singleMode = ($('pixelDirectionMode')?.value || 'single') === 'single';
+  const directionMode = $('pixelDirectionMode')?.value || 'single';
+  const singleMode = directionMode === 'single';
   const direction = singleMode ? directionLabel($('pixelTargetDirection')?.value || 'S') : ($('pixelDirection')?.value || 'front');
   const palette = ($('assetStyleNotes')?.value || 'limited dark game palette').trim();
   const subject = String(corePrompt || $('assetCorePrompt')?.value || '').trim();
@@ -1812,6 +1888,7 @@ function buildPixelAssetPrompt(corePrompt = '') {
     : (effect ? 'effect-only game VFX asset for compositing, no caster/target/body/prop included' : `${type} game asset`);
   const frameCount = anim === 'ui_static' ? 1 : requestedPixelFrameCount();
   const legacyAnimLine = {
+    static: 'single standalone actor pose, exactly one image, no animation frames and no sprite sheet',
     idle: `idle animation, ${frameCount}-frame subtle breathing loop (${actionFrameBeats(anim, frameCount)}), evenly spaced sprite sheet cells`,
     walk: `canonical walk cycle, exactly four frames N → L → N → R (${actionFrameBeats(anim, frameCount)}). Frame 3 is an exact pixel reuse of frame 1. Frames 2 and 4 are opposite step beats that require human visual approval. Keep root, head, torso, identity, equipment, and contact baseline stable`,
     attack: `attack animation, ${frameCount} frames (${actionFrameBeats(anim, frameCount)}), readable ready/wind-up/strike/recovery body and weapon poses, evenly spaced sprite sheet cells`,
@@ -1822,14 +1899,20 @@ function buildPixelAssetPrompt(corePrompt = '') {
     ui_static: `${type} static single asset, no animation frames, crisp reusable game component`,
   }[anim] || `${frameCount}-frame animation frames`;
   const actionRecipe = actor ? actorActionRecipe(anim) : null;
-  const animLine = actionRecipe
-    ? `${actionRecipe.prompt_contract} Exactly ${actionRecipe.frame_count} frames in this order: ${actionFrameBeats(actionRecipe.id, actionRecipe.frame_count)}.`
-    : legacyAnimLine;
+  const animLine = anim === 'static'
+    ? (singleMode
+      ? 'Exactly one complete standalone actor pose. No animation frames, alternate poses, duplicates, contact sheet, or sprite sheet.'
+      : `Exactly one static pose per direction in the ${directionMode} direction set. No animation frames or alternate action poses.`)
+    : actionRecipe
+      ? `${actionRecipe.prompt_contract} Exactly ${actionRecipe.frame_count} frames in this order: ${actionFrameBeats(actionRecipe.id, actionRecipe.frame_count)}.`
+      : legacyAnimLine;
   const styleLine = `${style.replaceAll('_', ' ')}, refined pixel art, not chunky NES, clean silhouette, game-ready production quality`;
   const directionalContract = actor ? buildDirectionalSpriteSheetContract(anim) : (effect ? 'Effect asset contract: exactly one isolated reusable game VFX asset, no character/monster/object body, no caster, no target, no floor/environment, no UI frame. The effect must be centered with transparent/chroma margin and be ready to composite over selected or standalone assets.' : 'Static asset contract: exactly one isolated reusable game asset, no animation, no direction sheet, no alternate poses.');
-  const outputLine = actor
-    ? 'Output: pixel-art sprite sheet, transparent background, isolated asset, centered, consistent scale, clean alpha edges, no text, no watermark, no logo, no mockup frame. Background cleanup contract: true transparent background after postprocess; no visible rectangular cell boxes, dark/green residue, chroma spill, halo, or fringe around sprites.'
-    : (effect ? 'Output: single transparent PNG-style effect-only asset, centered, clean alpha edges, no character/monster/object/prop/body, no sprite sheet, no text, no watermark, no logo, no mockup frame.' : 'Output: single transparent PNG-style pixel asset, centered, clean alpha edges, no sprite sheet, no text, no watermark, no logo, no mockup frame. No baked VFX: no slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura, or background effects.');
+  const outputLine = actor && anim === 'static' && singleMode
+    ? 'Output: single transparent PNG-style character image, one complete isolated actor only, centered, clean alpha edges, no sprite sheet, no alternate poses, no duplicate character, no text, no watermark, no logo, no mockup frame. Background cleanup contract: true transparent background after postprocess; no dark/green residue, chroma spill, halo, or fringe.'
+    : actor
+      ? 'Output: pixel-art sprite sheet, transparent background, isolated asset, centered, consistent scale, clean alpha edges, no text, no watermark, no logo, no mockup frame. Background cleanup contract: true transparent background after postprocess; no visible rectangular cell boxes, dark/green residue, chroma spill, halo, or fringe around sprites.'
+      : (effect ? 'Output: single transparent PNG-style effect-only asset, centered, clean alpha edges, no character/monster/object/prop/body, no sprite sheet, no text, no watermark, no logo, no mockup frame.' : 'Output: single transparent PNG-style pixel asset, centered, clean alpha edges, no sprite sheet, no text, no watermark, no logo, no mockup frame. No baked VFX: no slash arcs, hit sparks, magic glows, particles, smoke, shockwaves, detached debris, motion trails, aura, or background effects.');
   return `${subject}\n${typeLine}\n${animLine}\n${directionalContract}\n${actor ? `Direction hint: ${direction}` : 'Direction hint: not applicable for this asset type.'}\nPalette: ${palette}\nStyle: ${styleLine}\n${outputLine}`;
 }
 
@@ -4523,6 +4606,7 @@ function renderLayers() {
     box.appendChild(item);
   });
   updateEmptyCanvasHint();
+  notifyEditorLayersChanged();
 }
 
 function syncSpriteAfterCanvasResize({ rebuildPreview = true } = {}) {
@@ -5394,6 +5478,160 @@ function imageObjectToDataUrl(obj) {
   ctx.drawImage(imgEl, 0, 0, temp.width, temp.height);
   return temp.toDataURL('image/png');
 }
+
+function editorImageLayerDescriptor(obj) {
+  if (!obj || obj.type !== 'image' || obj.excludeFromLayers || obj.isMaskOverlay) return null;
+  const element = obj.getElement?.();
+  return {
+    id: layerKey(obj),
+    name: nameOf(obj),
+    visible: obj.visible !== false,
+    selected: layerKey(obj) === layerKey(selectedLayerObject()),
+    width: element?.naturalWidth || element?.width || obj.width || 0,
+    height: element?.naturalHeight || element?.height || obj.height || 0,
+    displayWidth: Math.round(obj.getScaledWidth()),
+    displayHeight: Math.round(obj.getScaledHeight()),
+  };
+}
+
+function listImageLayers() {
+  return [...canvas.getObjects()].reverse().map(editorImageLayerDescriptor).filter(Boolean);
+}
+
+function getSelectedImageLayer() {
+  return editorImageLayerDescriptor(selectedLayerObject());
+}
+
+function selectImageLayer(id) {
+  const obj = objectByLayerId(id);
+  if (!obj || obj.type !== 'image' || obj.excludeFromLayers || obj.isMaskOverlay) return null;
+  selectedLayerId = layerKey(obj);
+  canvas.setActiveObject(obj);
+  canvas.renderAll();
+  syncProps();
+  renderLayers();
+  return editorImageLayerDescriptor(obj);
+}
+
+function exportImageLayer(id) {
+  const obj = objectByLayerId(id);
+  if (!obj || obj.type !== 'image' || obj.excludeFromLayers || obj.isMaskOverlay) throw new Error('모션 원본으로 사용할 이미지 레이어가 없습니다.');
+  return { ...editorImageLayerDescriptor(obj), dataUrl: imageObjectToDataUrl(obj) };
+}
+
+function getCanvasSize() {
+  return { width: canvas.getWidth(), height: canvas.getHeight() };
+}
+
+function previewImageLayer(id, preview = {}) {
+  const obj = objectByLayerId(id);
+  if (!obj || obj.type !== 'image' || obj.excludeFromLayers || obj.isMaskOverlay) return false;
+  let baseline = editorLayerMotionPreviews.get(id);
+  if (!baseline) {
+    baseline = {
+      element: obj.getElement?.(),
+      props: {
+        left: obj.left, top: obj.top, angle: obj.angle,
+        scaleX: obj.scaleX, scaleY: obj.scaleY, opacity: obj.opacity,
+        flipX: obj.flipX, flipY: obj.flipY,
+      },
+      token: 0,
+    };
+    editorLayerMotionPreviews.set(id, baseline);
+  }
+  const applyTransform = () => {
+    const scale = Number.isFinite(preview.scale) ? preview.scale : 1;
+    obj.set({
+      left: baseline.props.left + (Number(preview.x) || 0),
+      top: baseline.props.top + (Number(preview.y) || 0),
+      angle: baseline.props.angle + (Number(preview.rotation) || 0),
+      scaleX: baseline.props.scaleX * scale,
+      scaleY: baseline.props.scaleY * scale,
+      opacity: baseline.props.opacity * (Number.isFinite(preview.opacity) ? preview.opacity : 1),
+    });
+    obj.setCoords();
+    canvas.requestRenderAll();
+  };
+  const uri = typeof preview.imageUri === 'string' ? preview.imageUri : '';
+  const currentUri = obj.getElement?.()?.src || '';
+  if (uri && uri !== currentUri) {
+    const token = ++baseline.token;
+    const image = new Image();
+    image.onload = () => {
+      if (editorLayerMotionPreviews.get(id) !== baseline || baseline.token !== token) return;
+      obj.setElement(image);
+      applyTransform();
+    };
+    image.src = uri;
+  } else {
+    baseline.token += 1;
+    applyTransform();
+  }
+  return true;
+}
+
+function restoreImageLayerPreview(id = '') {
+  const ids = id ? [id] : [...editorLayerMotionPreviews.keys()];
+  ids.forEach(layerId => {
+    const baseline = editorLayerMotionPreviews.get(layerId);
+    const obj = objectByLayerId(layerId);
+    if (!baseline || !obj) return;
+    baseline.token += 1;
+    if (baseline.element && obj.getElement?.() !== baseline.element) obj.setElement(baseline.element);
+    obj.set(baseline.props);
+    obj.setCoords();
+    editorLayerMotionPreviews.delete(layerId);
+  });
+  canvas.requestRenderAll();
+}
+
+function applyMotionToLayer(id, manifest) {
+  const obj = objectByLayerId(id);
+  if (!obj || obj.type !== 'image' || obj.excludeFromLayers || obj.isMaskOverlay) return false;
+  restoreImageLayerPreview(id);
+  obj.motionManifest = JSON.parse(JSON.stringify(manifest));
+  saveHistory('Motion applied to layer');
+  renderLayers();
+  return true;
+}
+
+function clearMotionFromLayer(id) {
+  const obj = objectByLayerId(id);
+  if (!obj || obj.type !== 'image' || !obj.motionManifest) return false;
+  restoreImageLayerPreview(id);
+  delete obj.motionManifest;
+  saveHistory('Motion removed from layer');
+  renderLayers();
+  return true;
+}
+
+function subscribeLayers(listener) {
+  if (typeof listener !== 'function') return () => {};
+  editorLayerSubscribers.add(listener);
+  return () => editorLayerSubscribers.delete(listener);
+}
+
+function notifyEditorLayersChanged() {
+  if (!editorLayerSubscribers.size) return;
+  const snapshot = listImageLayers();
+  editorLayerSubscribers.forEach(listener => {
+    try { listener(snapshot); }
+    catch (error) { console.error('Editor layer subscriber failed', error); }
+  });
+}
+
+window.AssetStudioEditor = {
+  listImageLayers,
+  getSelectedImageLayer,
+  selectImageLayer,
+  exportImageLayer,
+  getCanvasSize,
+  previewImageLayer,
+  restoreImageLayerPreview,
+  applyMotionToLayer,
+  clearMotionFromLayer,
+  subscribeLayers,
+};
 
 async function removeBgSelected(mode='ai', chromaMode = $('pixelChromaMode')?.value || 'global') {
   const obj = selectedLayerObject();
@@ -7016,7 +7254,10 @@ if ($('runDirectionalPixelPack')) $('runDirectionalPixelPack').onclick = () => r
 ['pixelFrameW','pixelFrameH','pixelAnimationPreset','pixelDirectionMode','pixelTargetDirection','pixelWalkFrames'].forEach(id => {
   if ($(id)) $(id).addEventListener('change', () => {
     if (id === 'pixelAnimationPreset' && $('pixelWalkFrames')) $('pixelWalkFrames').value = String(pixelAnimationDefaultFrames($('pixelAnimationPreset')?.value || 'idle'));
-    if (id === 'pixelAnimationPreset') $('actorWalkWorkflow')?.classList.toggle('hidden', !isPixelActorAssetType() || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk');
+    if (id === 'pixelAnimationPreset') {
+      $('actorWalkWorkflow')?.classList.toggle('hidden', !isPixelActorAssetType() || ($('pixelAnimationPreset')?.value || 'idle') !== 'walk');
+      syncSingleFrameSpriteUi();
+    }
     applyPixelWorkflowGridDefaults();
     if (id === 'pixelDirectionMode' || id === 'pixelTargetDirection') {
       syncActorWalkControls();
@@ -7162,10 +7403,10 @@ function generateAiAsset() {
         });
       }
       if (useReference) payload.reference_image = imageObjectToDataUrl(referenceObj);
-      updateGenerationProgress('2/3 · AI 이미지 생성 대기 중');
-      const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'generation failed');
+      updateGenerationProgress('2/3 · AI 이미지 생성 작업 접수 중');
+      const submitted = await submitGenerationJob(endpoint, payload);
+      const data = await waitForGenerationJob(submitted.job_id);
+      if (!data.success) throw new Error(data.error || 'generation failed');
       updateGenerationProgress('3/3 · 결과 검사 및 캔버스 적용 중');
       const url = withCacheBust(data.url);
       if ($('pixelQaSummary') && data.qa) {
@@ -7370,14 +7611,10 @@ async function generateFrontIdleFromSelected() {
   try {
     if (typeof beginGenerationProgress === 'function') beginGenerationProgress('1/3 · 기준 이미지와 동작 요청 준비 중');
     setStatus(`${statusPrefix} 자동 생성 중...`);
-    if (typeof updateGenerationProgress === 'function') updateGenerationProgress('2/3 · AI 이미지 생성 대기 중');
-    const res = await fetch('/api/generate-reference', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(requestPayload)
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.error || 'direction/action generation failed');
+    if (typeof updateGenerationProgress === 'function') updateGenerationProgress('2/3 · AI 이미지 생성 작업 접수 중');
+    const submitted = await submitGenerationJob('/api/generate-reference', requestPayload);
+    const data = await waitForGenerationJob(submitted.job_id);
+    if (!data.success) throw new Error(data.error || 'direction/action generation failed');
     if (typeof updateGenerationProgress === 'function') updateGenerationProgress('3/3 · 배경 제거·QA·미리보기 처리 중');
     const url = withCacheBust(data.url);
     const resultLabel = actor ? `${targetDirection} ${spec.label} ${spec.frames}f` : `${type} ${preset} ${spec.frames}f`;

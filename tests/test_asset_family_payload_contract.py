@@ -213,8 +213,8 @@ def test_object_contract_has_complete_nested_semantics_and_no_legacy_or_sprite_k
 def test_generate_call_serializes_the_normalized_builder_result_not_a_second_flat_object():
     body = _function_body("generateAiAsset", JS)
     assert "buildAssetGenerationPayload" in body
-    assert re.search(r"JSON\.stringify\s*\(\s*(?:payload|buildAssetGenerationPayload\s*\(\s*\))\s*\)", body), (
-        "generateAiAsset() must send the normalized family payload"
+    assert re.search(r"submitGenerationJob\s*\(\s*endpoint\s*,\s*payload\s*\)", body), (
+        "generateAiAsset() must submit the normalized family payload to the async job API"
     )
 
 

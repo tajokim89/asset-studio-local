@@ -1,40 +1,77 @@
-.motion-studio[hidden] {
+.motion-studio[hidden],
+.motion-studio [hidden] {
   display: none !important;
 }
 
-.app.motion-mode > .toolrail,
+.app.motion-mode {
+  grid-template-rows: 56px minmax(240px, 1fr) minmax(340px, 46vh);
+}
+
 .app.motion-mode > .sidebar,
 .app.motion-mode > #leftResize,
-.app.motion-mode > #workspace,
-.app.motion-mode > #rightResize,
-.app.motion-mode > .props {
+.app.motion-mode > #rightResize {
   display: none !important;
 }
 
-.app.motion-mode .topbar > #workspaceModeSwitch,
-.app.motion-mode .topbar > #presetSize,
-.app.motion-mode .topbar > #canvasW,
-.app.motion-mode .topbar > #canvasH,
-.app.motion-mode .topbar > #applyCanvas,
-.app.motion-mode .topbar > #zoomOut,
-.app.motion-mode .topbar > #zoomLabel,
-.app.motion-mode .topbar > #zoomIn,
-.app.motion-mode .topbar > #fitCanvas,
-.app.motion-mode .topbar > #undoBtn,
-.app.motion-mode .topbar > #redoBtn,
-.app.motion-mode .topbar > #providerStatus,
-.app.motion-mode .topbar > #topPhotoPickBtn,
-.app.motion-mode .topbar > #exportPng {
+.app.motion-mode > .toolrail {
+  display: none !important;
+}
+
+.app.motion-mode > #workspace {
+  display: flex;
+  grid-column: 1 / 6;
+  grid-row: 2;
+}
+
+.app.motion-mode > .props {
+  display: block;
+  grid-column: 6;
+  grid-row: 2 / 4;
+}
+
+.app.motion-mode #workspaceModeSwitch,
+.app.motion-mode #presetSize,
+.app.motion-mode #canvasW,
+.app.motion-mode #canvasH,
+.app.motion-mode #applyCanvas,
+.app.motion-mode #zoomOut,
+.app.motion-mode #zoomLabel,
+.app.motion-mode #zoomIn,
+.app.motion-mode #fitCanvas,
+.app.motion-mode #undoBtn,
+.app.motion-mode #redoBtn,
+.app.motion-mode #providerStatus,
+.app.motion-mode #addLayer,
+.app.motion-mode #layersPanel .layer-control-grid,
+.app.motion-mode #layersPanel .layer-action-row,
+.app.motion-mode #historyDisclosure {
+  display: none !important;
+}
+
+.app.motion-mode #layersPanel > .panel > .row {
+  display: block;
+}
+
+.app.motion-mode #addImageLayer {
+  width: 100%;
+}
+
+.app.motion-mode #rightPanelPropertiesTab,
+.app.motion-mode #rightPanelExportTab {
   display: none;
 }
 
+.app.motion-mode .right-panel-tabs {
+  grid-template-columns: 1fr;
+}
+
 .motion-studio {
-  grid-column: 1 / 7;
-  grid-row: 2;
+  grid-column: 1 / 6;
+  grid-row: 3;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(250px, 300px) minmax(360px, 1fr) minmax(300px, 380px);
+  grid-template-columns: minmax(340px, 1fr) minmax(340px, 440px);
   background: #111722;
   color: #e8eef9;
   overflow: hidden;
@@ -43,11 +80,19 @@
 .motion-studio > section {
   min-width: 0;
   overflow: auto;
-  padding: 16px;
+  padding: 12px;
   border-right: 1px solid #30394a;
 }
 
 .motion-studio > section:last-child { border: 0; }
+.motion-layer-status {
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid #30394a;
+  border-radius: 8px;
+  background: #171e2a;
+}
+.motion-layer-status p { margin: 4px 0 0; }
 .motion-studio h2,
 .motion-studio h3,
 .motion-studio h4 { margin: .2rem 0 .6rem; }
@@ -142,8 +187,8 @@
   display: grid;
   place-items: center;
   flex: 1;
-  min-height: 300px;
-  margin: 10px 0;
+  min-height: 88px;
+  margin: 6px 0;
   overflow: hidden;
   border: 1px solid #313b4d;
   background-color: #202632;
@@ -183,8 +228,8 @@
 }
 .motion-transport label input { min-width: 90px; flex: 1; width: 100%; }
 .motion-timeline {
-  height: 54px;
-  margin-top: 10px;
+  height: 42px;
+  margin-top: 6px;
   border: 1px solid #30394a;
   background: repeating-linear-gradient(90deg, #202838 0 1px, transparent 1px 10%);
 }
@@ -204,6 +249,85 @@
 }
 .motion-tier-tabs button[aria-selected="true"] { background: #3d73df; border-color: #77a2ff; }
 
+.motion-quick {
+  margin: 10px 0 14px;
+  padding: 10px;
+  border: 1px solid #3a4c68;
+  border-radius: 8px;
+  background: #171f2d;
+}
+.motion-quick-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.motion-quick-presets button[aria-pressed="true"],
+.motion-direction-presets button[aria-pressed="true"] {
+  background: #315fbd;
+  border-color: #79a5ff;
+}
+.motion-direction-block {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #303d52;
+}
+.motion-direction-block > strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #cfddf5;
+}
+.motion-direction-presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.motion-direction-presets span {
+  display: grid;
+  place-items: center;
+  min-height: 32px;
+  color: #59677d;
+}
+.motion-direction-presets button { font-size: 11px; }
+.motion-movement-options {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+.motion-movement-option {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.motion-movement-option > strong {
+  color: #aebed5;
+  font-size: 10px;
+}
+.motion-movement-option > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.motion-movement-option:last-child > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.motion-movement-option button {
+  min-height: 28px;
+  padding: 4px 6px;
+  font-size: 10px;
+}
+.motion-movement-option button[aria-pressed="true"] {
+  background: #315fbd;
+  border-color: #79a5ff;
+  color: #fff;
+}
+.motion-apply-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-top: 10px;
+}
+.motion-apply-actions .primary { font-weight: 700; }
+
 .motion-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(52px, 1fr)) auto;
@@ -213,6 +337,16 @@
 }
 .motion-row input { width: 100%; min-width: 0; }
 .motion-row button { min-width: 30px; padding: 3px; }
+.motion-row--simple {
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 132px) repeat(3, 30px);
+  padding: 8px;
+  border: 1px solid #30394a;
+  border-radius: 6px;
+  background: #171e2a;
+}
+.motion-row--simple > strong { grid-column: 1 / -1; color: #dbe7f9; font-size: 11px; }
+.motion-row--simple .motion-media-field { min-width: 0; }
+.motion-row--simple label { margin: 0; }
 
 .motion-actions { margin-top: 12px; }
 .motion-qa {
@@ -242,9 +376,45 @@
 .motion-timeline-segment { display: flex; min-width: 24px; flex-direction: column; justify-content: center; overflow: hidden; padding: 3px 5px; border-right: 1px solid #3d4960; background: #1d2c45; color: #d9e6ff; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .motion-timeline-segment small { color: #8ea4c8; font-size: 8px; }
 
+.motion-basic-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+.motion-basic-flow li {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 5px;
+  border: 1px solid #334057;
+  border-radius: 7px;
+  background: #182131;
+  color: #cbd8ec;
+  font-size: 10px;
+  text-align: center;
+}
+.motion-basic-flow b { color: #78a6ff; font-size: 12px; }
+.motion-layer-status { padding: 8px 9px; border: 1px solid #3b4e6d; border-radius: 7px; background: #17243a; }
+.motion-layer-status p { margin: 4px 0 0; }
+.motion-advanced,
+.motion-rig-eligibility,
+.motion-delivery { margin: 9px 0; border: 1px solid #30394a; border-radius: 7px; padding: 8px; }
+.motion-advanced > summary,
+.motion-rig-eligibility > summary,
+.motion-delivery > summary { color: #9eb2ce; font-size: 11px; font-weight: 700; cursor: pointer; }
+.motion-section-title,
+.motion-kind-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.motion-section-title span,
+.motion-kind-heading span { color: #8796ad; font-size: 10px; }
+.motion-kind-heading { margin-top: 8px; }
+.motion-kind-heading h3 { margin-bottom: 0; }
+
 @media (max-width: 1000px) {
   .motion-studio {
-    grid-template-columns: 260px minmax(320px, 1fr);
+    grid-template-columns: minmax(300px, 1fr) minmax(320px, 400px);
     overflow: auto;
   }
   .motion-studio__right {

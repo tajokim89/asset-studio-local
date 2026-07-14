@@ -176,6 +176,18 @@
       "acceptance": "Reads as picking up an item with a coherent crouch and rise; no unrelated object, attack motion, or identity drift is introduced.",
       "pivot": { "unit": "pixels", "x": 16, "y": 28 },
       "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 4, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0, 1, 2, 3] }
+    },
+    {
+      "id": "static",
+      "frame_count": 1,
+      "fps": 1,
+      "loop": false,
+      "terminal": true,
+      "beats": ["single-pose"],
+      "prompt_contract": "Generate exactly one complete standalone actor pose as one isolated image, not an animation frame strip or sprite sheet.",
+      "acceptance": "Exactly one coherent full actor pose is visible with no alternate pose, duplicate, contact sheet, or sprite-sheet cells.",
+      "pivot": { "unit": "pixels", "x": 16, "y": 28 },
+      "sheet_layout": { "file_name_template": "generic-pixel-actor-v1-{action}.png", "packing": "rows-by-direction", "columns": 1, "rows": 8, "direction_order": ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], "frame_order": [0] }
     }
   ],
   "import_hints": {

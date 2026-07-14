@@ -33,7 +33,7 @@ def _png_bytes(img: Image.Image) -> bytes:
 def test_phase25_server_action_matrix_has_full_canonical_action_contracts():
     expected = {
         "idle", "walk", "run", "attack", "ranged_attack", "cast", "block",
-        "dodge", "jump", "hurt", "death", "interact", "pickup",
+        "dodge", "jump", "hurt", "death", "interact", "pickup", "static",
     }
     assert set(SPRITE_ACTION_MATRIX) == expected
     assert "hit" not in SPRITE_ACTION_MATRIX

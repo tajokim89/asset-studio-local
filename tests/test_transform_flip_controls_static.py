@@ -27,4 +27,4 @@ def test_selected_layer_flip_toggles_fabric_flags_and_records_history():
 
 
 def test_flip_controls_use_new_cache_busted_script():
-    assert "src/main.js?v=20260711.2" in INDEX
+    assert "src/main.js?v=20260714.6" in INDEX

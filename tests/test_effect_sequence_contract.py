@@ -717,18 +717,19 @@ const buildAssetGenerationPayload = base => {{
     rows: 2, columns: 4
   }}}};
 }};
-let fetchCall = null;
-const fetch = async (endpoint, options) => {{
-  fetchCall = {{endpoint, options}};
-  return {{ok: false, json: async () => ({{error: 'inert stop'}})}};
+let submitCall = null;
+const submitGenerationJob = async (endpoint, payload) => {{
+  submitCall = {{endpoint, payload}};
+  return {{job_id: 'inert-job'}};
 }};
+const waitForGenerationJob = async () => {{ throw new Error('inert stop'); }};
 {function}
 (async () => {{
   try {{ await generateFrontIdleFromSelected(); }} catch (_) {{}}
-  const body = JSON.parse(fetchCall.options.body);
+  const body = submitCall.payload;
   const actorFields = ['direction_mode', 'target_direction', 'reference_direction', 'animation_mode', 'frame_count', 'chroma_mode'];
   process.stdout.write(JSON.stringify({{
-    endpoint: fetchCall.endpoint, body, builderBase,
+    endpoint: submitCall.endpoint, body, builderBase,
     leakedActorFields: actorFields.filter(key => Object.prototype.hasOwnProperty.call(body, key))
   }}));
 }})().catch(error => {{ console.error(error); process.exitCode = 1; }});
@@ -767,7 +768,8 @@ const directionLabel = value => value;
 const buildAssetGenerationPayload = base => ({{...base, asset_family: 'sprite', asset_type: 'effect'}});
 const setStatus = () => {{}};
 const alert = message => {{ throw new Error(message); }};
-const fetch = async () => ({{ok: true, json: async () => ({{success: true, url: '/inert.png'}})}});
+const submitGenerationJob = async () => ({{job_id: 'inert-job'}});
+const waitForGenerationJob = async () => ({{success: true, url: '/inert.png'}});
 const withCacheBust = url => url;
 const addGallery = () => {{}};
 const addImageUrl = async () => generated;

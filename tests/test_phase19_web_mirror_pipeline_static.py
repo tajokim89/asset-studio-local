@@ -45,7 +45,7 @@ def test_phase19_reference_8dir_route_uses_mirror_pipeline():
         assert token in SERVER
     assert re.search(
         r'if\s+is_actor_sprite\s+and\s+direction_mode\s*==\s*["\']8dir["\']'
-        r'\s+and\s+animation_mode\s*==\s*["\']idle["\']\s*:',
+        r'\s+and\s+animation_mode\s+in\s+\{["\']idle["\'],\s*["\']static["\']\}\s*:',
         SERVER,
     )
 

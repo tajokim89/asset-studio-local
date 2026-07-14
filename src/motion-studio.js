@@ -6,6 +6,7 @@
   const $ = id => document.getElementById(id);
   const STORAGE_KEY = "asset-studio.motion-draft/v1";
   const TIERS = Core.STRATEGIES;
+  const UI_TIERS = ["static", "transform_tween", "state_swap", "limited_frames"];
   const MAX_FILE_BYTES = Core.MEDIA_BUDGET_BYTES;
   const IMAGE_TYPES = /^image\/(png|jpeg|webp)$/;
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -13,12 +14,14 @@
   const number = id => Number($(id).value);
   const checked = id => $(id).checked;
   const status = text => { $("motionStatus").textContent = text; };
+  const editorBridge = () => window.AssetStudioEditor || null;
   const esc = value => String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
 
   const defaults = () => ({
     tier: "static",
     imageName: "",
     sourceDataUrl: "",
+    sourceLayerId: "",
     time: 0,
     manualVisualApproval: false,
     drafts: {
@@ -39,6 +42,20 @@
   let playStart = 0;
   let lastRecommendation = null;
   const imageCache = new Map();
+  const DIRECTION_VECTORS = {
+    N:[0,-1], NE:[Math.SQRT1_2,-Math.SQRT1_2], E:[1,0], SE:[Math.SQRT1_2,Math.SQRT1_2],
+    S:[0,1], SW:[-Math.SQRT1_2,Math.SQRT1_2], W:[-1,0], NW:[-Math.SQRT1_2,-Math.SQRT1_2],
+  };
+  const MOVEMENT_DISTANCE_FACTORS={short:.55,normal:1,far:1.6};
+  const MOVEMENT_DURATION_FACTORS={slow:1.55,normal:1,fast:.6};
+  const QUICK_PRESETS = {
+    float: {label:"살짝 떠다니기", duration:1600, loop:"pingpong", start:{x:0,y:2,rotation:0,scale:1,opacity:1}, end:{x:0,y:-2,rotation:0,scale:1,opacity:1}},
+    breathe: {label:"숨 쉬듯 움직이기", duration:1200, loop:"pingpong", start:{x:0,y:0,rotation:0,scale:1,opacity:1}, end:{x:0,y:-1,rotation:0,scale:1.04,opacity:1}},
+    bounce: {label:"통통 튀기", duration:700, loop:"pingpong", start:{x:0,y:0,rotation:0,scale:1,opacity:1}, end:{x:0,y:-8,rotation:0,scale:1,opacity:1}},
+    shake: {label:"좌우 흔들기", duration:380, loop:"pingpong", start:{x:-3,y:0,rotation:-2,scale:1,opacity:1}, end:{x:3,y:0,rotation:2,scale:1,opacity:1}},
+    enter: {label:"등장하기", duration:650, loop:"once", start:{x:-18,y:0,rotation:0,scale:.94,opacity:0}, end:{x:0,y:0,rotation:0,scale:1,opacity:1}},
+    exit: {label:"퇴장하기", duration:650, loop:"once", start:{x:0,y:0,rotation:0,scale:1,opacity:1}, end:{x:18,y:0,rotation:0,scale:.94,opacity:0}},
+  };
 
   function deepMerge(base, incoming) {
     if (!plain(incoming)) return clone(base);
@@ -59,14 +76,81 @@
 
   function setWorkspace(name) {
     const motion = name === "motion";
+    if (!motion) {
+      playing = false;
+      editorBridge()?.restoreImageLayerPreview?.();
+    }
     document.querySelector(".app").classList.toggle("motion-mode", motion);
     $("motionStudioWorkspace").hidden = !motion;
     document.querySelectorAll("#studioWorkspaceSwitch button").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.studioWorkspace === name)));
-    if (motion) render();
+    if (motion) {
+      $("rightPanelLayersTab")?.click();
+      refreshEditorLayers({ useSelected: true });
+      render();
+    }
   }
 
-  function imageForRef(ref) {
-    const uri = ref === "source" ? state.sourceDataUrl : ref;
+  function updateSource(dataUrl, name, layerId = "") {
+    state.sourceDataUrl = layerId ? "" : dataUrl;
+    state.imageName = name;
+    state.sourceLayerId = layerId;
+    sourceImage = imageForUri(dataUrl);
+    return new Promise((resolve, reject) => {
+      if (sourceImage.complete && sourceImage.naturalWidth) return resolve(sourceImage);
+      sourceImage.addEventListener("load", () => resolve(sourceImage), {once:true});
+      sourceImage.addEventListener("error", reject, {once:true});
+    }).then(img => {
+      invalidateMotionQa(); updateManifest(); render(); saveDraft();
+      return img;
+    });
+  }
+
+  async function useEditorLayer(layerId = editorBridge()?.getSelectedImageLayer()?.id, { selectInEditor = false } = {}) {
+    const bridge = editorBridge();
+    if (!bridge || !layerId) { status("오른쪽 레이어에서 이미지 하나를 선택하세요."); return false; }
+    try {
+      if (selectInEditor) bridge.selectImageLayer(layerId);
+      const layer = bridge.exportImageLayer(layerId);
+      const canvasSize = bridge.getCanvasSize();
+      $("motionCanvasW").value = canvasSize.width;
+      $("motionCanvasH").value = canvasSize.height;
+      $("motionPivotX").value = Math.floor(canvasSize.width / 2);
+      $("motionPivotY").value = Math.floor(canvasSize.height / 2);
+      $("motionGroundX").value = Math.floor(canvasSize.width / 2);
+      $("motionGroundY").value = Math.max(0, canvasSize.height - 1);
+      if (state.sourceLayerId === layer.id && sourceImage?.src === layer.dataUrl) {
+        $("motionLayerLinkStatus").textContent = `연결됨 · ${layer.name} · ${layer.width}×${layer.height}`;
+        status(`${layer.name} 편집 레이어 연결 유지`);
+        return true;
+      }
+      await updateSource(layer.dataUrl, layer.name, layer.id);
+      $("motionLayerLinkStatus").textContent = `연결됨 · ${layer.name} · ${layer.width}×${layer.height}`;
+      status(`${layer.name} 레이어를 모션 원본으로 연결했습니다.`);
+      return true;
+    } catch (error) { status(error.message || "편집 레이어를 연결할 수 없습니다."); return false; }
+  }
+
+  function refreshEditorLayers({ useSelected = false, syncLinked = false } = {}) {
+    const bridge = editorBridge();
+    if (!bridge) return;
+    const layers = bridge.listImageLayers();
+    const selected = bridge.getSelectedImageLayer();
+    const wanted = useSelected && selected ? selected.id : (state.sourceLayerId || selected?.id || "");
+    if (wanted && layers.some(layer => layer.id === wanted)) {
+      if (useSelected) useEditorLayer(wanted);
+      else if (syncLinked && state.sourceLayerId === wanted) useEditorLayer(wanted, { selectInEditor: false });
+    } else if (state.sourceLayerId) {
+      state.sourceLayerId = "";
+      state.imageName = "";
+      sourceImage = null;
+      $("motionLayerLinkStatus").textContent = "연결했던 편집 레이어가 없습니다. 다른 이미지 레이어를 선택하세요.";
+      invalidateMotionQa(); saveDraft();
+    } else if (!layers.length) {
+      $("motionLayerLinkStatus").textContent = "이미지 레이어가 없습니다. 에셋 편집에서 이미지를 추가하세요.";
+    }
+  }
+
+  function imageForUri(uri) {
     if (!uri || !Core.validMediaUri(uri)) return null;
     if (imageCache.has(uri)) return imageCache.get(uri);
     const img = new Image();
@@ -75,6 +159,11 @@
     img.onerror = () => { imageCache.delete(uri); status("미디어 참조를 읽을 수 없습니다."); };
     img.src = uri;
     return img;
+  }
+
+  function imageForRef(ref) {
+    if (ref === "source") return sourceImage || imageForUri(state.sourceDataUrl);
+    return imageForUri(ref);
   }
 
   function readImageFile(file) {
@@ -92,52 +181,42 @@
     try {
       status("이미지 읽는 중…");
       const dataUrl = await readImageFile(file);
-      state.sourceDataUrl = dataUrl;
-      state.imageName = file.name;
-      sourceImage = imageForRef("source");
-      await new Promise((resolve, reject) => {
-        if (sourceImage.complete && sourceImage.naturalWidth) return resolve();
-        sourceImage.addEventListener("load", resolve, {once:true});
-        sourceImage.addEventListener("error", reject, {once:true});
-      });
-      $("motionCanvasW").value = sourceImage.naturalWidth;
-      $("motionCanvasH").value = sourceImage.naturalHeight;
-      $("motionPivotX").value = Math.floor(sourceImage.naturalWidth / 2);
-      $("motionPivotY").value = Math.floor(sourceImage.naturalHeight / 2);
-      $("motionGroundX").value = Math.floor(sourceImage.naturalWidth / 2);
-      $("motionGroundY").value = Math.max(0, sourceImage.naturalHeight - 1);
+      await updateSource(dataUrl, file.name, "");
+      $("motionLayerLinkStatus").textContent = `외부 이미지 사용 중 · ${file.name}`;
       status(`${file.name} 로드 완료`);
-      invalidateMotionQa(); updateManifest(); render(); saveDraft();
     } catch (error) { status(error.message || "이미지를 읽을 수 없습니다."); }
   }
 
   function transformEditor() {
     const d = state.drafts.transform_tween;
     const field = (label, path, value, attrs="") => `<label>${label}<input data-transform="${path}" type="number" value="${esc(value)}" ${attrs}></label>`;
-    $("motionTransformEditor").innerHTML = ["x","y","rotation","scale","opacity"].map(key => field(`시작 ${key}`,`start.${key}`,d.start[key],key==="opacity"?'min="0" max="1" step=".05"':'step=".1"')).join("")
-      + ["x","y","rotation","scale","opacity"].map(key => field(`끝 ${key}`,`end.${key}`,d.end[key],key==="opacity"?'min="0" max="1" step=".05"':'step=".1"')).join("")
-      + field("Duration ms","duration",d.duration,'min="1" max="600000"')
-      + `<label>Easing<select data-transform="easing">${["linear","ease_in","ease_out","ease_in_out"].map(x=>`<option ${x===d.easing?"selected":""}>${x}</option>`).join("")}</select></label>`
-      + `<label>Loop<select data-transform="loop">${["loop","once","pingpong"].map(x=>`<option ${x===d.loop?"selected":""}>${x}</option>`).join("")}</select></label>`
-      + `<label class="checkline"><input data-transform="pixel_snap" type="checkbox" ${d.pixel_snap?"checked":""}> 픽셀 스냅</label>`;
+    $("motionTransformEditor").innerHTML = field("가로 이동", "end.x", d.end.x, 'step="1"')
+      + field("세로 이동", "end.y", d.end.y, 'step="1"')
+      + field("회전", "end.rotation", d.end.rotation, 'step="1"')
+      + field("크기", "end.scale", d.end.scale, 'min="0.1" max="8" step="0.1"')
+      + field("재생 시간 (ms)", "duration", d.duration, 'min="50" max="600000" step="50"')
+      + `<label>반복<select data-transform="loop"><option value="loop" ${d.loop==="loop"?"selected":""}>계속 반복</option><option value="pingpong" ${d.loop==="pingpong"?"selected":""}>왕복</option><option value="once" ${d.loop==="once"?"selected":""}>한 번</option></select></label>`;
   }
 
   function mediaInput(kind, index, item) {
-    const label = item.image_ref === "source" ? "source 사용" : item.image_name ? `업로드: ${esc(item.image_name)}` : "미디어 없음";
-    return `<label class="motion-media-field">${label}<input aria-label="${esc(kind)} 이미지" data-media-kind="${kind}" data-index="${index}" type="file" accept="image/png,image/jpeg,image/webp"></label>`;
+    const label = item.image_ref === "source" ? "현재 레이어 사용" : item.image_name ? `업로드: ${esc(item.image_name)}` : "이미지 없음";
+    const names = {state:"전환 이미지", limited:"프레임 이미지", full:"프레임 이미지", part:"부품 이미지", slot:"슬롯 이미지"};
+    return `<label class="motion-media-field">${label}<input aria-label="${names[kind]||"이미지"}" data-media-kind="${kind}" data-index="${index}" type="file" accept="image/png,image/jpeg,image/webp"></label>`;
   }
 
   function rowHtml(kind, item, index) {
-    const del = `<button type="button" data-delete-row="${kind}" data-index="${index}" aria-label="${esc(kind)} ${index+1} 삭제">×</button>`;
-    if (kind === "state") return `<div class="motion-row"><input aria-label="상태 ID" data-row="state" data-index="${index}" data-key="id" value="${esc(item.id)}"><input aria-label="이미지 참조" data-row="state" data-index="${index}" data-key="image_ref" value="${item.image_ref?.startsWith("data:")?"":esc(item.image_ref)}" placeholder="source 또는 asset/key.png">${mediaInput(kind,index,item)}<label class="checkline"><input type="checkbox" data-row="state" data-index="${index}" data-key="default" ${item.default?"checked":""}>기본</label><input aria-label="duration" type="number" min="1" max="600000" data-row="state" data-index="${index}" data-key="duration" value="${esc(item.duration||100)}">${del}</div>`;
+    const names = {state:"이미지", limited:"프레임", full:"프레임", part:"부품", bone:"본", slot:"슬롯"};
+    const del = `<button type="button" data-delete-row="${kind}" data-index="${index}" aria-label="${names[kind]||"항목"} ${index+1} 삭제">×</button>`;
+    if (kind === "state") return `<div class="motion-row motion-row--simple"><strong>이미지 ${index+1}</strong>${mediaInput(kind,index,item)}<label>표시 시간 (ms)<input aria-label="표시 시간" type="number" min="50" max="600000" step="50" data-row="state" data-index="${index}" data-key="duration" value="${esc(item.duration||100)}"></label>${del}</div>`;
     if (kind === "part") return `<div class="motion-row"><input aria-label="부품 ID" data-row="part" data-index="${index}" data-key="id" value="${esc(item.id)}"><input aria-label="부모 ID" data-row="part" data-index="${index}" data-key="parent" value="${esc(item.parent||"")}" placeholder="부모">${mediaInput(kind,index,item)}<input aria-label="pivot x,y" data-row="part" data-index="${index}" data-key="pivot" value="${item.pivot?.x||0},${item.pivot?.y||0}"><input aria-label="socket x,y" data-row="part" data-index="${index}" data-key="socket" value="${item.socket?.x||0},${item.socket?.y||0}"><input aria-label="offset x,y" data-row="part" data-index="${index}" data-key="offset" value="${item.offset?.x||0},${item.offset?.y||0}"><input aria-label="최소 회전" type="number" data-row="part" data-index="${index}" data-key="rotation_min" value="${esc(item.rotation_min||0)}"><input aria-label="최대 회전" type="number" data-row="part" data-index="${index}" data-key="rotation_max" value="${esc(item.rotation_max||0)}">${del}</div>`;
-    if (kind === "limited" || kind === "full") return `<div class="motion-row"><input aria-label="프레임 ID" data-row="${kind}" data-index="${index}" data-key="id" value="${esc(item.id)}"><input aria-label="duration" type="number" min="1" max="600000" data-row="${kind}" data-index="${index}" data-key="duration" value="${esc(item.duration||100)}"><input aria-label="phase" data-row="${kind}" data-index="${index}" data-key="phase" value="${esc(item.phase||"")}" placeholder="phase"><input aria-label="event" data-row="${kind}" data-index="${index}" data-key="event" value="${esc(item.event||"")}" placeholder="event">${mediaInput(kind,index,item)}<button type="button" data-move-row="${kind}" data-index="${index}" data-direction="-1" aria-label="프레임 ${index+1} 위로 이동">↑</button><button type="button" data-move-row="${kind}" data-index="${index}" data-direction="1" aria-label="프레임 ${index+1} 아래로 이동">↓</button>${del}</div>`;
+    if (kind === "limited") return `<div class="motion-row motion-row--simple"><strong>프레임 ${index+1}</strong>${mediaInput(kind,index,item)}<label>표시 시간 (ms)<input aria-label="표시 시간" type="number" min="50" max="600000" step="50" data-row="limited" data-index="${index}" data-key="duration" value="${esc(item.duration||100)}"></label><button type="button" data-move-row="limited" data-index="${index}" data-direction="-1" aria-label="프레임 ${index+1} 위로 이동">↑</button><button type="button" data-move-row="limited" data-index="${index}" data-direction="1" aria-label="프레임 ${index+1} 아래로 이동">↓</button>${del}</div>`;
+    if (kind === "full") return `<div class="motion-row"><input aria-label="프레임 ID" data-row="full" data-index="${index}" data-key="id" value="${esc(item.id)}"><input aria-label="duration" type="number" min="1" max="600000" data-row="full" data-index="${index}" data-key="duration" value="${esc(item.duration||100)}"><input aria-label="phase" data-row="full" data-index="${index}" data-key="phase" value="${esc(item.phase||"")}" placeholder="phase"><input aria-label="event" data-row="full" data-index="${index}" data-key="event" value="${esc(item.event||"")}" placeholder="event">${mediaInput(kind,index,item)}<button type="button" data-move-row="full" data-index="${index}" data-direction="-1" aria-label="프레임 ${index+1} 위로 이동">↑</button><button type="button" data-move-row="full" data-index="${index}" data-direction="1" aria-label="프레임 ${index+1} 아래로 이동">↓</button>${del}</div>`;
     if (kind === "bone") return `<div class="motion-row"><input aria-label="Bone ID" data-row="bone" data-index="${index}" data-key="id" value="${esc(item.id)}"><input aria-label="부모 Bone" data-row="bone" data-index="${index}" data-key="parent" value="${esc(item.parent||"")}"><input aria-label="Bone X" type="number" data-row="bone" data-index="${index}" data-key="x" value="${esc(item.x||0)}"><input aria-label="Bone Y" type="number" data-row="bone" data-index="${index}" data-key="y" value="${esc(item.y||0)}"><input aria-label="Bone rotation" type="number" data-row="bone" data-index="${index}" data-key="rotation" value="${esc(item.rotation||0)}">${del}</div>`;
     return `<div class="motion-row"><input aria-label="Slot ID" data-row="slot" data-index="${index}" data-key="id" value="${esc(item.id)}"><input aria-label="Bone ID" data-row="slot" data-index="${index}" data-key="bone" value="${esc(item.bone)}">${mediaInput(kind,index,item)}${del}</div>`;
   }
 
   function loopField(kind, data) {
-    return `<label>Loop<select data-clip-loop="${kind}">${["loop","once","pingpong"].map(x=>`<option ${x===data.loop?"selected":""}>${x}</option>`).join("")}</select></label>`;
+    return `<label>반복<select data-clip-loop="${kind}"><option value="loop" ${data.loop==="loop"?"selected":""}>계속 반복</option><option value="pingpong" ${data.loop==="pingpong"?"selected":""}>왕복</option><option value="once" ${data.loop==="once"?"selected":""}>한 번</option></select></label>`;
   }
 
   function renderRows() {
@@ -160,7 +239,7 @@
   }
 
   function selectTier(tier, focus=false) {
-    if (!TIERS.includes(tier)) return;
+    if (!UI_TIERS.includes(tier)) tier = tier === "full_frames" ? "limited_frames" : "static";
     const tab=document.querySelector(`[data-motion-tier="${tier}"]`); if (!tab || tab.disabled) return;
     state.tier=tier; state.time=0;
     document.querySelectorAll("[data-motion-tier]").forEach(button=>{const on=button.dataset.motionTier===tier;button.setAttribute("aria-selected",String(on));button.tabIndex=on?0:-1;});
@@ -168,11 +247,132 @@
     if(focus)tab.focus(); invalidateMotionQa(); updateManifest(); render(); saveDraft();
   }
 
+  function startPlayback() {
+    if(window.matchMedia("(prefers-reduced-motion: reduce)").matches){status("감소된 모션 설정으로 자동 재생이 꺼져 있습니다.");return;}
+    playing=true;playOrigin=state.time;playStart=performance.now();requestAnimationFrame(tick);
+  }
+
+  function layerMotionMetrics() {
+    const canvasWidth=Math.max(1,number("motionCanvasW"));
+    const canvasHeight=Math.max(1,number("motionCanvasH"));
+    let displayWidth=sourceImage?.naturalWidth||0,displayHeight=sourceImage?.naturalHeight||0;
+    const bridge=editorBridge();
+    if(state.sourceLayerId&&bridge?.listImageLayers){
+      const layer=bridge.listImageLayers().find(item=>item.id===state.sourceLayerId);
+      if(layer){
+        displayWidth=layer.displayWidth||layer.width||displayWidth;
+        displayHeight=layer.displayHeight||layer.height||displayHeight;
+      }
+    }
+    const shortSide=Math.max(1,Math.min(displayWidth||canvasWidth,displayHeight||canvasHeight));
+    const motionUnit=Math.max(4,Math.min(Math.round(Math.min(canvasWidth,canvasHeight)*.08),Math.round(shortSide*.04)));
+    const entryDistance=Math.round(Math.min(canvasWidth*.45,Math.max(canvasWidth*.18,displayWidth*.35)));
+    return {canvasWidth,canvasHeight,displayWidth,displayHeight,motionUnit,entryDistance};
+  }
+
+  function quickPresetForLayer(name) {
+    const base=QUICK_PRESETS[name];
+    if(!base)return null;
+    const preset=deepMerge(defaults().drafts.transform_tween,base);
+    const {motionUnit,entryDistance}=layerMotionMetrics();
+    if(name==="float"){
+      const amount=Math.max(2,Math.round(motionUnit*.5));preset.start.y=amount;preset.end.y=-amount;
+    }else if(name==="breathe")preset.end.y=-Math.max(1,Math.round(motionUnit*.3));
+    else if(name==="bounce")preset.end.y=-Math.max(4,Math.round(motionUnit*1.5));
+    else if(name==="shake"){
+      const amount=Math.max(2,Math.round(motionUnit*.5));preset.start.x=-amount;preset.end.x=amount;
+    }else if(name==="enter")preset.start.x=-entryDistance;
+    else if(name==="exit")preset.end.x=entryDistance;
+    return preset;
+  }
+
+  function applyQuickPreset(name) {
+    const preset=quickPresetForLayer(name);
+    if(!preset){status("지원하지 않는 빠른 모션입니다.");return false;}
+    if(!currentSourceDescriptor()){status("오른쪽 레이어에서 이미지 하나를 선택하세요.");return false;}
+    state.drafts.transform_tween=preset;
+    state.time=0;playOrigin=0;playing=false;
+    selectTier("transform_tween");
+    transformEditor();render();saveDraft();
+    document.querySelectorAll("[data-motion-preset]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.motionPreset===name)));
+    document.querySelectorAll("[data-motion-direction]").forEach(button=>button.setAttribute("aria-pressed","false"));
+    const metrics=layerMotionMetrics();
+    $("motionAppliedStatus").textContent=`${preset.label} · 레이어 ${Math.round(metrics.displayWidth)}×${Math.round(metrics.displayHeight)} 기준 미리보기`;
+    startPlayback();
+    return true;
+  }
+
+  function movementOption(option,fallback) {
+    return document.querySelector(`[data-movement-option="${option}"][aria-pressed="true"]`)?.dataset.movementValue||fallback;
+  }
+
+  function directionalTravelDistance(vector) {
+    const {canvasWidth,canvasHeight,displayWidth:imageWidth,displayHeight:imageHeight}=layerMotionMetrics();
+    const canvasSpan=Math.hypot(vector[0]*canvasWidth,vector[1]*canvasHeight);
+    const imageSpan=Math.hypot(vector[0]*imageWidth,vector[1]*imageHeight);
+    const distance=Math.min(canvasSpan*.45,Math.max(24,canvasSpan*.28,imageSpan*.55));
+    return Math.max(1,Math.round(distance));
+  }
+
+  function applyDirectionalPreset(direction) {
+    const vector=DIRECTION_VECTORS[direction];
+    if(!vector){status("지원하지 않는 이동 방향입니다.");return false;}
+    if(!currentSourceDescriptor()){status("오른쪽 레이어에서 이미지 하나를 선택하세요.");return false;}
+    const distanceFactor=MOVEMENT_DISTANCE_FACTORS[movementOption("distance","normal")]||1;
+    const durationFactor=MOVEMENT_DURATION_FACTORS[movementOption("speed","normal")]||1;
+    const movementMode=movementOption("mode","once");
+    const distance=Math.round(directionalTravelDistance(vector)*distanceFactor);
+    const dx=Math.round(vector[0]*distance),dy=Math.round(vector[1]*distance);
+    state.drafts.transform_tween={
+      start:{x:0,y:0,rotation:0,scale:1,opacity:1},
+      end:{x:dx,y:dy,rotation:0,scale:1,opacity:1},
+      duration:Math.round(900*durationFactor),easing:"ease_in_out",loop:movementMode,pixel_snap:true,
+    };
+    state.time=0;playOrigin=0;playing=false;
+    selectTier("transform_tween");
+    transformEditor();render();saveDraft();
+    document.querySelectorAll("[data-motion-preset]").forEach(button=>button.setAttribute("aria-pressed","false"));
+    document.querySelectorAll("[data-motion-direction]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.motionDirection===direction)));
+    const modeLabel=movementMode==="pingpong"?"왕복":"한 번";
+    $("motionAppliedStatus").textContent=`${direction} 방향 ${distance}px · ${state.drafts.transform_tween.duration}ms · ${modeLabel} 이동`;
+    startPlayback();
+    return true;
+  }
+
+  function applyMotionToLayer() {
+    const bridge=editorBridge();
+    if(!state.sourceLayerId||!bridge?.applyMotionToLayer){status("적용할 이미지 레이어를 선택하세요.");return false;}
+    const manifest=buildManifest();
+    if(manifest.asset)delete manifest.asset.source;
+    manifest.source_layer_id=state.sourceLayerId;
+    if(!bridge.applyMotionToLayer(state.sourceLayerId,manifest)){status("모션을 레이어에 적용하지 못했습니다.");return false;}
+    $("motionAppliedStatus").textContent=`적용됨 · ${state.imageName||"선택 레이어"}`;
+    status("현재 모션을 선택 레이어에 적용했습니다.");
+    saveDraft();
+    return true;
+  }
+
+  function clearMotionFromLayer() {
+    const bridge=editorBridge();
+    if(!state.sourceLayerId||!bridge?.clearMotionFromLayer){status("취소할 이미지 레이어를 선택하세요.");return false;}
+    if(!bridge.clearMotionFromLayer(state.sourceLayerId)){status("이 레이어에 적용된 모션이 없습니다.");return false;}
+    playing=false;state.time=0;editorBridge()?.restoreImageLayerPreview?.(state.sourceLayerId);render();
+    $("motionAppliedStatus").textContent="적용 취소됨 · 레이어는 원래 상태입니다.";
+    status("선택 레이어의 모션 적용을 취소했습니다.");
+    return true;
+  }
+
+  function currentSourceDescriptor() {
+    if (state.sourceLayerId && sourceImage?.src) return {name:state.imageName||"source",uri:sourceImage.src};
+    return state.sourceDataUrl ? {name:state.imageName||"source",uri:state.sourceDataUrl} : null;
+  }
+
   function buildManifest() {
     const overlays=[];
     if(checked("motionVfxEnabled")) overlays.push({type:"vfx",enabled:true,trigger:$("motionVfxTrigger").value,anchor:$("motionVfxAnchor").value,offset:{x:number("motionVfxX"),y:number("motionVfxY")},duration:number("motionVfxDuration"),blend:$("motionVfxBlend").value,seed:number("motionVfxSeed")});
     const asset={id:$("motionAssetId").value,canvas:{width:number("motionCanvasW"),height:number("motionCanvasH")},pivot:{x:number("motionPivotX"),y:number("motionPivotY")},ground:{x:number("motionGroundX"),y:number("motionGroundY")},facing:$("motionFacing").value,sampling:$("motionSampling").value};
-    if(state.sourceDataUrl)asset.source={name:state.imageName||"source",uri:state.sourceDataUrl};
+    const source=currentSourceDescriptor();
+    if(source)asset.source=source;
     return Core.normalizeManifest({asset,primary:{strategy:state.tier,data:state.drafts[state.tier]},overlays,manual_visual_approval:checked("motionManualApproval")});
   }
 
@@ -207,9 +407,9 @@
 
   function renderTimeline(manifest,duration) {
     const data=manifest.primary.data||{},items=manifest.primary.strategy==="state_swap"?data.states:(["limited_frames","full_frames"].includes(manifest.primary.strategy)?data.frames:[]);
-    if(!Array.isArray(items)||!items.length){$("motionTimeline").innerHTML=`<span class="motion-timeline-segment" style="width:100%">${esc(manifest.primary.strategy)} · ${duration}ms</span>`;return;}
+    if(!Array.isArray(items)||!items.length){$("motionTimeline").innerHTML=`<span class="motion-timeline-segment" style="width:100%">${duration}ms</span>`;return;}
     const total=items.reduce((n,item)=>n+(Number(item.duration)||0),0)||1;
-    $("motionTimeline").innerHTML=items.map(item=>`<span class="motion-timeline-segment" style="width:${Math.max(4,(item.duration/total)*100)}%">${esc(item.id)}<small>${esc(item.event||item.phase||"")}</small></span>`).join("");
+    $("motionTimeline").innerHTML=items.map((item,index)=>`<span class="motion-timeline-segment" style="width:${Math.max(4,(item.duration/total)*100)}%">${manifest.primary.strategy==="state_swap"?"이미지":"프레임"} ${index+1}</span>`).join("");
   }
 
   function drawMedia(ctx,img,x,y,zoom,pivot,rotation=0) {
@@ -225,22 +425,24 @@
 
   function render() {
     let manifest;try{manifest=buildManifest();}catch(_){return;}
-    const canvas=$("motionPreviewCanvas"),ctx=canvas.getContext("2d"),scene=Core.samplePreview(manifest,state.time,{vfx:checked("motionVfxPreview")});
-    const zoom=Number($("motionZoom").value),cx=canvas.width/2,cy=canvas.height/2,duration=currentDuration(manifest);
+    const scene=Core.samplePreview(manifest,state.time,{vfx:false});
+    const duration=currentDuration(manifest);
     $("motionScrubber").max=String(duration);if(state.time>duration)state.time=duration;
-    ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=manifest.asset.sampling==="linear";
-    const selectedRef=scene.frame?.image_ref||scene.state?.image_ref||"source",img=imageForRef(selectedRef);
-    if(manifest.primary.strategy==="rigid_parts")drawRigidParts(ctx,scene,cx,cy,zoom);
-    else if(manifest.primary.strategy==="rig_paper_doll")scene.slots.forEach(slot=>{const b=slot.boneTransform||{};drawMedia(ctx,imageForRef(slot.image_ref),cx+(b.x||0)*zoom,cy+(b.y||0)*zoom,zoom,{x:0,y:0},b.rotation||0);});
-    else {
-      ctx.save();ctx.translate(cx+scene.transform.x*zoom,cy+scene.transform.y*zoom);ctx.rotate(scene.transform.rotation*Math.PI/180);ctx.scale((manifest.asset.facing==="left"?-1:1)*scene.transform.scale,scene.transform.scale);ctx.globalAlpha=scene.transform.opacity;
-      if(img&&img.complete&&img.naturalWidth)ctx.drawImage(img,-manifest.asset.pivot.x*zoom,-manifest.asset.pivot.y*zoom,img.naturalWidth*zoom,img.naturalHeight*zoom);
-      else{ctx.fillStyle="#5f7fb8";ctx.fillRect(-32,-32,64,64);ctx.fillStyle="#cfe1ff";ctx.fillText("MEDIA REQUIRED",-48,4);}ctx.restore();
+    const selectedRef=scene.frame?.image_ref||scene.state?.image_ref||"source";
+    const imageUri=selectedRef==="source"?"":(imageForRef(selectedRef)?.src||"");
+    if (state.sourceLayerId) {
+      editorBridge()?.previewImageLayer?.(state.sourceLayerId, {
+        x: scene.transform?.x || 0,
+        y: scene.transform?.y || 0,
+        rotation: scene.transform?.rotation || 0,
+        scale: scene.transform?.scale ?? 1,
+        opacity: scene.transform?.opacity ?? 1,
+        imageUri,
+      });
     }
-    ctx.strokeStyle="#ff5b82";ctx.beginPath();ctx.moveTo(cx-7,cy);ctx.lineTo(cx+7,cy);ctx.moveTo(cx,cy-7);ctx.lineTo(cx,cy+7);ctx.stroke();
-    const gx=cx+(manifest.asset.ground.x-manifest.asset.pivot.x)*zoom,gy=cy+(manifest.asset.ground.y-manifest.asset.pivot.y)*zoom;ctx.strokeStyle="#62e09b";ctx.beginPath();ctx.moveTo(gx-12,gy);ctx.lineTo(gx+12,gy);ctx.stroke();
-    for(const particle of scene.vfx){ctx.save();ctx.globalAlpha=Math.max(0,particle.alpha);ctx.globalCompositeOperation={add:"lighter",screen:"screen",multiply:"multiply",normal:"source-over"}[particle.blend]||"source-over";ctx.fillStyle="#78d9ff";ctx.fillRect(cx+particle.x,cy+particle.y,3,3);ctx.restore();}
-    const label=scene.frame?.id||scene.state?.id||scene.strategy;$("motionPreviewLabel").textContent=String(label).toUpperCase();$("motionTime").textContent=`${Math.round(state.time)} / ${duration} ms`;$("motionScrubber").value=String(Math.min(duration,state.time));renderTimeline(manifest,duration);
+    $("motionTime").textContent=`${Math.round(state.time)} / ${duration} ms`;
+    $("motionScrubber").value=String(Math.min(duration,state.time));
+    renderTimeline(manifest,duration);
   }
 
   function tick(now){if(!playing)return;let manifest;try{manifest=buildManifest();}catch(_){playing=false;return;}const duration=currentDuration(manifest),loop=manifest.primary.data?.loop||"loop";state.time=playOrigin+(now-playStart);if(state.time>=duration){if(loop==="once"){state.time=duration;playing=false;render();return;}state.time%=duration;playOrigin=state.time;playStart=now;}render();requestAnimationFrame(tick);}
@@ -257,29 +459,62 @@
 
   function applyProjectControls(clean){const c=clean.canonical,v=clean.vfx;$("motionAssetId").value=c.asset_id;$("motionCanvasW").value=c.canvas_width;$("motionCanvasH").value=c.canvas_height;$("motionPivotX").value=c.pivot_x;$("motionPivotY").value=c.pivot_y;$("motionGroundX").value=c.ground_x;$("motionGroundY").value=c.ground_y;$("motionFacing").value=c.facing;$("motionSampling").value=c.sampling;$("motionVfxEnabled").checked=v.enabled;$("motionVfxTrigger").value=v.trigger;$("motionVfxAnchor").value=v.anchor;$("motionVfxX").value=v.offset_x;$("motionVfxY").value=v.offset_y;$("motionVfxDuration").value=v.duration;$("motionVfxBlend").value=v.blend;$("motionVfxSeed").value=v.seed;$("motionManualApproval").checked=clean.state.manualVisualApproval===true;}
 
-  function hydrateProjectState(raw){const clean=validateProjectState(raw);playing=false;imageCache.clear();if(!clean){state=defaults();sourceImage=null;localStorage.removeItem(STORAGE_KEY);refresh();selectTier("static");status("Motion Studio가 기본 상태로 초기화되었습니다.");return;}state=clean.state;applyProjectControls(clean);sourceImage=imageForRef("source");refresh();selectTier(state.tier);saveDraft();status("프로젝트 모션·미디어 복원 완료");}
+  function hydrateProjectState(raw){const clean=validateProjectState(raw);playing=false;imageCache.clear();if(!clean){state=defaults();sourceImage=null;localStorage.removeItem(STORAGE_KEY);refresh();selectTier("static");status("Motion Studio가 기본 상태로 초기화되었습니다.");return;}state=clean.state;applyProjectControls(clean);sourceImage=state.sourceLayerId?null:imageForRef("source");refresh();refreshEditorLayers({syncLinked:true});selectTier(state.tier);saveDraft();status("프로젝트 모션·레이어 연결 복원 완료");}
   function snapshotRuntimeState(){return{project:serializeProjectState(),sourceImage,playing,playOrigin,playStart};}
   function restoreRuntimeState(snapshot){hydrateProjectState(snapshot?.project||null);sourceImage=snapshot?.sourceImage||sourceImage;playing=false;playOrigin=snapshot?.playOrigin||0;playStart=snapshot?.playStart||0;render();}
 
-  function saveDraft(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(serializeProjectState()));}catch(_){status("자동 저장 공간을 사용할 수 없습니다.");}}
-  function loadDraft(){try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");if(saved){const clean=validateProjectState(saved);state=clean.state;applyProjectControls(clean);sourceImage=imageForRef("source");}}catch(_){localStorage.removeItem(STORAGE_KEY);state=defaults();status("손상된 자동 저장 초안을 무시했습니다.");}}
+  function saveDraft(){
+    try {
+      const draft=serializeProjectState();
+      draft.state.sourceDataUrl="";
+      draft.state.imageName="";
+      draft.state.sourceLayerId="";
+      localStorage.setItem(STORAGE_KEY,JSON.stringify(draft));
+    } catch(_){status("자동 저장 공간을 사용할 수 없습니다.");}
+  }
+  function loadDraft(){
+    try {
+      const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
+      if(saved){
+        const clean=validateProjectState(saved);
+        state=clean.state;
+        state.sourceDataUrl="";
+        state.imageName="";
+        state.sourceLayerId="";
+        applyProjectControls(clean);
+        sourceImage=null;
+        saveDraft();
+      }
+    }catch(_){localStorage.removeItem(STORAGE_KEY);state=defaults();status("손상된 자동 저장 초안을 무시했습니다.");}
+  }
   function refresh(){transformEditor();renderRows();syncRig();updateManifest();render();}
 
-  function setupAccessibility(){document.querySelectorAll("[data-motion-tier]").forEach(button=>{const tier=button.dataset.motionTier,panel=document.querySelector(`[data-motion-editor="${tier}"]`),tabId=`motion-tab-${tier}`,panelId=`motion-panel-${tier}`;button.id=tabId;button.setAttribute("aria-controls",panelId);panel.id=panelId;panel.setAttribute("role","tabpanel");panel.setAttribute("aria-labelledby",tabId);});$("motionPreviewLabel").setAttribute("aria-live","polite");$("motionTime").setAttribute("aria-live","polite");}
+  function setupAccessibility(){document.querySelectorAll("[data-motion-tier]").forEach(button=>{const tier=button.dataset.motionTier,panel=document.querySelector(`[data-motion-editor="${tier}"]`),tabId=`motion-tab-${tier}`,panelId=`motion-panel-${tier}`;button.id=tabId;button.setAttribute("aria-controls",panelId);panel.id=panelId;panel.setAttribute("role","tabpanel");panel.setAttribute("aria-labelledby",tabId);});$("motionTime").setAttribute("aria-live","polite");}
 
-  window.AssetStudioMotion={serializeProjectState,validateProjectState,hydrateProjectState,snapshotRuntimeState,restoreRuntimeState};
+  window.AssetStudioMotion={serializeProjectState,validateProjectState,hydrateProjectState,snapshotRuntimeState,restoreRuntimeState,refreshEditorLayers,useEditorLayer};
   setupAccessibility();loadDraft();refresh();route();selectTier(state.tier);
 
   document.querySelectorAll("#studioWorkspaceSwitch button").forEach(button=>button.addEventListener("click",()=>setWorkspace(button.dataset.studioWorkspace)));
+  editorBridge()?.subscribeLayers?.(()=>refreshEditorLayers({ useSelected: document.querySelector(".app")?.classList.contains("motion-mode"), syncLinked: true }));
   const drop=$("motionSourceDropzone"),input=$("motionSourceInput");drop.addEventListener("click",()=>input.click());drop.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();input.click();}});input.addEventListener("change",()=>useImage(input.files[0]));drop.addEventListener("dragover",event=>{event.preventDefault();drop.classList.add("is-dragging")});drop.addEventListener("dragleave",()=>drop.classList.remove("is-dragging"));drop.addEventListener("drop",event=>{event.preventDefault();drop.classList.remove("is-dragging");useImage(event.dataTransfer.files[0]);});
   $("motionRouterForm").addEventListener("input",route);$("motionApplyRecommendation").addEventListener("click",()=>{if(lastRecommendation){if(lastRecommendation.overlays.includes("vfx"))$("motionVfxEnabled").checked=true;selectTier(lastRecommendation.primary,true);}});
-  $("motionTierTabs").addEventListener("click",event=>{const button=event.target.closest("[data-motion-tier]");if(button)selectTier(button.dataset.motionTier);});$("motionTierTabs").addEventListener("keydown",event=>{if(!["ArrowRight","ArrowLeft","Home","End"].includes(event.key))return;event.preventDefault();const enabled=[...document.querySelectorAll("[data-motion-tier]:not(:disabled)")],at=enabled.indexOf(document.activeElement);let next=event.key==="Home"?0:event.key==="End"?enabled.length-1:(at+(event.key==="ArrowRight"?1:-1)+enabled.length)%enabled.length;selectTier(enabled[next].dataset.motionTier,true);});
+  $("motionTierTabs").addEventListener("click",event=>{const button=event.target.closest("[data-motion-tier]");if(button)selectTier(button.dataset.motionTier);});$("motionTierTabs").addEventListener("keydown",event=>{if(!["ArrowRight","ArrowLeft","Home","End"].includes(event.key))return;event.preventDefault();const enabled=[...document.querySelectorAll("[data-motion-tier]:not(:disabled)")].filter(button=>!button.hidden),at=enabled.indexOf(document.activeElement);let next=event.key==="Home"?0:event.key==="End"?enabled.length-1:(at+(event.key==="ArrowRight"?1:-1)+enabled.length)%enabled.length;selectTier(enabled[next].dataset.motionTier,true);});
   $("motionEditors").addEventListener("input",event=>{const t=event.target;if(t.dataset.transform){const path=t.dataset.transform.split("."),value=t.type==="checkbox"?t.checked:t.type==="number"?Number(t.value):t.value;if(path.length===2)state.drafts.transform_tween[path[0]][path[1]]=value;else state.drafts.transform_tween[path[0]]=value;}if(t.dataset.clipLoop){const tier={limited:"limited_frames",full:"full_frames",rigid:"rigid_parts"}[t.dataset.clipLoop];state.drafts[tier].loop=t.value;}if(t.dataset.row){const map={state:["state_swap","states"],part:["rigid_parts","parts"],limited:["limited_frames","frames"],full:["full_frames","frames"],bone:["rig_paper_doll","bones"],slot:["rig_paper_doll","slots"]},spec=map[t.dataset.row],item=state.drafts[spec[0]][spec[1]][Number(t.dataset.index)],key=t.dataset.key;if(["pivot","socket","offset"].includes(key)){const[x,y]=t.value.split(",").map(Number);item[key]={x,y};}else item[key]=t.type==="checkbox"?t.checked:t.type==="number"?Number(t.value):t.value||null;}invalidateMotionQa();updateManifest();render();saveDraft();});
   $("motionEditors").addEventListener("change",event=>{const t=event.target;if(t.dataset.mediaKind&&t.files?.[0])bindRowImage(t.files[0],t.dataset.mediaKind,Number(t.dataset.index));});
   $("motionEditors").addEventListener("click",event=>{const add=event.target.dataset.addRow,del=event.target.dataset.deleteRow,move=event.target.dataset.moveRow,map={state:["state_swap","states",{id:"state",image_ref:"source",image_name:"source",default:false,duration:100},Core.LIMITS.states],part:["rigid_parts","parts",{id:"part",parent:null,image_ref:"source",image_name:"source",pivot:{x:0,y:0},socket:{x:0,y:0},offset:{x:0,y:0},rotation_min:0,rotation_max:0},4],limited:["limited_frames","frames",{id:"pose",image_ref:"source",image_name:"source",duration:100,phase:"",event:""},4],full:["full_frames","frames",{id:"frame",image_ref:"source",image_name:"source",duration:100,phase:"",event:""},Core.LIMITS.frames],bone:["rig_paper_doll","bones",{id:"bone",parent:null,x:0,y:0,rotation:0},Core.LIMITS.bones],slot:["rig_paper_doll","slots",{id:"slot",bone:"root",image_ref:"source",image_name:"source"},Core.LIMITS.slots]};const kind=add||del||move;if(!kind)return;const spec=map[kind],arr=state.drafts[spec[0]][spec[1]];if(add&&arr.length<spec[3])arr.push(clone(spec[2]));if(del)arr.splice(Number(event.target.dataset.index),1);if(move){const from=Number(event.target.dataset.index),to=from+Number(event.target.dataset.direction);if(to>=0&&to<arr.length)[arr[from],arr[to]]=[arr[to],arr[from]];}invalidateMotionQa();renderRows();updateManifest();render();saveDraft();});
   ["motionRigSkins","motionRigClips","motionRigEquipment","motionRigRest","motionRigAdapter","motionRigApproval"].forEach(id=>$(id).addEventListener("change",()=>{const d=state.drafts.rig_paper_doll;d.gate={skins:number("motionRigSkins"),clips:number("motionRigClips"),equipment:checked("motionRigEquipment"),rest_pose:checked("motionRigRest"),adapter:checked("motionRigAdapter")};d.approved=checked("motionRigApproval");invalidateMotionQa();syncRig();saveDraft();}));
-  $("motionPlay").addEventListener("click",()=>{if(window.matchMedia("(prefers-reduced-motion: reduce)").matches){status("감소된 모션 설정으로 자동 재생이 꺼져 있습니다.");return;}if(!playing){playing=true;playOrigin=state.time;playStart=performance.now();requestAnimationFrame(tick);}});$("motionPause").addEventListener("click",()=>{playing=false;saveDraft();});$("motionRestart").addEventListener("click",()=>{state.time=0;playOrigin=0;playStart=performance.now();render();});$("motionScrubber").addEventListener("input",event=>{state.time=Number(event.target.value);playOrigin=state.time;playStart=performance.now();render();});
-  $("motionPreviewBg").addEventListener("change",event=>{$("motionPreviewStage").className=`motion-preview-stage ${event.target.value}`;});["motionZoom","motionVfxPreview"].forEach(id=>$(id).addEventListener("change",render));
-  document.querySelectorAll("#motionStudioWorkspace input,#motionStudioWorkspace select").forEach(el=>el.addEventListener("change",()=>{if(!["motionZoom","motionPreviewBg","motionVfxPreview","motionScrubber","motionSourceInput","motionImportInput"].includes(el.id)){if(el.id==="motionManualApproval")state.manualVisualApproval=el.checked;invalidateMotionQa();}updateManifest();saveDraft();}));
+  $("motionQuickPresets").addEventListener("click",event=>{const button=event.target.closest("[data-motion-preset]");if(button)applyQuickPreset(button.dataset.motionPreset);});
+  $("motionDirectionPresets").addEventListener("click",event=>{const button=event.target.closest("[data-motion-direction]");if(button)applyDirectionalPreset(button.dataset.motionDirection);});
+  $("motionMovementOptions").addEventListener("click",event=>{
+    const button=event.target.closest("[data-movement-option]");if(!button)return;
+    const option=button.dataset.movementOption;
+    document.querySelectorAll(`[data-movement-option="${option}"]`).forEach(item=>item.setAttribute("aria-pressed",String(item===button)));
+    const selectedDirection=document.querySelector('[data-motion-direction][aria-pressed="true"]');
+    if(selectedDirection?.dataset.motionDirection)applyDirectionalPreset(selectedDirection.dataset.motionDirection);
+    else status("이동 방향을 선택하면 거리·속도·방식을 바로 미리봅니다.");
+  });
+  $("motionApplyToLayer").addEventListener("click",applyMotionToLayer);$("motionCancelApplied").addEventListener("click",clearMotionFromLayer);
+  $("motionPlay").addEventListener("click",()=>{if(!playing)startPlayback();});$("motionPause").addEventListener("click",()=>{playing=false;saveDraft();});$("motionRestart").addEventListener("click",()=>{playing=false;state.time=0;playOrigin=0;playStart=performance.now();editorBridge()?.restoreImageLayerPreview?.(state.sourceLayerId);render();});$("motionScrubber").addEventListener("input",event=>{state.time=Number(event.target.value);playOrigin=state.time;playStart=performance.now();render();});
+  document.querySelectorAll("#motionStudioWorkspace input,#motionStudioWorkspace select").forEach(el=>el.addEventListener("change",()=>{if(!["motionVfxPreview","motionScrubber","motionSourceInput","motionImportInput"].includes(el.id)){if(el.id==="motionManualApproval")state.manualVisualApproval=el.checked;invalidateMotionQa();}updateManifest();saveDraft();}));
   $("motionRunQa").addEventListener("click",runQA);$("motionExport").addEventListener("click",exportJson);$("motionImport").addEventListener("click",()=>$("motionImportInput").click());$("motionImportInput").addEventListener("change",event=>importJson(event.target.files[0]));$("motionReset").addEventListener("click",()=>{playing=false;state=defaults();sourceImage=null;imageCache.clear();localStorage.removeItem(STORAGE_KEY);$("motionManualApproval").checked=false;refresh();selectTier("static");status("Motion Studio 상태만 초기화했습니다.");});
 })();

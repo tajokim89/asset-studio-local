@@ -131,7 +131,7 @@ class OutputProfileContractTests(unittest.TestCase):
         actions = {action["id"]: action for action in self.generic["actions"]}
         self.assertEqual({
             "idle", "walk", "run", "attack", "ranged_attack", "cast",
-            "block", "dodge", "jump", "hurt", "death", "interact", "pickup",
+            "block", "dodge", "jump", "hurt", "death", "interact", "pickup", "static",
         }, set(actions))
         self.assertEqual((4, 6, True), (actions["idle"]["frame_count"], actions["idle"]["fps"], actions["idle"]["loop"]))
         self.assertEqual((4, 10, True), (actions["walk"]["frame_count"], actions["walk"]["fps"], actions["walk"]["loop"]))

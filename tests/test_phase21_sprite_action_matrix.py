@@ -28,7 +28,7 @@ def test_phase21_locks_source_direction_generation_to_left_side_plus_flips():
 def test_phase21_action_matrix_defines_idle_walk_attack_hurt_death_contracts():
     assert list(SPRITE_ACTION_MATRIX) == [
         "idle", "walk", "run", "attack", "ranged_attack", "cast", "block",
-        "dodge", "jump", "hurt", "death", "interact", "pickup",
+        "dodge", "jump", "hurt", "death", "interact", "pickup", "static",
     ]
     assert SPRITE_ACTION_MATRIX["idle"]["frames"] == 4
     assert SPRITE_ACTION_MATRIX["walk"]["frames"] == 4
