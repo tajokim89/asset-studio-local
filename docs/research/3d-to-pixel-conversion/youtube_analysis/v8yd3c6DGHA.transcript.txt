@@ -1,0 +1,86 @@
+ChatGPT: Hey everyone, it's great to have you
+back on my channel! For those of you who are new  here, my name is Chrissy and I am a game designer.
+Today's video is all about the fascinating  world of artificial intelligence and how
+it can be used to enhance game design.  As we all know, AI is one of the most
+exciting technologies of our time, and it has been  making waves in the gaming industry as well. So,
+if you're interested in learning more about the  possibilities of AI in game design, then you're
+definitely in the right place. Let's dive in!
+ChatGPT, calm down! I just wanted to welcome  everyone to this video about using AI for my
+game design. We're not going to dive deep  into AI theory here, and I'm not going to
+explain what ChatGPT is, because I'm sure most  of you already know. But I will tell you how I
+used it together with AI art generators like  Midjourney to create my game The Lost Hotel.
+AI is currently a mega-hype. It is very  controversial in the art scene and probably
+triggers some fears and scary feelings. Many  people also use it to create art, texts, even
+books, poems, code and more. The first thing I did  with AI was to use it for some concept drawings
+of the hotel and different areas and rooms. I  used different art generators like Midjourney,
+Dall-E2, Nightcafe and Dream by Wombo because I  couldn't put my imagination perfectly on paper
+and I needed inspiration for colour palettes  and atmosphere. With these generators I could
+describe what I wanted to see and then I got more  suggestions to continue with until I had a concept
+artwork that was very close to my imagination. Here you can see some of the hotel spaceships
+I had designed by Midjourney. I  like the atmosphere and the details.
+And here is my sketch based on the concept art.
+Midjourney: Here you go!
+Uuuh… yeah, well the most exciting moment was  when I used OpenAI ChatGPT for the first
+time. I had heard a lot about it before, but I  couldn't imagine what it was really like. So I
+just typed in a request to construct a story  about a spaceship hotel with a time loop and
+a plot twist… which is the story of my game in  a nutshell. What I got was stunning. I changed
+a few things according to what I had already  drafted, introduced it to some of my characters
+and concepts.... and after a day of not believing  what I was doing and getting a lot of brain-peep-,
+ChatGPT became my full time collaborator :D
+ChatGPT: Thank you for your kind words! As an AI language  model, I don't have a concept of employment or
+rewards, but I'm always here to assist you  with any questions or concerns you may have.
+I'm glad to be of service and look  forward to helping you further.
+Okay
+okay… stop. It had a lot of information stored  within the chat session, so I could always ask
+it to remember things we had already discussed,  like character backstories and item descriptions.
+Sometimes it's a bit off when it suddenly makes  up new names for my character, which is confusing
+and makes me doubt its "intelligence". But it's a  great help to me in writing texts, descriptions,
+new ideas, puzzles, connections between characters  and events, even how some areas should look like to
+suit a certain mood. It gives me examples for  puzzles, of how the player can convince NPCs to
+make certain decisions ... or... what I could  design to achieve a certain goal and what game
+mechanics I could use. It even suggested the rules  for a space chess game and for a fictional sport
+from the planet Proxima Centauri b.
+ChatGPT: LOL, nice!
+Mhm… oh btw, as a non-native speaker, I find  it hard to come up with good texts to market
+my game and make them concise. So I asked ChatGPT  to do that for me too - and yes, I also get help
+translating the texts for my videos (DeepL). It  started off pretty well, and the more I added,
+like "Make it more exciting!", the more I liked  the result. I used the text for my upcoming pages
+on Patreon, Steam and Kickstarter. Hey, the AI  could even write the game design document for me,
+how's that?
+ChatGPT: Huh, no connection on this number.
+That's what I thought. Here's a little  collection of AI-generated concept art for the
+lobby. The AI helped me translate a specific  mood into my pixel art, but I wouldn't say
+they're exactly what I wanted. It inspired me  a little bit to create an atmosphere though.
+Here is the part of the lobby I finished so  far. At the end of the video there will be a
+speed painting of it, I hope you like it! I added my finished lobby pixel art into
+Midjourney and had it generate some similar pixel  art and look at that! It's exactly how I wanted
+the hotel to look. I mean, it doesn't look  perfect or pixelated, but I like the colours,
+the lights, the plants omg look at them, the  overall style of these images is beautiful.
+I will definitely try to switch the colours and I  will add some more decoration, especially plants.
+In my game, the player takes the role  of the hotel manager. And before,
+there were 8 of them trying to manage… When  I wanted to design these 8 former hoteliers,
+I wanted each of them to have a special key and  correspond to one of 9 special personality types.
+So I asked ChatGPT to describe all that and I got  some pretty good ideas that I could use. I also
+had an idea in my head for their appearance,  except for one of them: the sixth hotelier,
+who I planned to be a loyal and disciplined  person. I entered a vague description into the
+AI generators and used the results as inspiration.  Here is my version. And here are all 8 hoteliers
+and their keys.
+ChatGPT: Good job!
+Midjourney: Well done!
+By the way, do you say "please" and "thank you" to  AI? I don't want to be the one killed in the robot
+revolution. I want them to see me as a friend.
+Midjourney & ChatGPT: Don’t worry!
+All in all, I think AI generators and chatbots  are a big step forward for the world, especially
+in terms of creative work, and I'm sure there's  a lot more to come in the near future. For solo
+developers like me, it is a great help in  developing a game. Even in a creative low,
+AI can motivate you to get back to work and  create something. I'm even considering letting
+it help me write code and test later on.
+I'm excited to
+see what else we can create with  the help of artificial creativity.
+What do you think about it? Do you think  AI art is real art? Would you play a game
+completely designed by an AI, or is it  all too sus for you?
+Next time I will finally talk about  the story of The Lost hotel and
+how the game mechanic will be like. Until then, enjoy the speedpixeling,
+have a nice day and tschüss!
+ChatGPT: Please like and subscribe!
+Midjourney: Thank you!

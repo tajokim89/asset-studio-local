@@ -1,0 +1,315 @@
+{
+  "operation": "move",
+  "scope": "documents only; videos and images retained at original source directories",
+  "created_at": "2026-08-01T10:24:32.568256+09:00",
+  "count": 34,
+  "bytes": 6230676,
+  "files": [
+    {
+      "source": "/Users/tajokim/youtube_analysis/Me8-dKhQ0UU.api.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/Me8-dKhQ0UU.api.txt",
+      "bytes": 8449,
+      "mtime": "2026-07-30T09:14:41.853901+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "9131bc3b15983c4b63288f7bcbc2c8eba3d208f0bae1d94555ec8d003c15d9e9"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/Me8-dKhQ0UU.info.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/Me8-dKhQ0UU.info.json",
+      "bytes": 547069,
+      "mtime": "2026-07-30T09:15:51.401919+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "a72d0e4964f7bae137a63c4cd53c70c65c363b518b8100178854ec8738cbd358"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/P5QqZ1hjYKQ.info.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/P5QqZ1hjYKQ.info.json",
+      "bytes": 601351,
+      "mtime": "2026-07-30T09:15:49.086112+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "1563dc06af8bc53364a0534cd25079b670377f453505aa939490f704e3269cf2"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/P5QqZ1hjYKQ.ko-orig.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/P5QqZ1hjYKQ.ko-orig.vtt",
+      "bytes": 109802,
+      "mtime": "2026-07-30T09:14:21.886781+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "c48bcc39655f896e2c07ce349bd0e5b1a810639ec925fdb4cef3bdb14393879a"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/P5QqZ1hjYKQ.ko.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/P5QqZ1hjYKQ.ko.vtt",
+      "bytes": 109802,
+      "mtime": "2026-07-30T09:14:21.993978+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "c48bcc39655f896e2c07ce349bd0e5b1a810639ec925fdb4cef3bdb14393879a"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/P5QqZ1hjYKQ.transcript.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/P5QqZ1hjYKQ.transcript.txt",
+      "bytes": 15417,
+      "mtime": "2026-07-30T09:14:51.514915+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "124e8c6fc21640c8cfba842557cd547a56b1cf4a905960865092b110d4f5ab3e"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/gPXuuSQTBx4.api.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/gPXuuSQTBx4.api.txt",
+      "bytes": 6099,
+      "mtime": "2026-07-30T09:14:40.437514+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "15f5a8f8063debe7704631d0d8599d8756f139325a21f0bdf3c3d6d24ae0914f"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/gPXuuSQTBx4.info.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/gPXuuSQTBx4.info.json",
+      "bytes": 539454,
+      "mtime": "2026-07-30T09:15:50.294389+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "1be83a61dec6560550c71cc4b66e2daf9fe33f304854daabda9254744b66bde2"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/v8yd3c6DGHA.en-en.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/v8yd3c6DGHA.en-en.vtt",
+      "bytes": 10642,
+      "mtime": "2026-07-30T09:14:08.733142+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "9a7a9cb7f02af70fc8538b6bec1c43f7dbefe092686d28c298ae72fdcaa04b50"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/v8yd3c6DGHA.en-orig.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/v8yd3c6DGHA.en-orig.vtt",
+      "bytes": 64713,
+      "mtime": "2026-07-30T09:14:08.853541+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "93767a95acd2304c285f95ce065e9284ba93627d0bda458f21da2f31716faee1"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/v8yd3c6DGHA.en.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/v8yd3c6DGHA.en.vtt",
+      "bytes": 10642,
+      "mtime": "2026-07-30T09:14:08.652296+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "9a7a9cb7f02af70fc8538b6bec1c43f7dbefe092686d28c298ae72fdcaa04b50"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/v8yd3c6DGHA.info.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/v8yd3c6DGHA.info.json",
+      "bytes": 964028,
+      "mtime": "2026-07-30T09:14:08.865245+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "1f00f4f065aefacc00fc3d8dc2596600b858281f37a5a50379d9eee2deba9d96"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/v8yd3c6DGHA.metadata.summary.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/v8yd3c6DGHA.metadata.summary.json",
+      "bytes": 1544,
+      "mtime": "2026-07-30T09:14:21.851170+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "c956fd4e11b084a1e00e7c3fada6019a495df39f7a49ddaee66d48221f41f931"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/v8yd3c6DGHA.transcript.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/v8yd3c6DGHA.transcript.txt",
+      "bytes": 6734,
+      "mtime": "2026-07-30T09:14:21.848923+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "278c633c880a13be61ca51bc01f0067508ca785d47da8e45015e351d007df225"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/zEfBPmPDUVc.en-orig.json3",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/zEfBPmPDUVc.en-orig.json3",
+      "bytes": 114237,
+      "mtime": "2026-07-30T09:15:54.958040+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "75e10cf386bb41721702573db1a3330fcb1123087653230477c6c98621a7a93e"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/zEfBPmPDUVc.en-orig.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/zEfBPmPDUVc.en-orig.vtt",
+      "bytes": 54087,
+      "mtime": "2026-07-30T09:14:09.868741+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "bc34ada5b55095b908cabd68cfbc73902e136a73054ff003ffab1cd17acdc7f6"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/zEfBPmPDUVc.en.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/zEfBPmPDUVc.en.vtt",
+      "bytes": 54087,
+      "mtime": "2026-07-30T09:14:09.961979+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "bc34ada5b55095b908cabd68cfbc73902e136a73054ff003ffab1cd17acdc7f6"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/zEfBPmPDUVc.info.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/zEfBPmPDUVc.info.json",
+      "bytes": 534156,
+      "mtime": "2026-07-30T09:14:09.969393+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "40168b5fb1c98cc735d62da213492cc63cfb24c84e736945e96e1209ee0641ce"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/zEfBPmPDUVc.metadata.summary.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/zEfBPmPDUVc.metadata.summary.json",
+      "bytes": 1080,
+      "mtime": "2026-07-30T09:14:21.853181+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "761a21c39d1408e861579dfbcc13005a93ae51830cff958bdf4a19ab40736202"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/zEfBPmPDUVc.transcript.timed.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/zEfBPmPDUVc.transcript.timed.txt",
+      "bytes": 7074,
+      "mtime": "2026-07-30T09:16:15.070260+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "ef67230b6f7e4cc03dc04d80989c61932d0b6704b01c29061cfe5981ac304025"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis/zEfBPmPDUVc.transcript.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis/zEfBPmPDUVc.transcript.txt",
+      "bytes": 17447,
+      "mtime": "2026-07-30T09:14:21.851827+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "d89f1e24ff67064579fe1fee924186ba7a395d46374c0e9c2aeafdc21e7c167e"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/Li1-paXHhkc.clean.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/Li1-paXHhkc.clean.txt",
+      "bytes": 9695,
+      "mtime": "2026-07-30T09:14:48.378880+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "c3d41f047944879126c9c2118bb4c8bae8c509c09f99e63dd6edc47f7131e4ce"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/Li1-paXHhkc.en-orig.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/Li1-paXHhkc.en-orig.vtt",
+      "bytes": 89727,
+      "mtime": "2026-07-30T09:14:12.722594+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "e3812eabea43e0daa25797b6f42b90ab4701c8632ebab46d26b3d6ca42052fac"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/Li1-paXHhkc.en.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/Li1-paXHhkc.en.vtt",
+      "bytes": 89727,
+      "mtime": "2026-07-30T09:14:12.829797+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "e3812eabea43e0daa25797b6f42b90ab4701c8632ebab46d26b3d6ca42052fac"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/Li1-paXHhkc.info.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/Li1-paXHhkc.info.json",
+      "bytes": 525187,
+      "mtime": "2026-07-30T09:14:12.842037+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "4367ca4497024d441ab092e80d5495a0805b36bed676c7c81ec2b9ce9a88cf23"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/analysis_ko.md",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/analysis_ko.md",
+      "bytes": 17694,
+      "mtime": "2026-07-30T09:17:37.085004+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "41840d37d6a65504eb1feb6fff201fd79abdefd861cae697cf14ffdebbfbc5be"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/nbijFuzAw0o.clean.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/nbijFuzAw0o.clean.txt",
+      "bytes": 16841,
+      "mtime": "2026-07-30T09:14:48.374965+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "011ed3b1444c41e5a9d6c6b8b7bc91123e6b885fc680fb4b4d2c682adb65644c"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/nbijFuzAw0o.en-orig.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/nbijFuzAw0o.en-orig.vtt",
+      "bytes": 160333,
+      "mtime": "2026-07-30T09:14:09.966892+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "6a141868a8b15216b8d5a0bbd0b8a487d056f5aaad9dced56fb0272b96d4c78e"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/nbijFuzAw0o.en.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/nbijFuzAw0o.en.vtt",
+      "bytes": 160333,
+      "mtime": "2026-07-30T09:14:10.133846+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "6a141868a8b15216b8d5a0bbd0b8a487d056f5aaad9dced56fb0272b96d4c78e"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/nbijFuzAw0o.info.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/nbijFuzAw0o.info.json",
+      "bytes": 500683,
+      "mtime": "2026-07-30T09:14:10.140942+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "391c3d5517aef902bf623a3ef7e94aed802d9d31a5a23912b935aae44f330077"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/pDvWbi3CxlM.clean.txt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/pDvWbi3CxlM.clean.txt",
+      "bytes": 18657,
+      "mtime": "2026-07-30T09:14:48.387075+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "4343d53d037ea6df12efc12abd8079903f0022c52abe9248e7204e6d3c7f369a"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/pDvWbi3CxlM.en-orig.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/pDvWbi3CxlM.en-orig.vtt",
+      "bytes": 184587,
+      "mtime": "2026-07-30T09:14:11.326742+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "ef2e1604fa65f57f1cb3edcadd72ac43f00a5b4ea2ce3b0cec136ee161d8d5f4"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/pDvWbi3CxlM.en.vtt",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/pDvWbi3CxlM.en.vtt",
+      "bytes": 184587,
+      "mtime": "2026-07-30T09:14:11.444929+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "ef2e1604fa65f57f1cb3edcadd72ac43f00a5b4ea2ce3b0cec136ee161d8d5f4"
+    },
+    {
+      "source": "/Users/tajokim/youtube_analysis_3/pDvWbi3CxlM.info.json",
+      "destination": "/Users/tajokim/asset-studio-local/docs/research/3d-to-pixel-conversion/youtube_analysis_3/pDvWbi3CxlM.info.json",
+      "bytes": 494711,
+      "mtime": "2026-07-30T09:14:11.455449+09:00",
+      "reason": "3D rendering / AI-assisted pixel-art pipeline research document",
+      "stage": "moved",
+      "sha256": "d819f18f38f5f2bb159188353715055ab4d84e70139618af46a2a34881d9a891"
+    }
+  ]
+}

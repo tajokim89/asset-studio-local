@@ -1,0 +1,51 @@
+[00:00] [Music] my personal favorite point in click adventure is Indiana Jones and the fate of Atlantis I always love the franchise Steve and George created and you can clearly see that kind of love in this game look at this box art from the year 1992 you can get this with digital downloads nowadays but yeah kids I am quite old already so first let me show
+
+[00:30] you the result and see for yourself if it somehow invokes the feeling you had when you play this game all including the famous Indiana Jones color cycled Splash banner and pixel art pre-credits role
+
+[01:30] all right Sophia now what kind of interesting notes did you find in the officer's mess Mr Jones after you were sleeping off our romantic moment I searched the quarters for Clues what occult AR s they were looking for and
+
+[02:00] that's why we steered the boat to Sicily yes Indie they were looking for the biblical artifact called The Ring of Solomon ridiculous this does not exist this was always a bedtime story my father told me just before I went to sleep you said the same thing about Atlantis and you did not believe me then okay okay well while we are here anyway we can at least have some fish and chips a typical Indiana Jones Adventure game or movie is not complete without a
+
+[02:30] map showing the flight to Barnett College that is fictionally located in New York so here we go [Music]
+
+[03:00] the opening sequence with the banner and all had a cinematic feel and in an aspect ratio that was not custom in these days so let's show a typical Barnett College interaction between Indie and another character in something that looks like 320x 200 pixels
+
+[03:30] what can I do for you you are exactly the one I need um I am a little bit Rusty on my understanding of Hebrew I'd hope you could help me with this ancient text here ah let me see well this talks about the hotam schlomo meaning ring of Solomon where did you find this well I didn't Marcus did he was a little bit hungry actually probably he got lost in his own library for days a typical Marcus brilliant man but a little bit absentminded from time to time this man script tells about the immense Powers
+
+[04:00] the bearer of the Ring possesses it gives the power to command demons genies and the ability to talk to animals H demons that's why the axis are so interested in possessing this ring I even made a special a gradient points Editor to be able to produce the pixel art scaling map used in the fade of Atlantis and other LucasArts games I was inspired by the way how many of the adventure game Studio games
+
+[04:30] handles these as I looked into the assets that came along with the exported games I saw that they used a grayscale gradient map the points that I plotted in the editor are interpolated into the scaling map when exported the gradient map has the same aspect ratio as the source image but is much much smaller it does not need more pixels than there is necessary needed to look up the scaling
+
+[05:00] the scaling value is looked up and corresponds to the position the walkable character is in it works surprisingly well I might say the professor character that is called Ben was a new pixel art character generated with civit AI the bobbing head and mouth animation is still something that I needed to do myself and as I am a better coder than being an artist this did not lead to the Quality talk animation I was hoping for
+
+[05:30] if I compare it to the ripped Sprite sheet from the real fade of Atlantis game trademarked of course but I'm not complaining as this is way better than I could produce from scratch I know that a bunch of pixel artists are mad at people that use AI tools to make this but as I am a single Army hobby developer I cannot afford to pay an artist I strongly believe that professional pixel art artist still can keep their job as it far superior than
+
+[06:00] generated a bunch of characters but AI tools like stable diffusion and others are not going away and I am planning to make a pixel art model sourced from the 60 plus pixel art characters I handrawn myself in the last 3 years and this is something what graphical artists could do to to make the volume of work that is expected to be in a game I promis this
+
+[06:30] Dev log to be some sort of demonstration how I was able to create Lucas art style pixel art characters and matching backgrounds so here we go I was wondering if I could make a Qui-Gon Jedi character in Lucas art style as I happen to know that Lucas Arts did not create a point and click adventure similar to fade of Atlantis for the Star Wars franchise that is a shame of course although the action game are great by
+
+[07:00] the way another character I always wanted to create is Henry Jones the annoying father of Indiana Jones this character was in the Last Crusade point and click game of course but that was in very low resolution so that could use some um pimping it is often a hit or a Miss especially if it turns out to turn into a closeup instead of a standing pose that I wanted initially but but that's because of the noise seed in the
+
+[07:30] models generation this the way these models work let's speed things up a notch because the civid AI takes its time especially the flux models like the Dig backgrounds I settled with a nice Lucas art style rendering that has a good neutral pose and one that also has a great facial expression once in pixaki I tried to get rid of the hard edges that are sometimes on the character what I learned by doing pixel artart for
+
+[08:00] quite some time is that light usually comes from above and causes a subtle Rim light for the character these are the shoulders that would get some light adding a black bow tie makes him look quite like Henry Jones senior eventually I ended up pimping up the original pixel art character from The Last Crusade and transferred the pallette from Indiana to Henry I added an umbrella that became famous in the movie because brought down
+
+[08:30] an enemy airplane by scaring the birds those birds turned out to be fatal to the German pilot that fatally crashed into the flock of birds if you haven't seen that scene you should watch the clip or better the entire movie you won't be disappointed so after several attempts and prompt tweaks using the civid AI tool the tool generated quite a good-looking Star Wars Jedi character so
+
+[09:00] first thing to do now is to remove the background there is a small gradient in the background that is not too hard for photoshop with the smart removal tool I fixed some small issues but it is evident that I should not go overboard with this because I need to scale it down to manageable pixel sizes first after that I can use my favorite pixel art tool called pixaki and make it look great
+
+[09:30] the nice thing about using a Mac is that it is easy to copy from the Mac to the pixaki app this way I can make a blank canvas with the right pixel dimensions first then copy on the Mac and then hit paste in pixaki and behold I can start tweaking on my tne planet I wanted to replace the background with the sky of another render that looked much better so I did some touch-up work in Photoshop
+
+[10:00] also the Dome shaped house had wear entrance so that needed some love too with the help of the generative capabilities in Photoshop I could easily remov unwanted Parts the nice thing with this generative process is that it gives you three options to choose from there is always one that suits the scene and otherwise you can always regenerate again well let's see the final resulting scene
+
+[10:30] with a well-known Sith Lord and let's see how the scene looks like with a background generated by the flux model called The Dig background art Lucas Arts game Indie and Henry talk with each other other as they are
+
+[11:00] located at the residence of retired Professor called Henry Jones senior Dad I need your excellent biblical knowledge of religious artifacts what do you happen to know about the ring of Solomon so you finally agree that there might be some truth to all these bedtime stories Legend says that the demon disguises King Solomon acquired a ring and Solomon lost his throne somehow the ring returned to him
+
+[11:30] when he came to his sensus again it is believed that the ring was buried in his Royal grave some centuries later some grave robber stole the ring from the grave and sold it to a rich Merchant this Merchant gave it to his wife that was able to use its power somehow how did she loose the ring often she talked and gained a lot of useful information by talking to the croch however one time she forgot to give them breadcrumbs one crow was very angry and pulled off the
+
+[12:00] ring when she was asleep in the Valley from then on the ring was never found again probably it is on the bottom of the sea it seems like a dead end to me so that wraps it up for now please hit the like And subscribe as it helps me stay motivated to make these nice videos and join me again when I release a new Dev
+
+[12:30] log the next Dev log will be about the implementation of dialogues in point and click games I will look back at the chat mapper format as that was my choice to make dialogues possible in the game The Lost adventures also I will show you some old footage of the features the old dialogue web editor had great fun to see how I did this 12 years ago it will also give me a way do a bit of retrospection on
+
+[13:00] the strengths and weaknesses of chat mapper I will also definitely show off the new way of supporting dialogues in pixel parody the choice that I made was the open-source ink format and Inky editor of course I will show some funny dialogues in pixel parody without spoilers bye and see you next time

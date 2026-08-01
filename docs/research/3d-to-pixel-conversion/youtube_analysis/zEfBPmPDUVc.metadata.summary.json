@@ -1,0 +1,13 @@
+{
+  "id": "zEfBPmPDUVc",
+  "title": "Using AI to Generate Game Assets For Free (3D & 2D)",
+  "channel": "semikoder",
+  "uploader": "semikoder",
+  "upload_date": "20241006",
+  "duration": 357,
+  "description": "This time, I generated various game assets using multiple AIs. From 3D models to spritesheets and even sound effects and music. This is an updated video to my older AI generated game assets video.\n\nSDXL: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0\nPixelArt LoRA: https://civitai.com/models/120096/pixel-art-xl\nComfyUI workflow I used for PixelArt: https://github.com/dimtoneff/ComfyUI-PixelArt-Detector\nPixelization ComfyUI node: https://github.com/filipemeneses/comfy_pixelization\n\nTimestamps:\n0:00 - Intro\n0:11 - Chapter 1: Sprites\n2:58 - Chapter 1.1: Spritesheets\n3:53 - Chapter 2: 3D Models\n4:41 - Chapter 3: 3D Animations\n5:06 - Chapter 4: Sound Effects\n5:11 - Chapter 5: Music\n5:20 - Chapter 6: VAs\n\nMusic provided by Udio.com",
+  "view_count": 234453,
+  "like_count": 8509,
+  "comment_count": 252,
+  "availability": "public"
+}

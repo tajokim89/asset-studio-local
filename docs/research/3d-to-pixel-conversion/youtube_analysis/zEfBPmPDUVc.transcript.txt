@@ -1,0 +1,308 @@
+use stable diffusion thanks for watching
+use stable diffusion thanks for watching this SN semic all right you probably
+this SN semic all right you probably
+this SN semic all right you probably need some more explanation later in the
+need some more explanation later in the
+need some more explanation later in the video I'll also show you how to create
+video I'll also show you how to create
+video I'll also show you how to create everything from 3D models to animations
+everything from 3D models to animations
+everything from 3D models to animations and artifacts so make sure to watch
+and artifacts so make sure to watch
+and artifacts so make sure to watch until getting stable diffusion set up I
+until getting stable diffusion set up I
+until getting stable diffusion set up I used to recommend Google collab but
+used to recommend Google collab but
+used to recommend Google collab but Google isn't a fan anymore so you might
+Google isn't a fan anymore so you might
+Google isn't a fan anymore so you might be tempted to search for other AI image
+be tempted to search for other AI image
+be tempted to search for other AI image generators but I still say stable
+generators but I still say stable
+generators but I still say stable diffusion is the best choice if you have
+diffusion is the best choice if you have
+diffusion is the best choice if you have a computer with a discrete graphics card
+a computer with a discrete graphics card
+a computer with a discrete graphics card I'd suggest just running stable
+I'd suggest just running stable
+I'd suggest just running stable diffusion locally installation and usage
+diffusion locally installation and usage
+diffusion locally installation and usage are as simple as downloading and running
+are as simple as downloading and running
+are as simple as downloading and running it I'm not going to dive too deep into
+it I'm not going to dive too deep into
+it I'm not going to dive too deep into that as I don't want to make the video
+that as I don't want to make the video
+that as I don't want to make the video too long once you have stable diffusion
+too long once you have stable diffusion
+too long once you have stable diffusion running let me briefly explain different
+running let me briefly explain different
+running let me briefly explain different stable diffusion models big update since
+stable diffusion models big update since
+stable diffusion models big update since last time we now have sdxl and stable
+last time we now have sdxl and stable
+last time we now have sdxl and stable diffusion 3 stable diffusion 3 is newer
+diffusion 3 stable diffusion 3 is newer
+diffusion 3 stable diffusion 3 is newer but I recommend sticking with sdxl I'll
+but I recommend sticking with sdxl I'll
+but I recommend sticking with sdxl I'll explain why later I also personally use
+explain why later I also personally use
+explain why later I also personally use comfy UI to run stable diffusion and
+comfy UI to run stable diffusion and
+comfy UI to run stable diffusion and I'll include the workflow I used in the
+I'll include the workflow I used in the
+I'll include the workflow I used in the video description now that you got your
+video description now that you got your
+video description now that you got your stable diffusion model let's talk about
+stable diffusion model let's talk about
+stable diffusion model let's talk about luras Lura or low rank adaptations are
+luras Lura or low rank adaptations are
+luras Lura or low rank adaptations are smaller files that act as Concepts or
+smaller files that act as Concepts or
+smaller files that act as Concepts or guidelines for your model to put it
+guidelines for your model to put it
+guidelines for your model to put it simply if you have a pixel art Laura
+simply if you have a pixel art Laura
+simply if you have a pixel art Laura your model will focus more on generating
+your model will focus more on generating
+your model will focus more on generating pixel art using Laura's help you get
+pixel art using Laura's help you get
+pixel art using Laura's help you get more consistent desire results you might
+more consistent desire results you might
+more consistent desire results you might be wondering about the difference
+be wondering about the difference
+be wondering about the difference between using a different model and
+between using a different model and
+between using a different model and using a Laura here's an analogy think of
+using a Laura here's an analogy think of
+using a Laura here's an analogy think of your model as an experienced Chef
+your model as an experienced Chef
+your model as an experienced Chef cooking a specific meal the recipe for
+cooking a specific meal the recipe for
+cooking a specific meal the recipe for that meal is Laura even if the chef
+that meal is Laura even if the chef
+that meal is Laura even if the chef changes there's still following the same
+changes there's still following the same
+changes there's still following the same recipe which means they're not learning
+recipe which means they're not learning
+recipe which means they're not learning a completely new cooking style just
+a completely new cooking style just
+a completely new cooking style just following the instructions now for the
+following the instructions now for the
+following the instructions now for the fun part go to civit ai.com and find the
+fun part go to civit ai.com and find the
+fun part go to civit ai.com and find the model and Laura you want for your game
+model and Laura you want for your game
+model and Laura you want for your game for this example let's generate some
+for this example let's generate some
+for this example let's generate some pixel art that's right this is something
+pixel art that's right this is something
+pixel art that's right this is something I couldn't quite do in my previous AI
+I couldn't quite do in my previous AI
+I couldn't quite do in my previous AI video for this we'll be using sdxl 1.0
+video for this we'll be using sdxl 1.0
+video for this we'll be using sdxl 1.0 with a pixel art XL Lura the reason why
+with a pixel art XL Lura the reason why
+with a pixel art XL Lura the reason why we picked sdxl previously is because
+we picked sdxl previously is because
+we picked sdxl previously is because simply there are more luras available
+simply there are more luras available
+simply there are more luras available for this model by the way using Aur is
+for this model by the way using Aur is
+for this model by the way using Aur is as simple as placing the file in a
+as simple as placing the file in a
+as simple as placing the file in a folder and selecting it in the web
+folder and selecting it in the web
+folder and selecting it in the web interface the results as you can see are
+interface the results as you can see are
+interface the results as you can see are surprisingly good similar to pixel art
+surprisingly good similar to pixel art
+surprisingly good similar to pixel art you can pick any other Laura to generate
+you can pick any other Laura to generate
+you can pick any other Laura to generate Sprites exactly how you want for 3D
+Sprites exactly how you want for 3D
+Sprites exactly how you want for 3D textures it's pretty similar to what I
+textures it's pretty similar to what I
+textures it's pretty similar to what I explained in the old video you don't
+explained in the old video you don't
+explained in the old video you don't even need Aura just type your prompt and
+even need Aura just type your prompt and
+even need Aura just type your prompt and you'll get your texture one thing to
+you'll get your texture one thing to
+you'll get your texture one thing to note is that AI doesn't always make
+note is that AI doesn't always make
+note is that AI doesn't always make seamless textures no matter how much you
+seamless textures no matter how much you
+seamless textures no matter how much you prompt it to solve this use a procedural
+prompt it to solve this use a procedural
+prompt it to solve this use a procedural stochastic Shader you can also generate
+stochastic Shader you can also generate
+stochastic Shader you can also generate additional detail maps to enhance the
+additional detail maps to enhance the
+additional detail maps to enhance the texture this is all covered in my old
+texture this is all covered in my old
+texture this is all covered in my old video and my project terminal devlog so
+video and my project terminal devlog so
+video and my project terminal devlog so check those videos out if you're
+check those videos out if you're
+check those videos out if you're interested for those who don't want to
+interested for those who don't want to
+interested for those who don't want to run stable diffusion locally I recommend
+run stable diffusion locally I recommend
+run stable diffusion locally I recommend tensor doart as a good alternative and
+tensor doart as a good alternative and
+tensor doart as a good alternative and if you're looking for alternatives to
+if you're looking for alternatives to
+if you're looking for alternatives to stable diffusion models I suggest flux
+stable diffusion models I suggest flux
+stable diffusion models I suggest flux AI which is a new AI that excels at
+AI which is a new AI that excels at
+AI which is a new AI that excels at generating images with text now for the
+generating images with text now for the
+generating images with text now for the big question can it create sprad sheets
+big question can it create sprad sheets
+big question can it create sprad sheets in my last video AI failed miserably at
+in my last video AI failed miserably at
+in my last video AI failed miserably at this and to be honest it's still not
+this and to be honest it's still not
+this and to be honest it's still not great but before you click away I found
+great but before you click away I found
+great but before you click away I found a workaround that makes Sprite sheets
+a workaround that makes Sprite sheets
+a workaround that makes Sprite sheets very usable here's how it works first we
+very usable here's how it works first we
+very usable here's how it works first we take a 3D humanoid model which can be AI
+take a 3D humanoid model which can be AI
+take a 3D humanoid model which can be AI generated then app ply on animation
+generated then app ply on animation
+generated then app ply on animation which can be AI generated and then
+which can be AI generated and then
+which can be AI generated and then export the animation frame by frame and
+export the animation frame by frame and
+export the animation frame by frame and for each frame apply a pixelation effect
+for each frame apply a pixelation effect
+for each frame apply a pixelation effect using AI when you compile all the frames
+using AI when you compile all the frames
+using AI when you compile all the frames into a spray sheeet you get a decent
+into a spray sheeet you get a decent
+into a spray sheeet you get a decent result you might be wondering semic
+result you might be wondering semic
+result you might be wondering semic coder why not just just use a pixelation
+coder why not just just use a pixelation
+coder why not just just use a pixelation effect in why use AI well the AI
+effect in why use AI well the AI
+effect in why use AI well the AI effect just looks miles better the good
+effect just looks miles better the good
+effect just looks miles better the good thing is you don't need a detailed 3D
+thing is you don't need a detailed 3D
+thing is you don't need a detailed 3D model or animation because everything
+model or animation because everything
+model or animation because everything will be pixelated and turned into a lowf
+will be pixelated and turned into a lowf
+will be pixelated and turned into a lowf frame rate Sprite sheet so generating
+frame rate Sprite sheet so generating
+frame rate Sprite sheet so generating models and animations this way is
+models and animations this way is
+models and animations this way is totally viable I'll talk more about how
+totally viable I'll talk more about how
+totally viable I'll talk more about how to generate them in a later segment of
+to generate them in a later segment of
+to generate them in a later segment of the video As for the 3D model generation
+the video As for the 3D model generation
+the video As for the 3D model generation there are a few options for
+there are a few options for
+there are a few options for environmental assets like props or
+environmental assets like props or
+environmental assets like props or environment I recommend sl. a and meshy
+environment I recommend sl. a and meshy
+environment I recommend sl. a and meshy and no I'm not sponsored by them both
+and no I'm not sponsored by them both
+and no I'm not sponsored by them both offer free tiers where you can generate
+offer free tiers where you can generate
+offer free tiers where you can generate an export models I would use sloyd AI
+an export models I would use sloyd AI
+an export models I would use sloyd AI for low poly casual games and Meshi for
+for low poly casual games and Meshi for
+for low poly casual games and Meshi for more detailed models with high quality
+more detailed models with high quality
+more detailed models with high quality textures Rodin AI is also a good option
+textures Rodin AI is also a good option
+textures Rodin AI is also a good option it's still in public beta but so far
+it's still in public beta but so far
+it's still in public beta but so far I've had the best results with it
+I've had the best results with it
+I've had the best results with it specifically for digital avatars most of
+specifically for digital avatars most of
+specifically for digital avatars most of the times I got better results using
+the times I got better results using
+the times I got better results using image to 3D model generation rather than
+image to 3D model generation rather than
+image to 3D model generation rather than text to image you might also be
+text to image you might also be
+text to image you might also be interested in rodent diffusion a
+interested in rodent diffusion a
+interested in rodent diffusion a generative model for sculpting 3D
+generative model for sculpting 3D
+generative model for sculpting 3D avatars but as of this recording it's
+avatars but as of this recording it's
+avatars but as of this recording it's not available to the public yet it still
+not available to the public yet it still
+not available to the public yet it still looks very promising
+looks very promising
+looks very promising though now about animations this is
+though now about animations this is
+though now about animations this is where things need a bit more development
+where things need a bit more development
+where things need a bit more development the most viable option right now is to
+the most viable option right now is to
+the most viable option right now is to Auto rig your generated 3D character
+Auto rig your generated 3D character
+Auto rig your generated 3D character using mix ammo and then apply mix ammo
+using mix ammo and then apply mix ammo
+using mix ammo and then apply mix ammo animations another option is AI motion
+animations another option is AI motion
+animations another option is AI motion capture which can turn regular videos
+capture which can turn regular videos
+capture which can turn regular videos into 3D animations for your character
+into 3D animations for your character
+into 3D animations for your character text to animation technology however
+text to animation technology however
+text to animation technology however still needs more work I'd
+still needs more work I'd
+still needs more work I'd say sound effects I think 11 laps is the
+say sound effects I think 11 laps is the
+say sound effects I think 11 laps is the best option
+best option
+best option here udio generates great ambient music
+here udio generates great ambient music
+here udio generates great ambient music perfect for game development fun fact
+perfect for game development fun fact
+perfect for game development fun fact the music in this video is all generated
+the music in this video is all generated
+the music in this video is all generated by Audio play. HT works really well and
+by Audio play. HT works really well and
+by Audio play. HT works really well and looped is also using voice generated by
+looped is also using voice generated by
+looped is also using voice generated by play. HT and that covers pretty much all
+play. HT and that covers pretty much all
+play. HT and that covers pretty much all the essential game m you'll need to make
+the essential game m you'll need to make
+the essential game m you'll need to make a game before I wrap up I just want to
+a game before I wrap up I just want to
+a game before I wrap up I just want to address that while AI can speed up your
+address that while AI can speed up your
+address that while AI can speed up your workflow I'd like to tell you to not
+workflow I'd like to tell you to not
+workflow I'd like to tell you to not rely too heavily on AI it's a tool not a
+rely too heavily on AI it's a tool not a
+rely too heavily on AI it's a tool not a complete replacement for creativity so
+complete replacement for creativity so
+complete replacement for creativity so the best would be to mix it with your
+the best would be to mix it with your
+the best would be to mix it with your own
+own
+own creativity this has been semic coder I
+creativity this has been semic coder I
+creativity this has been semic coder I kind of know how to code
+kind of know how to code
+kind of know how to code [Music]

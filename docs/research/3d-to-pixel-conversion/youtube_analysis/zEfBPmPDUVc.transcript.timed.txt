@@ -1,0 +1,155 @@
+[00:00] use stable diffusion thanks for watching
+[00:02] this SN semic all right you probably
+[00:04] need some more explanation later in the
+[00:06] video I'll also show you how to create
+[00:07] everything from 3D models to animations
+[00:08] and artifacts so make sure to watch
+[00:10] until getting stable diffusion set up I
+[00:12] used to recommend Google collab but
+[00:15] Google isn't a fan anymore so you might
+[00:17] be tempted to search for other AI image
+[00:18] generators but I still say stable
+[00:20] diffusion is the best choice if you have
+[00:22] a computer with a discrete graphics card
+[00:24] I'd suggest just running stable
+[00:26] diffusion locally installation and usage
+[00:29] are as simple as downloading and running
+[00:30] it I'm not going to dive too deep into
+[00:33] that as I don't want to make the video
+[00:34] too long once you have stable diffusion
+[00:36] running let me briefly explain different
+[00:38] stable diffusion models big update since
+[00:40] last time we now have sdxl and stable
+[00:43] diffusion 3 stable diffusion 3 is newer
+[00:46] but I recommend sticking with sdxl I'll
+[00:48] explain why later I also personally use
+[00:50] comfy UI to run stable diffusion and
+[00:52] I'll include the workflow I used in the
+[00:54] video description now that you got your
+[00:56] stable diffusion model let's talk about
+[00:58] luras Lura or low rank adaptations are
+[01:02] smaller files that act as Concepts or
+[01:05] guidelines for your model to put it
+[01:07] simply if you have a pixel art Laura
+[01:09] your model will focus more on generating
+[01:11] pixel art using Laura's help you get
+[01:14] more consistent desire results you might
+[01:16] be wondering about the difference
+[01:17] between using a different model and
+[01:19] using a Laura here's an analogy think of
+[01:22] your model as an experienced Chef
+[01:24] cooking a specific meal the recipe for
+[01:26] that meal is Laura even if the chef
+[01:29] changes there's still following the same
+[01:30] recipe which means they're not learning
+[01:32] a completely new cooking style just
+[01:34] following the instructions now for the
+[01:36] fun part go to civit ai.com and find the
+[01:39] model and Laura you want for your game
+[01:42] for this example let's generate some
+[01:44] pixel art that's right this is something
+[01:46] I couldn't quite do in my previous AI
+[01:48] video for this we'll be using sdxl 1.0
+[01:51] with a pixel art XL Lura the reason why
+[01:54] we picked sdxl previously is because
+[01:56] simply there are more luras available
+[01:58] for this model by the way using Aur is
+[02:01] as simple as placing the file in a
+[02:03] folder and selecting it in the web
+[02:05] interface the results as you can see are
+[02:08] surprisingly good similar to pixel art
+[02:11] you can pick any other Laura to generate
+[02:13] Sprites exactly how you want for 3D
+[02:16] textures it's pretty similar to what I
+[02:18] explained in the old video you don't
+[02:19] even need Aura just type your prompt and
+[02:22] you'll get your texture one thing to
+[02:24] note is that AI doesn't always make
+[02:26] seamless textures no matter how much you
+[02:27] prompt it to solve this use a procedural
+[02:30] stochastic Shader you can also generate
+[02:32] additional detail maps to enhance the
+[02:34] texture this is all covered in my old
+[02:36] video and my project terminal devlog so
+[02:39] check those videos out if you're
+[02:40] interested for those who don't want to
+[02:42] run stable diffusion locally I recommend
+[02:44] tensor doart as a good alternative and
+[02:47] if you're looking for alternatives to
+[02:48] stable diffusion models I suggest flux
+[02:51] AI which is a new AI that excels at
+[02:53] generating images with text now for the
+[02:56] big question can it create sprad sheets
+[02:59] in my last video AI failed miserably at
+[03:01] this and to be honest it's still not
+[03:03] great but before you click away I found
+[03:06] a workaround that makes Sprite sheets
+[03:08] very usable here's how it works first we
+[03:10] take a 3D humanoid model which can be AI
+[03:12] generated then app ply on animation
+[03:14] which can be AI generated and then
+[03:16] export the animation frame by frame and
+[03:19] for each frame apply a pixelation effect
+[03:21] using AI when you compile all the frames
+[03:24] into a spray sheeet you get a decent
+[03:26] result you might be wondering semic
+[03:28] coder why not just just use a pixelation
+[03:31] effect in why use AI well the AI
+[03:34] effect just looks miles better the good
+[03:37] thing is you don't need a detailed 3D
+[03:39] model or animation because everything
+[03:41] will be pixelated and turned into a lowf
+[03:43] frame rate Sprite sheet so generating
+[03:46] models and animations this way is
+[03:48] totally viable I'll talk more about how
+[03:50] to generate them in a later segment of
+[03:51] the video As for the 3D model generation
+[03:55] there are a few options for
+[03:56] environmental assets like props or
+[03:59] environment I recommend sl. a and meshy
+[04:02] and no I'm not sponsored by them both
+[04:04] offer free tiers where you can generate
+[04:06] an export models I would use sloyd AI
+[04:09] for low poly casual games and Meshi for
+[04:12] more detailed models with high quality
+[04:14] textures Rodin AI is also a good option
+[04:17] it's still in public beta but so far
+[04:19] I've had the best results with it
+[04:21] specifically for digital avatars most of
+[04:23] the times I got better results using
+[04:25] image to 3D model generation rather than
+[04:28] text to image you might also be
+[04:30] interested in rodent diffusion a
+[04:32] generative model for sculpting 3D
+[04:34] avatars but as of this recording it's
+[04:37] not available to the public yet it still
+[04:39] looks very promising
+[04:41] though now about animations this is
+[04:44] where things need a bit more development
+[04:47] the most viable option right now is to
+[04:48] Auto rig your generated 3D character
+[04:51] using mix ammo and then apply mix ammo
+[04:53] animations another option is AI motion
+[04:55] capture which can turn regular videos
+[04:58] into 3D animations for your character
+[05:00] text to animation technology however
+[05:03] still needs more work I'd
+[05:05] say sound effects I think 11 laps is the
+[05:09] best option
+[05:11] here udio generates great ambient music
+[05:15] perfect for game development fun fact
+[05:17] the music in this video is all generated
+[05:19] by Audio play. HT works really well and
+[05:23] looped is also using voice generated by
+[05:25] play. HT and that covers pretty much all
+[05:28] the essential game m you'll need to make
+[05:30] a game before I wrap up I just want to
+[05:33] address that while AI can speed up your
+[05:35] workflow I'd like to tell you to not
+[05:37] rely too heavily on AI it's a tool not a
+[05:40] complete replacement for creativity so
+[05:42] the best would be to mix it with your
+[05:44] own
+[05:45] creativity this has been semic coder I
+[05:50] kind of know how to code
+[05:52] [Music]

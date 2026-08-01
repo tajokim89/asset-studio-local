@@ -1,0 +1,217 @@
+[0.20] so the future promised us flying cars
+[2.94] and hoverboards but what we got instead
+[5.22] was much better
+[7.32] image generating AI
+[9.84] So today we're going to use these tools
+[11.88] to design exactly what the weld needs
+[13.86] right now
+[15.42] another metroidvania Style video game
+[18.84] so we're going to start the same way
+[20.58] most games get designed by drawing on a
+[24.30] napkin if you're like me the only
+[26.40] napkins you have lying around are those
+[27.84] ones that you get at Christmas time and
+[29.82] they're not exactly that good for
+[31.20] drawing on but other than just searching
+[33.18] for an image why don't we just generate
+[35.04] it using stable diffusion
+[36.84] here I'm running stable diffusion
+[38.58] locally using automatics gradier UI I'll
+[41.70] post the links in the description below
+[43.74] once we have an upscaled version of the
+[45.72] image I just drop it into Photoshop do a
+[48.00] little bit of resizing and our canvas is
+[49.92] ready to go
+[51.66] baby prints and the abyss is the game
+[54.60] we're going to be designing today
+[56.70] I think it'd be cool to do something
+[57.96] along the lines of hollow Knight or Ari
+[60.42] alright let's start sketching out a main
+[62.28] character we've got to give them a crown
+[64.14] or maybe a bit bigger crown and a tunic
+[66.36] I thought maybe we could give him like a
+[68.28] little scarf or something
+[69.90] so the concept I was thinking is pretty
+[71.70] straightforward
+[72.90] a common trip in video games is you make
+[74.94] your way through a dungeon
+[76.50] fighting a number of creatures along the
+[78.12] way before finally facing the the boss
+[80.64] creature Dragon God whatever it is at
+[83.28] the end of the dungeon
+[85.80] so I thought why don't we look at
+[88.62] potentially kind of inverting this whole
+[90.60] thing
+[91.56] so for some reason our Intrepid Hero
+[93.54] finds himself
+[94.80] falling all the way to the bottom of the
+[97.32] dungeon
+[98.16] but in this case the lowest levels are
+[100.20] just filled with skeletons that the
+[101.70] previous hero perhaps your father left
+[104.16] behind
+[105.24] so let's figure out the story one day
+[107.64] the prince
+[108.72] finds his father the king slash Hero Of
+[111.66] Ages slash King cholesterol lying dead
+[113.94] in the throne room
+[115.50] his ghostly Spirit slowly rising from
+[117.90] his body
+[119.82] the throne room itself against all ohns
+[122.52] standards has a giant hole in the center
+[125.16] more about that later
+[127.08] so while the princess grieving over the
+[128.76] loss of his father his uncle enters
+[130.86] along with this Posse of Honor Guard
+[134.34] the uncle's lacked at my crown
+[136.98] meanwhile the prince is like no you
+[138.96] can't have it and a fight breaks out
+[140.46] perhaps this is some sort of like
+[142.64] introductory boss fight introduces you
+[145.50] to the control scheme but is ultimately
+[147.30] unwinnable
+[148.68] at the end of the day one of the honor
+[150.48] guards ends up sput and kicking you down
+[152.40] into the deep Abyss
+[154.86] you fall for what seems like an eternity
+[156.84] into the darkness
+[158.52] you land painfully on the stone floor
+[160.40] behind you a pile of skeletons
+[163.50] monsters and other creatures that have
+[165.36] been vanquished long ago
+[167.46] you lie there with your father's broken
+[169.50] sword in front of you
+[171.90] won't lie that turned out a little bit
+[173.52] darker than I originally intended
+[176.04] okay so let's just start by designing
+[178.56] this initial scene
+[180.66] typically with platformer games you have
+[182.46] a number of layers there's the main
+[184.32] Collision layer where you character and
+[185.94] other enemies are as well as platforms
+[188.10] then there are one and more background
+[190.32] layers they're typically overlaid to
+[192.54] create kind of a parallax effect I think
+[194.82] it will just layer a number of different
+[196.14] skeleton piles kind of monster skeletons
+[198.84] and other things in different layers so
+[200.76] here I'm just going to add a few more
+[202.62] details add some color to our main
+[204.78] character adding a placeholder for the
+[207.24] sword and then in addition I'm just
+[209.88] adding some good Grays to the Top This
+[211.98] is mainly just to represent some of the
+[213.54] light that's bleeding down from above
+[216.18] actually I just brushed in some sort of
+[218.46] blurred out foreground elements and then
+[220.98] just added some heart containers to
+[222.78] represent the current player health
+[224.94] okay so now we've got a rough idea of
+[227.10] what the scene is that we want to create
+[229.20] so now we can finally start using stable
+[231.06] diffusion I've taken a crop of the image
+[233.40] of the main character along with that we
+[235.68] need to write a prompt that details what
+[237.96] the character looks like when you write
+[239.76] prompts it's also good to add some
+[241.32] stylistic elements in this case I've
+[242.94] added things like trending by Art
+[244.74] station and some artist names with the
+[247.26] other settings I recommend using a
+[248.64] relatively low step count to start with
+[250.44] that way the generations will be quicker
+[252.96] for denizing strength I'm using around
+[254.94] 0.5 to 0.6 once you get a generation
+[258.30] that you like copy it back into the
+[260.34] input the key with using image images to
+[262.56] do multiple iterations
+[264.36] if you set the denizing strength too
+[266.10] high what you'll find is that it will
+[267.66] essentially overwrite the original image
+[270.30] however if you use a lower strength
+[272.16] maybe around 0.5 to 0.7 what you can do
+[275.34] is you can continually go back and
+[277.38] slowly get closer and closer to your end
+[279.18] goal
+[280.26] once we find some images that we like I
+[282.42] upscale them using real ESR again using
+[285.18] the anime model at four times resolution
+[287.10] once we have a few Generations that are
+[289.32] closer to what we want it's time to
+[291.12] bring them back into Photoshop and start
+[292.74] making some adjustments
+[294.36] what we're trying to do is just nudge
+[296.16] ever slowly closer to the image that we
+[298.38] have in mind
+[306.17] [Music]
+[314.80] [Music]
+[331.44] all right so the next thing we're going
+[332.94] to work on is the ground texture I
+[335.28] noticed in one of the generations that
+[336.78] it had a nice rock texture so I decided
+[339.30] to crop that and use that as a starting
+[340.80] point
+[341.94] when making tiling textures make sure to
+[344.10] check the tiling option this will ensure
+[346.50] the tiles seamlessly fit together
+[348.76] [Music]
+[363.48] for the backdrop once again we follow a
+[365.64] similar process simply just running the
+[368.10] original image through image to image
+[369.72] multiple times until we find a
+[371.52] generation that we like once we do then
+[373.68] we just send it through again once again
+[375.84] this iterative approach is the key to
+[377.76] having consistency and control over the
+[380.04] output
+[381.89] [Music]
+[397.26] foreign
+[405.17] [Music]
+[438.68] thank you
+[446.55] [Music]
+[462.72] foreign
+[499.68] foreign
+[512.20] [Music]
+[530.94] foreign
+[532.43] [Music]
+[563.46] foreign
+[565.16] [Music]
+[584.04] so to create the god Rays we quickly
+[585.72] brush out the shape we want and then run
+[587.82] it through image to image
+[590.04] this is a great way to create effects
+[591.72] you can use this to create lightning
+[593.40] effects fire effects and all kinds of
+[595.92] things
+[597.60] because we created the image on a black
+[599.52] background once we get it back into
+[600.90] Photoshop all we need to do is set the
+[602.76] blending mode to screen
+[604.92] I wasn't completely happy with the style
+[606.60] of the background but fortunately with
+[608.52] the image to image we can run it through
+[609.96] again this time I went with more of a
+[612.36] cartoonish effect something that would
+[614.58] blend in better with the foreground
+[615.96] element
+[618.86] [Music]
+[631.50] thank you
+[633.31] [Music]
+[642.93] [Applause]
+[650.88] [Music]
+[676.82] thank you
+[678.37] [Applause]
+[683.41] [Music]
+[684.70] [Applause]
+[686.52] [Music]
+[698.52] foreign
+[701.33] [Music]
+[744.12] thank you
+[745.78] [Music]
+[766.56] [Applause]
+[767.56] [Music]
+[777.66] foreign
+[780.87] [Music]
+[788.97] [Music]
+[806.04] foreign
+[809.86] [Music]
