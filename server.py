@@ -33,7 +33,9 @@ from asset_studio.actor_blueprint import (
     se_walk_blueprints,
     validate_pose_blueprint,
 )
-from asset_studio.hermes_provider import HermesProviderAdapter
+from asset_studio.image_provider_adapter import ImageProviderAdapter
+from asset_studio.codex_image_provider import CodexImageProvider
+from asset_studio.sprite_video_pipeline import generate_sprite_video, sprite_video_health
 from asset_studio.output_profiles import (
     OutputProfileError,
     action_recipe_for_profile,
@@ -43,6 +45,7 @@ from asset_studio.provider import ProviderRequest
 from asset_studio.recipes import RecipeRegistryError
 
 ROOT = Path(__file__).resolve().parent
+PROCESS_USER_HOME = Path.home()
 ASSETS = ROOT / "assets"
 UPLOADS = ASSETS / "uploads"
 GENERATED = ASSETS / "generated"
@@ -101,7 +104,11 @@ def get_generation_job(job_id: str) -> dict | None:
 
 
 def create_generation_job(endpoint: str, payload: dict, *, runner=None) -> dict:
-    if endpoint not in {"/api/generate", "/api/generate-reference"}:
+    if endpoint not in {
+        "/api/generate",
+        "/api/generate-reference",
+        "/api/sprite-video",
+    }:
         raise ValueError("unsupported generation endpoint")
     if not isinstance(payload, dict):
         raise ValueError("generation payload must be an object")
@@ -140,7 +147,7 @@ def run_loopback_generation(port: int, endpoint: str, payload: dict) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(request, timeout=900) as response:
+    with urlopen(request, timeout=1860 if endpoint == "/api/sprite-video" else 900) as response:
         return json.loads(response.read().decode("utf-8"))
 WALK_GENERATED_ARTIFACTS: dict[str, dict] = {}
 WALK_VISUAL_APPROVALS: dict[str, dict] = {}
@@ -393,60 +400,11 @@ def recipe_id_for_asset_selection(
     raise RecipeRegistryError(f"unknown or retired asset selection {family!r}/{subtype!r}")
 
 
-HERMES_PROVIDER_RELATIVE = Path("plugins/image_gen/openai-codex/__init__.py")
-
-
-def _hermes_repo_from_candidate(candidate: Path) -> Path | None:
-    candidate = candidate.expanduser()
-    direct = candidate / HERMES_PROVIDER_RELATIVE
-    if direct.is_file():
-        return candidate
-    nested = candidate / "hermes-agent"
-    if (nested / HERMES_PROVIDER_RELATIVE).is_file():
-        return nested
-    return None
-
-
-def resolve_hermes_repo() -> Path:
-    """Locate the Hermes checkout without binding the repo to one workstation."""
-    configured = os.environ.get("HERMES_REPO", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-
-    hermes_home = os.environ.get("HERMES_HOME", "").strip()
-    if hermes_home:
-        discovered = _hermes_repo_from_candidate(Path(hermes_home))
-        if discovered is not None:
-            return discovered
-
-    command = os.environ.get("HERMES_COMMAND", "").strip() or shutil.which("hermes")
-    if command:
-        command_path = Path(command).expanduser().resolve()
-        for parent in (command_path.parent, *command_path.parents):
-            discovered = _hermes_repo_from_candidate(parent)
-            if discovered is not None:
-                return discovered
-
-    for candidate in (
-        Path.home() / ".hermes" / "hermes-agent",
-        Path.home() / ".hermes",
-        Path.home() / "hermes-agent",
-    ):
-        discovered = _hermes_repo_from_candidate(candidate)
-        if discovered is not None:
-            return discovered
-    return Path.home() / ".hermes" / "hermes-agent"
-
-
-HERMES_REPO = resolve_hermes_repo()
-PROVIDER_PATH = HERMES_REPO / HERMES_PROVIDER_RELATIVE
-sys.path.insert(0, str(HERMES_REPO))
-
 _external_origin_candidate = os.environ.get("ASSET_STUDIO_EXTERNAL_ORIGIN", "").strip().rstrip("/")
 EXTERNAL_ORIGIN = (
     _external_origin_candidate.lower()
     if re.fullmatch(r"https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.trycloudflare\.com", _external_origin_candidate, re.IGNORECASE)
-    else None
+    else (_external_origin_candidate.lower() if _external_origin_candidate.lower() == "https://pc.tail581f27.ts.net:8443" else None)
 )
 EXTERNAL_AUTHORITY = urlparse(EXTERNAL_ORIGIN).netloc if EXTERNAL_ORIGIN else None
 
@@ -1177,19 +1135,9 @@ def animation_frame_count(animation_mode: str, fallback: int | None = None) -> i
 
 
 def load_provider():
-    hermes_repo = resolve_hermes_repo()
-    provider_path = hermes_repo / HERMES_PROVIDER_RELATIVE
-    if not provider_path.is_file():
-        raise RuntimeError("Hermes openai-codex image provider is not installed")
-    repo_text = str(hermes_repo)
-    if repo_text not in sys.path:
-        sys.path.insert(0, repo_text)
-    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex", provider_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load openai-codex image provider")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.OpenAICodexImageGenProvider()
+    """Use native Codex image generation with its own ChatGPT login."""
+    return CodexImageProvider(output_dir=GENERATED / "codex-images")
+
 
 
 def generate_with_page_image_backend(
@@ -1198,9 +1146,9 @@ def generate_with_page_image_backend(
     image_url: str | None = None,
     reference_image_urls: list[str] | None = None,
 ) -> tuple[bytes, dict]:
-    """Call the same configured Hermes/Codex provider used by the web page."""
+    """Call the same native Codex provider used by the web page."""
     backend = load_provider()
-    adapter = HermesProviderAdapter(backend)
+    adapter = ImageProviderAdapter(backend)
     artifacts = tuple(
         value
         for value in (image_url, *(reference_image_urls or []))
@@ -1239,46 +1187,10 @@ def provider_capabilities(provider) -> dict:
 
 
 def provider_health() -> dict:
-    """Report local provider readiness without making an image request."""
-    integration_mode = "hermes-openai-codex"
-    if not (resolve_hermes_repo() / HERMES_PROVIDER_RELATIVE).is_file():
-        return {
-            "success": True,
-            "status": "unavailable",
-            "available": False,
-            "provider": "openai-codex",
-            "display_name": "Hermes · OpenAI Codex",
-            "default_model": None,
-            "capabilities": {},
-            "reason": "hermes_not_installed",
-            "integration_mode": integration_mode,
-        }
-    try:
-        provider = load_provider()
-        available = bool(provider.is_available())
-        return {
-            "success": True,
-            "status": "ready" if available else "unavailable",
-            "available": available,
-            "provider": provider.name,
-            "display_name": provider.display_name,
-            "default_model": provider.default_model(),
-            "capabilities": provider_capabilities(provider),
-            "reason": None if available else "auth_or_dependency_missing",
-            "integration_mode": integration_mode,
-        }
-    except Exception:
-        return {
-            "success": True,
-            "status": "unavailable",
-            "available": False,
-            "provider": "openai-codex",
-            "display_name": "OpenAI (Codex auth)",
-            "default_model": None,
-            "capabilities": {},
-            "reason": "provider_load_failed",
-            "integration_mode": integration_mode,
-        }
+    """Inspect native Codex readiness without reading or exposing OAuth tokens."""
+    state = load_provider().health()
+    return {"success": True, **state, "integration_mode": "codex-native-chatgpt", "reference_image_supported": True}
+
 
 
 def build_prompt(user_prompt: str, preset: str, background_mode: str = "none") -> str:
@@ -2826,6 +2738,167 @@ def data_url_to_png_data_url(data_url: str) -> str:
     return "data:image/png;base64," + base64.b64encode(out.getvalue()).decode("ascii")
 
 
+PIPELINE_PIXEL_PROOF_RESOLUTIONS = frozenset({48, 64, 96})
+PIPELINE_PIXEL_PROOF_PALETTES = frozenset({16, 24, 32})
+PIPELINE_PIXEL_PROOF_STYLES = {
+    "32-bit refined RPG": "refined 32-bit RPG pixel art with clean readable clusters",
+    "16-bit classic RPG": "classic 16-bit RPG pixel art with compact deliberate clusters",
+    "Dark fantasy": "dark-fantasy RPG pixel art with a restrained high-contrast palette",
+}
+
+
+def normalize_3d_pixel_proof_payload(data: object) -> dict:
+    """Validate the small, explicit contract used by the 3D proof workspace."""
+    if not isinstance(data, dict):
+        raise ValueError("3D pixel proof payload must be an object")
+
+    reference_image = data.get("reference_image")
+    if not isinstance(reference_image, str) or not reference_image.startswith("data:image/"):
+        raise ValueError("reference_image must be a 3D render data URL")
+    if len(reference_image) > 12_000_000:
+        raise ValueError("reference_image exceeds the 12 MB request budget")
+    reference_image = data_url_to_png_data_url(reference_image)
+    reference_raw, _extension = data_url_to_bytes(reference_image)
+    width, height = _inspect_provider_image(reference_raw, "3d-render-reference")
+
+    def integer(name: str, default: int, minimum: int, maximum: int) -> int:
+        value = data.get(name, default)
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be an integer")
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{name} must be an integer") from exc
+        if parsed < minimum or parsed > maximum:
+            raise ValueError(f"{name} must be between {minimum} and {maximum}")
+        return parsed
+
+    resolution = integer("resolution", 64, 1, 4096)
+    if resolution not in PIPELINE_PIXEL_PROOF_RESOLUTIONS:
+        raise ValueError("resolution must be 48, 64, or 96")
+    palette_colors = integer("palette_colors", 24, 1, 256)
+    if palette_colors not in PIPELINE_PIXEL_PROOF_PALETTES:
+        raise ValueError("palette_colors must be 16, 24, or 32")
+    action = str(data.get("action", "idle")).strip().lower()
+    if action not in {"idle", "walk", "run"}:
+        raise ValueError("action must be idle, walk, or run")
+    direction = str(data.get("direction", "S")).strip().upper()
+    if direction != "S":
+        raise ValueError("the proof endpoint generates the S direction only")
+    style = str(data.get("style", "32-bit refined RPG")).strip()
+    if style not in PIPELINE_PIXEL_PROOF_STYLES:
+        raise ValueError("unsupported 3D pixel proof style")
+
+    return {
+        "reference_image": reference_image,
+        "reference_size": {"width": width, "height": height},
+        "resolution": resolution,
+        "palette_colors": palette_colors,
+        "action": action,
+        "pose_frame": integer("pose_frame", 0, 0, 100),
+        "direction": direction,
+        "style": style,
+        "shape_lock": integer("shape_lock", 82, 0, 100),
+        "pixel_simplify": integer("pixel_simplify", 68, 0, 100),
+    }
+
+
+def build_3d_pixel_proof_prompt(settings: dict) -> str:
+    """Turn one approved 3D pose render into one style-proof sprite request."""
+    style_description = PIPELINE_PIXEL_PROOF_STYLES[settings["style"]]
+    return f"""Convert the supplied 3D model render into exactly ONE finished 2D pixel-art game sprite.
+
+Reference contract:
+- IMAGE 1 is the authoritative geometry, identity, proportions, pose, equipment, colors, and camera-view reference.
+- This is the selected {settings['action']} pose at {settings['pose_frame']}% of its animation.
+- Preserve the visible silhouette and pose with approximately {settings['shape_lock']}% strictness; do not redesign the subject.
+
+Output contract:
+- exactly one S/front-direction full-body sprite, never a turnaround, sprite sheet, contact sheet, or alternate pose
+- {style_description}
+- designed for a final {settings['resolution']}x{settings['resolution']} frame and a maximum of {settings['palette_colors']} visible colors
+- pixel simplification target {settings['pixel_simplify']}%; crisp hard-edged pixel clusters, no anti-aliasing, blur, painterly rendering, voxels, or 3D look
+- one-pixel dark outline at the final target resolution; stable bottom-center pivot; full subject visible with safe padding
+- flat exact RGB(0,255,0) / #00FF00 background edge-to-edge for deterministic removal
+- no floor, cast shadow, text, labels, border, mockup, watermark, duplicate subject, or VFX""".strip()
+
+
+def resize_pixel_proof_bytes(raw: bytes, resolution: int, palette_colors: int) -> tuple[bytes, dict]:
+    """Fit and palette-limit a cleaned proof onto the exact requested game frame."""
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(raw)).convert("RGBA")
+    bbox = image.getchannel("A").getbbox()
+    if bbox is None:
+        raise ValueError("generated 3D pixel proof contains no visible subject")
+    subject = image.crop(bbox)
+    padding = max(2, round(resolution * 0.0625))
+    available = resolution - padding * 2
+    if available < 1:
+        raise ValueError("3D pixel proof resolution is too small")
+    scale = min(available / subject.width, available / subject.height)
+    target_width = max(1, min(available, round(subject.width * scale)))
+    target_height = max(1, min(available, round(subject.height * scale)))
+    subject = subject.resize((target_width, target_height), Image.Resampling.NEAREST)
+
+    alpha = subject.getchannel("A").point(lambda value: 255 if value >= 128 else 0)
+    quantized_rgb = subject.convert("RGB").quantize(
+        colors=palette_colors,
+        method=Image.Quantize.MEDIANCUT,
+        dither=Image.Dither.NONE,
+    ).convert("RGB")
+    subject = quantized_rgb.convert("RGBA")
+    subject.putalpha(alpha)
+
+    canvas = Image.new("RGBA", (resolution, resolution), (0, 0, 0, 0))
+    x = (resolution - target_width) // 2
+    y = resolution - padding - target_height
+    canvas.alpha_composite(subject, (x, y))
+    pixels = canvas.getdata()
+    visible_colors = len({(r, g, b) for r, g, b, a in pixels if a})
+    output = _png_bytes_from_image(canvas)
+    return output, {
+        "status": "PASS" if visible_colors <= palette_colors else "FAIL",
+        "resolution": [resolution, resolution],
+        "palette_limit": palette_colors,
+        "visible_colors": visible_colors,
+        "alpha_bbox": list(canvas.getchannel("A").getbbox() or ()),
+        "pivot": {"x": 0.5, "y": (resolution - padding) / resolution},
+        "resampling": "nearest",
+    }
+
+
+def pixelize_3d_frame(data: object, *, generator=generate_with_page_image_backend) -> tuple[bytes, dict]:
+    """Generate and normalize one real Codex-backed S-direction style proof."""
+    settings = normalize_3d_pixel_proof_payload(data)
+    prompt = build_3d_pixel_proof_prompt(settings)
+    raw, provider_metadata = generator(
+        prompt,
+        image_url=settings["reference_image"],
+    )
+    if not isinstance(raw, bytes):
+        raise RuntimeError("Codex returned an invalid 3D pixel proof artifact")
+    cleaned, cleanup_qa = postprocess_actor_single_frame_bytes(
+        raw,
+        background_mode="chroma_green",
+        chroma_mode="global",
+    )
+    output, frame_qa = resize_pixel_proof_bytes(
+        cleaned,
+        settings["resolution"],
+        settings["palette_colors"],
+    )
+    return output, {
+        "artifact_digest": hashlib.sha256(output).hexdigest(),
+        "provider": provider_metadata.get("provider", "codex-native"),
+        "model": provider_metadata.get("model"),
+        "reference_roles": provider_metadata.get("reference_roles", ["direction_master"]),
+        "settings": {key: value for key, value in settings.items() if key != "reference_image"},
+        "qa": {"cleanup": cleanup_qa, "frame": frame_qa},
+        "method": "3d-render-reference+codex-image+chroma-cleanup+pixel-frame-normalization",
+    }
+
+
 def aspect_from_image_data_url(data_url: str) -> tuple[str, tuple[int, int]]:
     from PIL import Image
 
@@ -2904,127 +2977,20 @@ def build_codex_actor_frame_responses_payload(
     }
 
 
-def collect_codex_actor_frame_b64(
-    prompt: str,
-    image_data_urls: list[str],
-    reference_roles: list[str],
-) -> tuple[str, str, str]:
-    """Send actor references as actual ordered input_image content to Codex Responses."""
-    import httpx
-    from agent.auxiliary_client import _codex_cloudflare_headers
+def collect_codex_actor_frame_b64(prompt: str, image_data_urls: list[str], reference_roles: list[str]) -> tuple[str, str, str]:
+    result = load_provider().generate(prompt, image_url=image_data_urls[0] if image_data_urls else None,
+        reference_image_urls=image_data_urls[1:], reference_roles=reference_roles)
+    if not result.get("success"):
+        raise RuntimeError(result.get("error") or "Codex image generation failed")
+    return base64.b64encode(Path(result["image"]).read_bytes()).decode("ascii"), result.get("model") or "gpt-image-2", "auto"
 
-    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex_actor", PROVIDER_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load openai-codex image provider")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    token = mod._read_codex_access_token()
-    if not token:
-        raise RuntimeError("No Codex/ChatGPT OAuth credentials available. Run hermes auth codex.")
-    tier_id, meta = mod._resolve_model()
-    payload = build_codex_actor_frame_responses_payload(
-        prompt, image_data_urls, reference_roles, provider_module=mod, quality=meta["quality"],
-    )
-    headers = _codex_cloudflare_headers(token)
-    headers.update({"Accept": "text/event-stream", "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    image_b64 = None
-    timeout = httpx.Timeout(300.0, connect=30.0, read=300.0, write=30.0, pool=30.0)
-    with httpx.Client(timeout=timeout, headers=headers) as http:
-        with http.stream("POST", f"{mod._CODEX_BASE_URL}/responses", json=payload) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                exc.response.read()
-                raise RuntimeError(f"Codex actor frame API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
-            for event in mod._iter_sse_json(response):
-                found = mod._extract_image_b64(event)
-                if found:
-                    image_b64 = found
-    if not image_b64:
-        raise RuntimeError("Codex actor frame response contained no image result")
-    return image_b64, tier_id, meta["quality"]
 
 
 def collect_codex_edit_b64(image_data_url: str, mask_data_url: str, prompt: str, negative: str = "", prompt_is_final: bool = False) -> tuple[str, str, str]:
-    """Use the Codex image-generation tool as an image-edit backend.
-
-    The tool returns a full image; we still composite it locally through the mask so
-    pixels outside the selected area stay protected even if the model drifts.
-    """
-    import httpx
-    from agent.auxiliary_client import _codex_cloudflare_headers
-
-    # Re-load the provider module by file path so we can use its private helpers without
-    # depending on package import names.
-    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex_edit", PROVIDER_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load openai-codex image provider")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    token = mod._read_codex_access_token()
-    if not token:
-        raise RuntimeError("No Codex/ChatGPT OAuth credentials available. Run hermes auth codex.")
-
-    aspect, _size_px = aspect_from_image_data_url(image_data_url)
-    tier_id, meta = mod._resolve_model()
-    size = mod._SIZES.get(aspect, mod._SIZES["square"])
     edit_prompt = prompt if prompt_is_final else build_inpaint_prompt(prompt, negative)
-    headers = _codex_cloudflare_headers(token)
-    headers.update({
-        "Accept": "text/event-stream",
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    })
-    payload = {
-        "model": mod._CODEX_CHAT_MODEL,
-        "store": False,
-        "instructions": "You are an image editor. Use the image_generation tool to edit the supplied image according to the mask and prompt.",
-        "input": [{
-            "type": "message",
-            "role": "user",
-            "content": [
-                {"type": "input_text", "text": edit_prompt},
-                {"type": "input_text", "text": "Original image:"},
-                {"type": "input_image", "image_url": data_url_to_png_data_url(image_data_url)},
-                {"type": "input_text", "text": "Mask image. White = edit area, black = protected area:"},
-                {"type": "input_image", "image_url": data_url_to_png_data_url(mask_data_url)},
-            ],
-        }],
-        "tools": [{
-            "type": "image_generation",
-            "model": mod.API_MODEL,
-            "size": size,
-            "quality": meta["quality"],
-            "output_format": "png",
-            "background": "opaque",
-            "partial_images": 1,
-        }],
-        "tool_choice": {
-            "type": "allowed_tools",
-            "mode": "required",
-            "tools": [{"type": "image_generation"}],
-        },
-        "stream": True,
-    }
+    edit_prompt += "\nImage 1 is the original. Image 2 is a mask: white marks the edit area, black marks the protected area. Preserve everything outside the white area."
+    return collect_codex_actor_frame_b64(edit_prompt, [data_url_to_png_data_url(image_data_url), data_url_to_png_data_url(mask_data_url)], ["original", "mask_guide"])
 
-    image_b64 = None
-    timeout = httpx.Timeout(300.0, connect=30.0, read=300.0, write=30.0, pool=30.0)
-    with httpx.Client(timeout=timeout, headers=headers) as http:
-        with http.stream("POST", f"{mod._CODEX_BASE_URL}/responses", json=payload) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                exc.response.read()
-                raise RuntimeError(f"Codex edit API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
-            for event in mod._iter_sse_json(response):
-                found = mod._extract_image_b64(event)
-                if found:
-                    image_b64 = found
-
-    if not image_b64:
-        raise RuntimeError("Codex edit response contained no image result")
-    return image_b64, tier_id, meta["quality"]
 
 
 def collect_codex_replacement_b64(image_data_url: str, mask_data_url: str, prompt: str, negative: str = "") -> tuple[str, str, str]:
@@ -3435,86 +3401,11 @@ User request: {prompt.strip()}
 
 
 def collect_codex_reference_asset_b64(reference_data_url: str, prompt: str, negative: str = "", direction_mode: str = "single", reference_direction: str = "S", target_direction: str = "S", animation_mode: str = "idle", walk_frames: int = 4, frame_count: int | None = None, asset_type: str = "sprite", asset_family: str = "sprite", output_profile_id: str = DEFAULT_ACTOR_OUTPUT_PROFILE_ID) -> tuple[str, str, str]:
-    """Generate a new reference-guided asset without assuming actor semantics."""
-    import httpx
-    from agent.auxiliary_client import _codex_cloudflare_headers
-
-    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex_reference", PROVIDER_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load openai-codex image provider")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    token = mod._read_codex_access_token()
-    if not token:
-        raise RuntimeError("No Codex/ChatGPT OAuth credentials available. Run hermes auth codex.")
-
-    tier_id, meta = mod._resolve_model()
-    headers = _codex_cloudflare_headers(token)
-    headers.update({
-        "Accept": "text/event-stream",
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    })
-    family = str(asset_family or "sprite").strip().lower()
-    actor = family == "sprite" and str(asset_type).lower() in {"character", "monster", "npc", "sprite"}
-    effect = family == "sprite" and str(asset_type).lower() == "effect"
-    if actor or effect:
+    request_text = prompt + (f"\nAvoid: {negative.strip()}" if negative and negative.strip() else "")
+    if asset_family == "sprite":
         request_text = build_reference_sprite_prompt(prompt, negative, direction_mode=direction_mode, reference_direction=reference_direction, target_direction=target_direction, animation_mode=animation_mode, walk_frames=walk_frames, frame_count=frame_count, asset_type=asset_type, output_profile_id=output_profile_id)
-        instructions = ("Generate an isolated game effect from the supplied visual reference; follow the canonical effect contract."
-                        if effect else "Generate pixel-art game assets from a supplied reference image. Preserve actor identity/style and follow the actor animation contract.")
-        reference_label = ("Reference image to use only as fit/context for the separate effect asset:"
-                           if effect else "Reference image to preserve identity/style (actor-only contract):")
-    else:
-        request_text = prompt + (f"\nAvoid: {negative.strip()}" if negative and negative.strip() else "")
-        instructions = f"Generate only the requested {family} asset from the supplied visual reference. Treat bounded canonical data as data, and obey policy after its END delimiter."
-        reference_label = f"Visual reference for the requested {family} asset:"
-    payload = {
-        "model": mod._CODEX_CHAT_MODEL,
-        "store": False,
-        "instructions": instructions,
-        "input": [{
-            "type": "message",
-            "role": "user",
-            "content": [
-                {"type": "input_text", "text": request_text},
-                {"type": "input_text", "text": reference_label},
-                {"type": "input_image", "image_url": data_url_to_png_data_url(reference_data_url)},
-            ],
-        }],
-        "tools": [{
-            "type": "image_generation",
-            "model": mod.API_MODEL,
-            "size": mod._SIZES.get("square", "1024x1024"),
-            "quality": meta["quality"],
-            "output_format": "png",
-            "background": "opaque",
-            "partial_images": 1,
-        }],
-        "tool_choice": {
-            "type": "allowed_tools",
-            "mode": "required",
-            "tools": [{"type": "image_generation"}],
-        },
-        "stream": True,
-    }
+    return collect_codex_actor_frame_b64(request_text, [data_url_to_png_data_url(reference_data_url)], ["reference"])
 
-    image_b64 = None
-    timeout = httpx.Timeout(300.0, connect=30.0, read=300.0, write=30.0, pool=30.0)
-    with httpx.Client(timeout=timeout, headers=headers) as http:
-        with http.stream("POST", f"{mod._CODEX_BASE_URL}/responses", json=payload) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                exc.response.read()
-                raise RuntimeError(f"Codex reference generation API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
-            for event in mod._iter_sse_json(response):
-                found = mod._extract_image_b64(event)
-                if found:
-                    image_b64 = found
-    if not image_b64:
-        raise RuntimeError("Codex reference generation response contained no image result")
-    return image_b64, tier_id, meta["quality"]
 
 
 def collect_codex_reference_sprite_b64(reference_data_url: str, prompt: str, negative: str = "", **kwargs) -> tuple[str, str, str]:
@@ -3577,115 +3468,11 @@ def _json_from_text(text: str) -> dict:
 
 
 def classify_direction_candidate_with_codex_vision(raw_png: bytes, expected_direction: str) -> dict:
-    """Direction QA contract: fail closed unless vision says the candidate matches."""
-    import httpx
-    from agent.auxiliary_client import _codex_cloudflare_headers
-
-    expected_direction = (expected_direction or "S").upper()
-    if expected_direction in {"E", "SE", "NE"}:
-        return {"pass": False, "observed": expected_direction, "reason": "right-facing source is forbidden; derive by flip only"}
-
-    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex_direction_qa", PROVIDER_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load openai-codex provider for direction QA")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    token = mod._read_codex_access_token()
-    if not token:
-        raise RuntimeError("No Codex/ChatGPT OAuth credentials available for direction QA")
-
-    headers = _codex_cloudflare_headers(token)
-    headers.update({"Accept": "text/event-stream", "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    prompt = f"""Direction QA contract for a transparent pixel-art sprite.
-Expected direction: {expected_direction}
-Screen-space rules:
-- W means true side profile facing screen-left.
-- SW means front-left 3/4, face/body turned screen-left while front details remain visible.
-- NW means back-left 3/4, mostly back/side turned screen-left, not screen-right.
-- S means front-facing camera.
-- N means back-facing away from camera.
-Reject if ambiguous, if facing screen-right, if it is an E/SE/NE source, or if the view does not match.
-Return only compact JSON: {{"pass": true/false, "observed": "S|N|W|SW|NW|E|SE|NE|ambiguous", "reason": "..."}}"""
-    image_url = "data:image/png;base64," + base64.b64encode(raw_png).decode("ascii")
-    payload = {
-        "model": mod._CODEX_CHAT_MODEL,
-        "store": False,
-        "input": [{"type": "message", "role": "user", "content": [
-            {"type": "input_text", "text": prompt},
-            {"type": "input_image", "image_url": image_url},
-        ]}],
-        "stream": True,
-    }
-    timeout = httpx.Timeout(120.0, connect=30.0, read=120.0, write=30.0, pool=30.0)
-    texts = []
-    with httpx.Client(timeout=timeout, headers=headers) as http:
-        with http.stream("POST", f"{mod._CODEX_BASE_URL}/responses", json=payload) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                exc.response.read()
-                raise RuntimeError(f"Direction QA API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
-            for event in mod._iter_sse_json(response):
-                text = _extract_response_text(event)
-                if text:
-                    texts.append(text)
-    parsed = _json_from_text("\n".join(texts))
-    passed = bool(parsed.get("pass")) and str(parsed.get("observed", "")).upper() == expected_direction
-    return {"pass": passed, "observed": str(parsed.get("observed", "ambiguous")).upper(), "reason": str(parsed.get("reason", "")), "raw": parsed}
+    raise RuntimeError("Legacy automatic visual QA is unavailable with the native Codex image provider. Review the generated frames manually.")
 
 
 def classify_sprite_sheet_consistency_with_codex_vision(sheet_png: bytes) -> dict:
-    """Holistic sprite-set QA: fail closed on identity/equipment/proportion/crop mismatches."""
-    import httpx
-    from agent.auxiliary_client import _codex_cloudflare_headers
-
-    spec = importlib.util.spec_from_file_location("asset_studio_openai_codex_sprite_set_qa", PROVIDER_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load openai-codex provider for sprite-set QA")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    token = mod._read_codex_access_token()
-    if not token:
-        raise RuntimeError("No Codex/ChatGPT OAuth credentials available for sprite-set QA")
-
-    headers = _codex_cloudflare_headers(token)
-    headers.update({"Accept": "text/event-stream", "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    prompt = """Sprite-set production QA contract for a top-down pixel-art game asset.
-The sheet order is N, NE, E, SE, S, SW, W, NW.
-Reject unless this looks like the SAME character rotated, not eight unrelated cuts.
-Fail if any of these are visible:
-- diagonal/front/back directions have noticeably different scale or body proportions
-- backpack, weapon, hat, armor, colors, or silhouette change between directions
-- equipment/backpack is clipped/cropped by the cell edge
-- a direction looks like a different character, different camera angle, or painterly illustration
-- feet/pivot alignment is unusable for a game sprite
-- right-facing sprites are not clean mirrors of left-facing sprites
-Return only compact JSON: {"pass": true/false, "reason": "...", "failures": ["..."]}"""
-    image_url = "data:image/png;base64," + base64.b64encode(sheet_png).decode("ascii")
-    payload = {
-        "model": mod._CODEX_CHAT_MODEL,
-        "store": False,
-        "input": [{"type": "message", "role": "user", "content": [
-            {"type": "input_text", "text": prompt},
-            {"type": "input_image", "image_url": image_url},
-        ]}],
-        "stream": True,
-    }
-    timeout = httpx.Timeout(120.0, connect=30.0, read=120.0, write=30.0, pool=30.0)
-    texts = []
-    with httpx.Client(timeout=timeout, headers=headers) as http:
-        with http.stream("POST", f"{mod._CODEX_BASE_URL}/responses", json=payload) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                exc.response.read()
-                raise RuntimeError(f"Sprite-set QA API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
-            for event in mod._iter_sse_json(response):
-                text = _extract_response_text(event)
-                if text:
-                    texts.append(text)
-    parsed = _json_from_text("\n".join(texts))
-    return {"pass": bool(parsed.get("pass")), "reason": str(parsed.get("reason", "")), "failures": parsed.get("failures", []), "raw": parsed}
+    raise RuntimeError("Legacy automatic visual QA is unavailable with the native Codex image provider. Review the generated frames manually.")
 
 
 
@@ -3940,10 +3727,100 @@ def classify_chat_command(message: str, context: dict | None = None, negative: s
     return response("explain", "명령 해석", "아직 자동 실행 가능한 명령으로 확정하지 못했습니다. 배경 제거, 투명 배경, 마스크, 선택영역 재생성, PNG 내보내기처럼 말해 주세요.", {}, False)
 
 
+def generate_direct_asset(data):
+    """Prompt-first image/UI/Object generation without hidden style/contracts."""
+    from PIL import Image, ImageOps
+
+    families, _ = recipe_generation_taxonomy()
+    family, subtype = data.get("asset_family"), data.get("asset_type")
+    valid = (family == "image" and subtype == "image") or (family in {"ui", "object"} and subtype in families[family])
+    if not valid:
+        raise ValueError("Direct generation requires a valid Image, UI or Object subtype")
+    prompt = data.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000:
+        raise ValueError("prompt must contain 1–20000 characters")
+    output = data.get("output", {})
+    if not isinstance(output, dict):
+        raise ValueError("output must be an object")
+    dimensions = [output.get(key, 512) for key in ("width", "height")]
+    if any(isinstance(n, bool) or not isinstance(n, int) or not 16 <= n <= 2048 for n in dimensions):
+        raise ValueError("Output width and height must be integers between 16 and 2048")
+    if output.get("background", "transparent") not in {"transparent", "opaque"}:
+        raise ValueError("Invalid output background")
+    width, height = dimensions
+    aspect = "square" if width == height else "landscape" if width > height else "portrait"
+    reference = data.get("reference_image")
+    reference_bytes = None
+    reference_ext = None
+    if reference is not None:
+        if family != "image":
+            raise ValueError("Reference images are supported in image generation mode")
+        if not isinstance(reference, str) or not re.fullmatch(r"data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=\r\n]+", reference):
+            raise ValueError("Reference must be an embedded PNG, JPEG or WebP image")
+        if len(reference) > MAX_PROVIDER_IMAGE_BYTES * 4 // 3 + 128:
+            raise ValueError("Reference image exceeds the input budget")
+        try:
+            reference_bytes = base64.b64decode(reference.split(",", 1)[1], validate=True)
+            with Image.open(io.BytesIO(reference_bytes)) as ref:
+                if not reference_bytes or len(reference_bytes) > MAX_PROVIDER_IMAGE_BYTES or max(ref.size) > MAX_IMAGE_DIMENSION or ref.width * ref.height > MAX_IMAGE_PIXELS:
+                    raise ValueError("Reference image exceeds the input budget")
+                reference_ext = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}.get(ref.format)
+                if reference_ext is None:
+                    raise ValueError("Unsupported reference image format")
+                if "output" not in data:
+                    aspect = "square" if ref.width == ref.height else "landscape" if ref.width > ref.height else "portrait"
+                ref.verify()
+        except (OSError, ValueError) as exc:
+            raise ValueError("Invalid reference image") from exc
+    options = {"image_url": reference} if reference is not None else {}
+    result = load_provider().generate(prompt, aspect_ratio=aspect, **options)
+    if not result.get("success"):
+        raise RuntimeError(result.get("error") or "Image generation failed")
+    source = Path(result["image"])
+    if source.stat().st_size > MAX_PROVIDER_IMAGE_BYTES:
+        raise ValueError("Provider image exceeds the output budget")
+    with Image.open(source) as opened:
+        if opened.width * opened.height > MAX_IMAGE_PIXELS:
+            raise ValueError("Provider image exceeds the pixel budget")
+        image = opened.convert("RGBA")
+    if family == "image" and "output" not in data:
+        canvas = image
+        width, height = image.size
+    else:
+        sampling = Image.Resampling.LANCZOS if family == "image" else Image.Resampling.NEAREST
+        fitted = ImageOps.contain(image, (width, height), sampling)
+        canvas = Image.new("RGBA", (width, height))
+        canvas.alpha_composite(fitted, ((width-fitted.width)//2, (height-fitted.height)//2))
+    name = f"direct_{uuid.uuid4().hex}.png"
+    canvas.save(GENERATED / name)
+    metadata = {"prompt": prompt, "prompt_mode": "direct", "asset_family": family,
+                "asset_type": subtype, "output": {**output, "width": width, "height": height}}
+    reference_url = None
+    if reference_bytes is not None:
+        reference_name = f"{name}.reference.{reference_ext}"
+        (GENERATED / reference_name).write_bytes(reference_bytes)
+        reference_url = f"/assets/generated/{reference_name}"
+        metadata.update(reference_url=reference_url, reference_sha256=hashlib.sha256(reference_bytes).hexdigest())
+    (GENERATED / (name + ".json")).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"success": True, "url": f"/assets/generated/{name}", "width": width, "height": height,
+            "model": result.get("model"), "provider": result.get("provider"),
+            "asset_family": family, "asset_type": subtype, "prompt_mode": "direct", "reference_url": reference_url}
+
+
 class Handler(SimpleHTTPRequestHandler):
     _LOOPBACK_AUTHORITY = re.compile(
         r"(?P<host>(?i:localhost)|127\.0\.0\.1|\[::1\])(?::(?P<port>[0-9]{1,5}))?\Z"
     )
+
+    def log_message(self, format: str, *args) -> None:
+        """Keep detached Windows servers responsive when stderr is unavailable."""
+        try:
+            super().log_message(format, *args)
+        except OSError:
+            # A hidden Start-Process launch can inherit a closed stderr handle
+            # through the Windows venv launcher. Request logging must never
+            # abort an otherwise valid HTTP response.
+            return
 
     @classmethod
     def _normalized_loopback_authority(cls, value: str) -> str | None:
@@ -4020,6 +3897,10 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/provider-health":
             return self.send_json(200, provider_health())
+        if path == "/api/sprite-video-health":
+            return self.send_json(200, sprite_video_health())
+        if path == "/api/local-3d-pipeline-health":
+            return self.send_json(404, {"success": False, "error": "Retired API"})
         if path.startswith("/api/generation-jobs/"):
             job_id = unquote(path.removeprefix("/api/generation-jobs/"))
             if not re.fullmatch(r"[0-9a-f]{32}", job_id):
@@ -4619,6 +4500,8 @@ class Handler(SimpleHTTPRequestHandler):
                 context = data.get("context") if isinstance(data.get("context"), dict) else {}
                 result = classify_chat_command(message, context, negative)
                 return self.send_json(200 if result.get("success") else 400, result)
+            if path == "/api/sprite-video":
+                return self.send_json(200, generate_sprite_video(data, generated_root=GENERATED))
             if path == "/api/generate-reference":
                 data = normalize_asset_generation_payload(data)
                 asset_family = data["asset_family"]
@@ -4710,6 +4593,8 @@ class Handler(SimpleHTTPRequestHandler):
                 dst = GENERATED / name
                 dst.write_bytes(out)
                 return self.send_json(200, {"success": True, "url": f"/assets/generated/{name}", "path": str(dst), "model": model, "quality": quality, "provider": "openai-codex-reference", "background_mode": background_mode, "qa": qa, "method": f"reference-image-sprite-generation+{qa.get('method', 'postprocess')}"})
+            if path == "/api/generate" and data.get("prompt_mode") == "direct":
+                return self.send_json(200, generate_direct_asset(data))
             if path == "/api/generate":
                 data = normalize_asset_generation_payload(data)
                 asset_family = data["asset_family"]

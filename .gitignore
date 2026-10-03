@@ -21,3 +21,14 @@ assets/generated/
 assets/processed/
 assets/test/
 projects/
+
+# Local experiments, model downloads and generated prototypes
+work/
+artifacts/
+.omx/
+.run/
+assets/models/
+assets/prototypes/
+vendor/quaternius/
+*.safetensors
+*.gguf

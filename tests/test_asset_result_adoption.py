@@ -59,7 +59,7 @@ def test_generated_results_are_not_blocked_by_qa_and_success_reveals_new_layer()
     assert "AI 생성 이미지가 새 레이어로 추가되었습니다." in adopt
     generate = body("generateAiAsset")
     retry = body("retryAssetResult")
-    assert "await adoptResult(result.id,'new-layer')" in generate
+    assert re.search(r"await adoptResult\(result\.id,\s*'new-layer'\)", generate)
     assert "await adoptResult(next.id,'new-layer')" in retry
 
 

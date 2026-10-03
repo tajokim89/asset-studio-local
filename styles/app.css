@@ -708,3 +708,114 @@ body.resizing { user-select: none; cursor: col-resize; }
 .actor-production-panel canvas{display:block;width:min(100%,256px);height:auto;margin:10px auto;background:repeating-conic-gradient(#222 0 25%,#333 0 50%) 0/16px 16px;image-rendering:pixelated;border:1px solid var(--line)}
 .actor-production-panel [role="status"]{padding:8px;border-radius:6px;background:rgba(0,0,0,.18);font-family:ui-monospace,monospace}
 .actor-visual-approval{display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-weight:700;line-height:1.35}.actor-review-warning{color:#ffd166;font-size:11px;margin:5px 0 10px}
+
+/* 작업별 메뉴: 기존 도구와 결과를 한 곳에서 사용합니다. */
+.topbar { overflow: visible; position: relative; z-index: 30; gap: 8px; }
+.topbar .brand { margin-right: 8px; font-size: 14px; }
+#studioWorkspaceSwitch { flex-shrink: 0; align-items: center; }
+.toolbar-menu { position: relative; }
+.toolbar-menu > summary {
+  list-style: none; cursor: pointer; white-space: nowrap; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; font-size: 12px; color: var(--muted);
+}
+.toolbar-menu > summary::after { content: ' ▾'; }
+.toolbar-menu > summary::-webkit-details-marker { display: none; }
+.toolbar-menu[open] > summary, .toolbar-menu.is-active > summary { color: #fff; border-color: var(--accent); }
+.toolbar-menu__content {
+  position: absolute; top: calc(100% + 8px); right: 0; width: 250px;
+  display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line);
+  border-radius: 12px; background: #151923; box-shadow: 0 16px 40px #0009;
+  max-height: calc(100vh - 90px); overflow-y: auto;
+}
+.canvas-options { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 300px; }
+.canvas-options #workspaceModeSwitch, .canvas-options #presetSize, .canvas-options #applyCanvas,
+.canvas-options #fitCanvas { grid-column: 1 / -1; }
+.canvas-options #presetSize { max-width: none !important; width: 100%; }
+.canvas-options #canvasW, .canvas-options #canvasH { max-width: none !important; }
+.canvas-options .zoom-label { justify-content: center; }
+.results-workspace { grid-column: 1 / 5; grid-row: 2; padding: 24px; overflow-y: auto; min-width: 0; }
+.results-workspace[hidden], #animationToolsHost[hidden] { display: none !important; }
+.results-workspace > header { margin-bottom: 20px; }
+.results-workspace h2 { margin: 0 0 8px; font-size: 22px; }
+.results-workspace .asset-result-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.results-workspace .gallery { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+.app[data-primary-workspace="animation"] > .sidebar > :not(#animationToolsHost) { display: none !important; }
+.app[data-primary-workspace="animation"] > .toolrail,
+.app[data-primary-workspace="animation"] > #leftResize { display: none !important; }
+.app[data-primary-workspace="animation"] > .sidebar { grid-column: 1 / 4; }
+.app[data-primary-workspace="results"] > .toolrail,
+.app[data-primary-workspace="results"] > .sidebar,
+.app[data-primary-workspace="results"] > #leftResize,
+.app[data-primary-workspace="results"] > #workspace { display: none !important; }
+.sprite-extraction-tools > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+#animationToolsHost .animation-preview-stage { min-height: 180px; }
+#animationToolsHost .animation-preview-stage img { max-width: 160px; max-height: 160px; }
+@media (max-width: 1180px) {
+  .topbar .brand { display: none; }
+  .topbar { gap: 5px; padding-inline: 8px; }
+  .topbar > button { padding-inline: 8px; }
+}
+@media (max-width: 900px) {
+  .app { grid-template-rows: auto minmax(0, 1fr); }
+  .topbar { flex-wrap: wrap; }
+  .toolbar-menu__content { position: fixed; top: 100px; right: 12px; max-width: calc(100vw - 24px); }
+  }
+
+/* 생성 요청을 먼저 보여주고 선택 설정은 필요할 때 펼칩니다. */
+.asset-options-disclosure { border-top: 1px solid var(--line-soft); margin-top: 6px; }
+.asset-options-disclosure > summary { padding: 11px 2px; cursor: pointer; color: #c4ccdc; font-size: 12px; font-weight: 650; }
+.asset-options-disclosure[open] > summary { color: #fff; }
+.asset-options-disclosure .asset-shared-section { margin-top: 0; }
+#assetCoreSection > h4 { display: none; }
+#assetAiPanel > .family-generate { margin-top: 4px; margin-bottom: 10px; }
+.sidebar:has(> .option-panel.active[data-tool-panel="ai"]) > .panel:first-of-type { display: none; }
+
+/* 이미지 생성과 로컬 영상 작업 */
+#legacyGenerationControls, #actorWalkWorkflow[hidden], #actorProductionPanel[hidden], #spriteVideoControls[hidden], #spriteVideoSourcePreview[hidden] { display: none !important; }
+.asset-family-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sprite-source-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #11161f; }
+.sprite-source-card > span { color: var(--muted); font-size: 11px; }
+.sprite-source-card strong { font-size: 12px; overflow-wrap: anywhere; }
+.sprite-source-card img { width: 72px; height: 72px; object-fit: contain; image-rendering: pixelated; }
+.sprite-video-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.sprite-video-grid label { margin: 0; font-size: 11px; min-width: 0; }
+.sprite-video-grid .input { width: 100%; min-width: 0; }
+#spriteVideoHealth { font-size: 11px; }
+#spriteVideoRecheck, #spriteWizardOpen { font-size: 11px; padding: 7px; margin-bottom: 8px; }
+#assetCorePrompt { min-height: 105px; }
+.app[data-primary-workspace="animation"] #assetFamilyTabs { display: none; }
+.sprite-wizard-dialog { width: min(560px, 90vw); max-height: 85vh; overflow-y: auto; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+.sprite-wizard-dialog::backdrop { background: #000a; }
+.sprite-wizard-dialog header { display: flex; align-items: center; justify-content: space-between; }
+.sprite-wizard-dialog label { display: block; margin: 12px 0; }
+.sprite-wizard-dialog input, .sprite-wizard-dialog textarea { width: 100%; }
+.sprite-wizard-dialog input[type="checkbox"] { width: auto; }
+.result-downloads { display: flex; gap: 10px; padding-top: 8px; font-size: 12px; }
+.result-downloads a { color: #b8aaff; }
+
+#spriteVideoExecution[hidden] { display: none !important; }
+.sprite-source-card { position: relative; padding-right: 88px; min-height: 94px; }
+.sprite-source-card img { position: absolute; right: 8px; top: 10px; }
+#spriteWizardOpen { margin-top: 10px; }
+
+label[for="assetSubtype"][hidden], #assetSubtype[hidden] { display: none !important; }
+
+.image-reference-controls { position: relative; margin: 10px 0 14px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #11161f; }
+.image-reference-controls[hidden], #imageReferencePreview[hidden], #imageReferenceClear[hidden] { display: none !important; }
+.image-reference-heading { display: grid; gap: 5px; }
+.image-reference-heading > span { font-size: 11px; color: var(--muted); }
+.image-reference-heading > strong { font-size: 12px; overflow-wrap: anywhere; }
+#imageReferencePreview { width: 76px; height: 76px; object-fit: contain; image-rendering: auto; display: block; margin: 8px 0; border-radius: 6px; background: #0b0f16; }
+.image-reference-controls .row { margin-top: 10px; }
+.image-reference-controls button { font-size: 11px; }
+#imageReferenceStatus:empty { display: none; }
+
+.character-action-dialog { width: min(620px, 92vw); }
+.character-action-dialog [hidden] { display: none !important; }
+.character-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.character-action-dialog section { padding: 2px 0 8px; }
+.character-action-dialog select { width: 100%; }
+#characterActionError { color: #fca5a5; }
+#characterActionApply { width: 100%; margin-top: 8px; }
+#characterDirectPrompt { font-size: 11px; padding-inline: 8px; }
+@media(max-width: 480px) { .character-action-grid { grid-template-columns: 1fr; } .character-action-dialog { padding: 14px; } }

@@ -114,6 +114,7 @@ let activeDrawingLayerId = null;
 let selectedLayerId = null;
 const editorLayerSubscribers = new Set();
 const editorLayerMotionPreviews = new Map();
+let editorRigPreviewLayerIds = new Set();
 let isCropDragging = false;
 let cropStart = null;
 let cropPreview = null;
@@ -166,7 +167,7 @@ function createAssetResult(input, deps = {}) {
     return JSON.parse(text);
   };
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail('object required');
-  const families = { sprite:new Set(['character','monster','npc','effect','item']), tile:new Set(['terrain','tile','tileset','autotile','map']), ui:new Set(['button','panel','icon','ui_panel']), object:new Set(['interactable','prop','decoration','item']) };
+  const families = { image:new Set(['image']), sprite:new Set(['character','monster','npc','effect','item']), tile:new Set(['terrain','tile','tileset','autotile','map']), ui:new Set(['button','panel','icon','ui_panel']), object:new Set(['interactable','prop','decoration','item']) };
   const family = input.family, type = input.type;
   if (!families[family]) fail('family');
   if (typeof type !== 'string' || !type.trim() || !families[family].has(type)) fail('family subtype');
@@ -288,7 +289,7 @@ const adoptionRecords = [];
 const adoptionInFlight = new Set();
 
 async function preflightResultImage(url, limits = {}) {
-  const maxBytes=limits.maxBytes || 16*1024*1024, maxDimension=limits.maxDimension || 8192, maxPixels=limits.maxPixels || 33554432, timeout=limits.timeout || 8000;
+  const maxBytes=limits.maxBytes || 16*1024*1024, maxDimension=limits.maxDimension || 8192, maxPixels=limits.maxPixels || 33554432, timeout=limits.timeout || 120000;
   if(typeof url !== 'string' || url.startsWith('blob:') || !(/^(data:image\/(png|jpeg|webp);base64,)/i.test(url) || /^(https?:\/\/|\/|\.\/)/.test(url))) throw new Error('Unsafe result image scheme');
   const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),timeout);
   let response, blob;
@@ -299,15 +300,26 @@ async function preflightResultImage(url, limits = {}) {
     if(!['image/png','image/jpeg','image/webp'].includes(mime)) throw new Error('Unsafe result image MIME');
     const encoded=await response.arrayBuffer();
     if(!encoded.byteLength || encoded.byteLength > maxBytes) throw new Error('Result image encoded bytes exceeded');
+    clearTimeout(timer);
     blob=new Blob([encoded],{type:mime});
-    const bitmap=await Promise.race([createImageBitmap(blob),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Result image decode timeout')),timeout))]);
+    let decodeTimer;
+    const decoding=createImageBitmap(blob);
+    let decodeExpired=false;
+    decoding.then(bitmap=>{if(decodeExpired)bitmap.close?.();},()=>{});
+    let bitmap;
+    try {
+      bitmap=await Promise.race([decoding,new Promise((_,reject)=>{decodeTimer=setTimeout(()=>{decodeExpired=true;reject(new Error('결과 이미지 해석 시간이 초과됐습니다. 결과 탭에서 다시 불러오세요.'));},15000);})]);
+    } finally { clearTimeout(decodeTimer); }
     const width=bitmap.width, height=bitmap.height; bitmap.close?.();
     if(!width || !height || width>maxDimension || height>maxDimension || width*height>maxPixels || width*height*4>maxPixels*4) throw new Error('Result image dimensions/pixels/RGBA exceeded');
     return {url,mime,bytes:encoded.byteLength,width,height};
+  } catch(error) {
+    if(error.name==='AbortError') throw new Error('결과 이미지 다운로드 시간이 초과됐습니다. 생성된 파일은 결과 탭에 보관돼 있습니다.');
+    throw error;
   } finally { clearTimeout(timer); }
 }
 
-function loadAdoptionFabricImage(url, timeout=8000) {
+function loadAdoptionFabricImage(url, timeout=120000) {
   return new Promise((resolve,reject)=>{ let settled=false; const timer=setTimeout(()=>{settled=true;reject(new Error('Result Fabric decode timeout'));},timeout);
     fabric.Image.fromURL(url,img=>{if(settled)return;clearTimeout(timer);if(!img||!img.width||!img.height)reject(new Error('Result Fabric decode failed'));else resolve(img);},{crossOrigin:'anonymous'});
   });
@@ -381,14 +393,18 @@ const RESULT_SPRITE_LIMITS=Object.freeze({maxPixels:33554432,maxWorkingBytes:268
 const resultSpritePlayers=new Map(),resultWalkReviews=new Map();
 function deriveResultSpriteAnimation(result) {
   const root=result?.normalizedContract||result?.sourceRequest||{},fallbackRoot=result?.sourceRequest||{},contract=root?.sprite||root,fallback=fallbackRoot?.sprite||fallbackRoot,frameCount=Number(contract.frame_count??contract.walk_frames??fallback.frame_count??fallback.walk_frames),url=result?.preview?.url||result?.artifacts?.find(a=>typeof a?.url==='string')?.url;
-  if(result?.status!=='succeeded'||result?.family!=='sprite'||!['character','monster','npc'].includes(result?.type)||!Number.isSafeInteger(frameCount)||frameCount<=1||frameCount>RESULT_SPRITE_LIMITS.maxFrames||typeof url!=='string'||!url)return null;
-  const direction=String(contract.target_direction??fallback.target_direction??'S').toUpperCase();if(!['S','N','W','SW','NW','E','SE','NE'].includes(direction))return null;
-  const action=String(contract.animation_mode??contract.action??fallback.animation_mode??fallback.action??'').toLowerCase();return {url,frameCount,direction,action,fps:Math.min(24,Math.max(1,Number(contract.fps)||8)),autoPlay:true,horizontal:true};
+  if(result?.status!=='succeeded'||result?.family!=='sprite'||!['character','monster','npc','effect'].includes(result?.type)||!Number.isSafeInteger(frameCount)||frameCount<=1||frameCount>RESULT_SPRITE_LIMITS.maxFrames||typeof url!=='string'||!url)return null;
+  const sourceDirection=root.engine==='sprite-video'||fallbackRoot.engine==='sprite-video';const direction=sourceDirection?'SOURCE':String(contract.target_direction??fallback.target_direction??'S').toUpperCase();if(!['SOURCE','S','N','W','SW','NW','E','SE','NE'].includes(direction))return null;
+  const action=String(contract.animation_mode??contract.action??fallback.animation_mode??fallback.action??'').toLowerCase();return {url,frameCount,direction,action,fps:Math.min(60,Math.max(1,Number(contract.fps)||8)),autoPlay:true,horizontal:true,columns:Number(contract.columns)||frameCount,rows:Number(contract.rows)||1};
 }
 function deriveSpriteFrameRectangles(descriptor,image) {
   if(!descriptor||!Number.isSafeInteger(descriptor.frameCount)||!image||!Number.isSafeInteger(image.width)||!Number.isSafeInteger(image.height)||image.width<1||image.height<1)throw new Error('invalid sprite animation geometry');
   const pixels=image.width*image.height,working=pixels*8;if(!Number.isSafeInteger(pixels)||pixels>RESULT_SPRITE_LIMITS.maxPixels||!Number.isSafeInteger(working)||working>RESULT_SPRITE_LIMITS.maxWorkingBytes)throw new Error('sprite animation memory budget exceeded');
-  if(image.width%descriptor.frameCount!==0)throw new Error('sprite strip width is inconsistent with frame count');const width=image.width/descriptor.frameCount,height=image.height,aspect=width/height;if(!Number.isSafeInteger(width)||width<1)throw new Error('invalid sprite frame width');if(!Number.isFinite(aspect)||aspect<0.35||aspect>4)throw new Error('sprite frame aspect ratio is inconsistent with a horizontal strip');return Array.from({length:descriptor.frameCount},(_,index)=>({index,x:index*width,y:0,width,height}));
+  const columns=descriptor.columns||descriptor.frameCount,rows=descriptor.rows||1;
+  if(!Number.isSafeInteger(columns)||!Number.isSafeInteger(rows)||columns<1||rows<1||columns*rows<descriptor.frameCount||image.width%columns||image.height%rows)throw new Error('sprite grid is inconsistent with frame count');
+  const width=image.width/columns,height=image.height/rows;
+  if(width/height<0.35||width/height>4)throw new Error('sprite frame aspect ratio is inconsistent with the grid');
+  return Array.from({length:descriptor.frameCount},(_,index)=>({index,x:(index%columns)*width,y:Math.floor(index/columns)*height,width,height}));
 }
 function deriveWalkBeatLabels(action,count) {if(!Number.isSafeInteger(count)||count<2||count%2)throw new Error('walk frame count must be even');const exact=String(action).toLowerCase()==='walk'&&count===4,labels=['N','L','N','R'];return Array.from({length:count},(_,i)=>({label:labels[i%4],semantic:exact}));}
 function detectRepeatedAnimationFrames(frames) {
@@ -398,11 +414,11 @@ function detectRepeatedAnimationFrames(frames) {
 function resultWalkQaGate(descriptor,deterministic) {const walk=!!descriptor&&String(descriptor.action).startsWith('walk');if(!walk)return {allowed:true,status:'NOT_APPLICABLE'};if(deterministic?.status==='FAIL')return {allowed:false,status:'FAIL',reason:'repeated-frame QA failed'};return {allowed:true,status:deterministic?.status==='PASS'?'PASS':'UNKNOWN'};}
 function cleanupResultSpritePlayers(){for(const player of resultSpritePlayers.values()){clearInterval(player.timer);player.image.onload=null;player.image.onerror=null;}resultSpritePlayers.clear()}
 function mountResultSpritePlayer(card,result,descriptor,element) {
-  const wrap=element('section','result-sprite-animation');wrap.setAttribute('aria-label',`${descriptor.direction} 방향 스프라이트 애니메이션`);const canvas=element('canvas','result-sprite-viewport');canvas.width=320;canvas.height=320;wrap.appendChild(canvas);
-  const info=element('div','result-sprite-info',`방향 ${descriptor.direction} · 1/${descriptor.frameCount}`),controls=element('div','result-sprite-controls'),btn=(label,action)=>{const b=element('button','',label);b.type='button';b.dataset.animationAction=action;return b};controls.append(btn('⏮','previous-frame'),btn('일시정지','play-pause'),btn('⏭','next-frame'));const fps=element('input','animation-fps');fps.type='number';fps.min='1';fps.max='24';fps.value=String(descriptor.fps);fps.setAttribute('aria-label','FPS 1에서 24');controls.append(fps);wrap.append(info,controls);card.appendChild(wrap);
-  const image=new Image(),player={image,timer:null,playing:true,index:0,fps:descriptor.fps,rects:null};resultSpritePlayers.set(result.id,player);const draw=()=>{if(!player.rects)return;const r=player.rects[player.index],ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,canvas.width,canvas.height);const scale=Math.max(1,Math.floor(Math.min(canvas.width/r.width,canvas.height/r.height))),dw=r.width*scale,dh=r.height*scale;ctx.drawImage(image,r.x,r.y,r.width,r.height,Math.floor((canvas.width-dw)/2),Math.floor((canvas.height-dh)/2),dw,dh);info.textContent=`방향 ${descriptor.direction} · ${player.index+1}/${descriptor.frameCount}`};const start=()=>{clearInterval(player.timer);if(player.playing&&!document.hidden)player.timer=setInterval(()=>{player.index=(player.index+1)%descriptor.frameCount;draw()},1000/player.fps)};
+  const wrap=element('section','result-sprite-animation');wrap.setAttribute('aria-label',`${descriptor.direction === 'SOURCE' ? '원본 방향' : descriptor.direction + ' 방향'} 스프라이트 애니메이션`);const canvas=element('canvas','result-sprite-viewport');canvas.width=320;canvas.height=320;wrap.appendChild(canvas);
+  const info=element('div','result-sprite-info',`${descriptor.direction === 'SOURCE' ? '원본 방향' : '방향 ' + descriptor.direction} · 1/${descriptor.frameCount}`),controls=element('div','result-sprite-controls'),btn=(label,action)=>{const b=element('button','',label);b.type='button';b.dataset.animationAction=action;return b};controls.append(btn('⏮','previous-frame'),btn('일시정지','play-pause'),btn('⏭','next-frame'));const fps=element('input','animation-fps');fps.type='number';fps.min='1';fps.max='60';fps.value=String(descriptor.fps);fps.setAttribute('aria-label','FPS 1에서 60');controls.append(fps);wrap.append(info,controls);card.appendChild(wrap);
+  const image=new Image(),player={image,timer:null,playing:true,index:0,fps:descriptor.fps,rects:null};resultSpritePlayers.set(result.id,player);const draw=()=>{if(!player.rects)return;const r=player.rects[player.index],ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,canvas.width,canvas.height);const fit=Math.min(canvas.width/r.width,canvas.height/r.height),scale=fit<1?fit:Math.floor(fit),dw=r.width*scale,dh=r.height*scale;ctx.drawImage(image,r.x,r.y,r.width,r.height,Math.floor((canvas.width-dw)/2),Math.floor((canvas.height-dh)/2),dw,dh);info.textContent=`${descriptor.direction === 'SOURCE' ? '원본 방향' : '방향 ' + descriptor.direction} · ${player.index+1}/${descriptor.frameCount}`};const start=()=>{clearInterval(player.timer);if(player.playing&&!document.hidden)player.timer=setInterval(()=>{player.index=(player.index+1)%descriptor.frameCount;draw()},1000/player.fps)};
   image.onload=()=>{try{player.rects=deriveSpriteFrameRectangles(descriptor,{width:image.naturalWidth,height:image.naturalHeight});const sample=document.createElement('canvas');sample.width=image.naturalWidth;sample.height=image.naturalHeight;const sx=sample.getContext('2d',{willReadFrequently:true});sx.drawImage(image,0,0);const pixels=player.rects.map(r=>sx.getImageData(r.x,r.y,r.width,r.height).data),qa=detectRepeatedAnimationFrames(pixels),prior=resultWalkReviews.get(result.id)||{};resultWalkReviews.set(result.id,{...prior,deterministic:qa});draw();start()}catch(error){clearInterval(player.timer);const fallback=element('img','asset-result-preview');fallback.src=descriptor.url;fallback.alt=`${result.family} ${result.type} 생성 결과`;wrap.replaceChildren(fallback,element('p','result-sprite-note','프레임 시트 형식이 맞지 않아 정적 이미지로 표시합니다.'))}};image.onerror=()=>wrap.replaceChildren(element('p','result-sprite-error','스프라이트 이미지를 해독할 수 없습니다.'));image.src=descriptor.url;
-  controls.onclick=e=>{const action=e.target.dataset.animationAction;if(!action)return;if(action==='play-pause'){player.playing=!player.playing;e.target.textContent=player.playing?'일시정지':'재생';start()}else{player.playing=false;controls.querySelector('[data-animation-action="play-pause"]').textContent='재생';clearInterval(player.timer);player.index=(player.index+(action==='next-frame'?1:-1)+descriptor.frameCount)%descriptor.frameCount;draw()}};fps.onchange=()=>{player.fps=Math.min(24,Math.max(1,Number(fps.value)||1));fps.value=String(player.fps);start()};
+  controls.onclick=e=>{const action=e.target.dataset.animationAction;if(!action)return;if(action==='play-pause'){player.playing=!player.playing;e.target.textContent=player.playing?'일시정지':'재생';start()}else{player.playing=false;controls.querySelector('[data-animation-action="play-pause"]').textContent='재생';clearInterval(player.timer);player.index=(player.index+(action==='next-frame'?1:-1)+descriptor.frameCount)%descriptor.frameCount;draw()}};fps.onchange=()=>{player.fps=Math.min(60,Math.max(1,Number(fps.value)||1));fps.value=String(player.fps);start()};
 }
 
 function renderAssetResultTray() {
@@ -425,8 +441,15 @@ function renderAssetResultTray() {
     const actions=element('div','asset-result-actions');
     const button=(label,action,disabled=false)=>{const b=element('button','',label);b.type='button';b.dataset.resultAction=action;b.disabled=disabled;return b};
     actions.append(button(state.selectedId===result.id?'선택됨':'선택','select'),button(state.compareIds.includes(result.id)?'비교 해제':'비교','compare',!state.compareIds.includes(result.id)&&state.compareIds.length>=2));
-    actions.append(button('재시도','retry'),button(result.rejected?'거절됨':'거절','reject',result.rejected));
-    card.appendChild(actions); host.appendChild(card);
+    actions.append(button('재시도','retry',result.sourceRequest?.engine==='sprite-video'),button(result.rejected?'거절됨':'거절','reject',result.rejected));
+    card.appendChild(actions);
+    const downloads = element('div', 'result-downloads');
+    for (const artifact of result.artifacts) {
+      if (typeof artifact.url !== 'string' || !/^(\/|https?:\/\/)/.test(artifact.url)) continue;
+      const link = element('a', '', ({image:'PNG 시트',gif:'GIF',metadata:'메타데이터'})[artifact.kind] || '파일');
+      link.href = artifact.url; link.download = ''; downloads.appendChild(link);
+    }
+    card.appendChild(downloads); host.appendChild(card);
   });
   if(compareHost){
     compareHost.replaceChildren(); compareHost.hidden=state.compareIds.length===0;
@@ -442,8 +465,24 @@ function renderAssetResultTray() {
 }
 
 async function retryAssetResult(id) {
-  if (!isRecipeRegistryReady()) throw blockAssetGeneration();
   const previous=assetResultStore.get(id); if(!previous) throw new Error('Unknown result');
+  if (previous.sourceRequest?.engine === 'sprite-video') throw new Error('원본을 선택하고 생성 화면에서 다시 요청하세요.');
+  if (previous.sourceRequest?.prompt_mode === 'direct') {
+    const payload = JSON.parse(JSON.stringify(previous.sourceRequest));
+    if ((payload.reference_image || payload.reference_image_omitted) && $('providerStatus')?.dataset.referenceImages !== 'true') throw new Error('기준 이미지 기능을 사용하려면 서버를 다시 시작하세요.');
+    if (payload.reference_image_omitted) {
+      if (!payload.reference_asset_url) throw new Error('고정 기준 원본이 저장되지 않아 재시도할 수 없습니다. 기준을 다시 지정한 뒤 생성하세요.');
+      payload.reference_image = await srcToDataUrl(payload.reference_asset_url);
+      delete payload.reference_image_omitted;
+    }
+    const job = await submitGenerationJob('/api/generate', payload);
+    const data = await waitForGenerationJob(job.job_id);
+    if (!data.success) throw new Error(data.error || 'generation failed');
+    const result = assetResultFromGeneration(payload, data);
+    assetResultStore.add(result); assetResultStore.select(result.id);
+    return result;
+  }
+  if (!isRecipeRegistryReady()) throw blockAssetGeneration();
   const selection=migrateLegacyAssetSelection(assetRecipeRegistryState.registry,previous.family,previous.type);
   if(selection.channel!=='production')throw new Error('Only Production recipe results can be retried');
   const payload=JSON.parse(JSON.stringify(previous.sourceRequest));
@@ -644,10 +683,10 @@ async function waitForGenerationJob(jobId, {pollMs = 1500, timeoutMs = 15 * 60 *
     if (!response.ok || !job.success) throw new Error(job.error || 'generation job status failed');
     if (job.status === 'succeeded') return job.result;
     if (job.status === 'failed') throw new Error(job.error || 'generation failed');
-    updateGenerationProgress(`2/3 · 서버에서 AI 이미지 생성 중 · 작업 ${jobId.slice(0, 8)}`);
+    updateGenerationProgress(`2/3 · 생성 작업 처리 중 · 작업 ${jobId.slice(0, 8)}`);
     await new Promise(resolve => setTimeout(resolve, pollMs));
   }
-  throw new Error('generation job exceeded 15 minutes');
+  throw new Error(`생성 작업이 제한 시간 ${Math.round(timeoutMs / 60000)}분을 초과했습니다.`);
 }
 
 function ensureAdvancedReferenceUi() {
@@ -695,20 +734,25 @@ async function refreshProviderHealth() {
     if (!response.ok) throw new Error('provider health unavailable');
     const health = await response.json();
     badge.dataset.state = health.available ? 'ready' : 'unavailable';
-    badge.textContent = health.available ? 'Hermes 준비됨' : 'Hermes 설정 필요';
+    badge.dataset.referenceImages = String(health.reference_image_supported === true);
+    badge.textContent = health.available ? 'ChatGPT / Codex 준비됨' : 'ChatGPT / Codex 설정 필요';
     const reasons = {
-      hermes_not_installed: 'Hermes Agent 또는 openai-codex 이미지 플러그인을 찾지 못했습니다.',
-      auth_or_dependency_missing: 'Hermes에서 Codex 인증을 완료해야 합니다.',
-      provider_load_failed: 'Hermes 이미지 플러그인을 불러오지 못했습니다.',
+      missing_dependency: 'Codex 설치와 이미지 생성 기능을 확인하세요.',
+      auth_required: 'codex login으로 ChatGPT 계정에 로그인하세요.',
+      auth_or_dependency_missing: '이미지 생성 제공자의 인증 또는 실행 환경을 확인하세요.',
+      provider_load_failed: 'ChatGPT / Codex 이미지 플러그인을 불러오지 못했습니다.',
     };
     badge.title = health.available
-      ? `${health.display_name || 'Hermes'} · ${health.default_model || '기본 이미지 모델'}`
-      : (reasons[health.reason] || 'Hermes 이미지 생성 환경을 확인하세요.');
+      ? `${health.display_name || 'ChatGPT / Codex'} · ${health.default_model || '기본 이미지 모델'}`
+      : (reasons[health.reason] || 'ChatGPT / Codex 이미지 생성 환경을 확인하세요.');
+    window.SpriteVideo?.updateGenerateAvailability();
     return health;
   } catch (_error) {
     badge.dataset.state = 'unavailable';
-    badge.textContent = 'Hermes 연결 실패';
-    badge.title = 'Asset Studio 백엔드의 Hermes 상태를 확인하지 못했습니다.';
+    badge.dataset.referenceImages = 'false';
+    badge.textContent = 'ChatGPT / Codex 연결 실패';
+    badge.title = 'Asset Studio 백엔드의 ChatGPT / Codex 상태를 확인하지 못했습니다.';
+    window.SpriteVideo?.updateGenerateAvailability();
     return null;
   }
 }
@@ -748,8 +792,9 @@ function syncActorWalkControls() {
   }
   for (const id of ['familyGenerateAi','generateBtn','generatePixelAsset']) {
     const control = $(id);
-    if (control) control.disabled = generating || (typeof isRecipeRegistryReady === 'function' && !isRecipeRegistryReady());
+    if (control) control.disabled = id === 'familyGenerateAi' ? !!assetGenerationInFlight : generating || !isRecipeRegistryReady();
   }
+  window.SpriteVideo?.updateGenerateAvailability();
 }
 
 function actorWalkRunIsCurrent(run) {
@@ -799,7 +844,7 @@ function generateActorWalk() {
     };
     const health = await refreshProviderHealth();
     assertCurrent();
-    if (!health?.available) throw new Error($('providerStatus')?.title || 'Hermes 설정이 필요합니다.');
+    if (!health?.available) throw new Error($('providerStatus')?.title || 'ChatGPT / Codex 설정이 필요합니다.');
     const source = await imageObjectDataUrl(sourceObject);
     assertCurrent();
     const sourceDigest = await imageDigest(source);
@@ -1000,12 +1045,14 @@ const PIXEL_ACTOR_ASSET_TYPES = new Set(['character', 'monster', 'npc']);
 const PIXEL_EFFECT_ASSET_TYPES = new Set(['effect']);
 
 const ASSET_FAMILY_SUBTYPES = {
+  image: ['image'],
   sprite: ['character', 'monster', 'npc', 'effect'],
   tile: ['floor', 'wall', 'corner', 'door', 'terrain', 'decal', 'autotile', 'tileset'],
   ui: ['main_panel', 'inner_panel', 'popup', 'card', 'button', 'slot', 'badge', 'hud_chip', 'gauge', 'icon', 'cursor'],
   object: ['item', 'equipment', 'weapon', 'loot', 'furniture', 'machine', 'prop', 'interactable', 'destructible'],
 };
 const ASSET_SUBTYPE_LABELS = {
+  image:'이미지',
   character:'캐릭터', monster:'몬스터', npc:'NPC', effect:'이펙트', floor:'바닥', wall:'벽', corner:'모서리', door:'문/통로', terrain:'지형', decal:'데칼', autotile:'오토타일', tileset:'타일셋', main_panel:'메인 패널', inner_panel:'내부 패널', popup:'팝업', card:'카드', button:'버튼', slot:'슬롯', badge:'상태 배지', hud_chip:'HUD 칩', gauge:'게이지', icon:'아이콘', cursor:'커서/선택 표시', item:'아이템', equipment:'장비', weapon:'무기', loot:'전리품', furniture:'가구', machine:'기계/도구', prop:'환경 소품', interactable:'상호작용 오브젝트', destructible:'파괴 상태 오브젝트',
 };
 const RECIPE_GENERATION_CONTROL_IDS = [
@@ -1147,7 +1194,7 @@ function migrateLegacyAssetSelection(registry, family, type) {
 }
 
 function recipeGenerationSubtypesForFamily(family) {
-  return assetRecipeRegistryState.status === 'ready' ? (assetRecipeRegistryState.production[family] || []) : [];
+  return ['image', 'sprite', 'ui', 'object'].includes(family) ? ASSET_FAMILY_SUBTYPES[family] : [];
 }
 
 function legacyAssetSubtypesForFamily(family) {
@@ -1155,6 +1202,7 @@ function legacyAssetSubtypesForFamily(family) {
 }
 
 function projectAssetSubtypesForFamily(family) {
+  if (family === 'image') return ['image'];
   return assetRecipeRegistryState.status === 'ready' ? (assetRecipeRegistryState.known[family] || []) : legacyAssetSubtypesForFamily(family);
 }
 
@@ -1180,26 +1228,16 @@ function blockAssetGeneration() {
 }
 
 function applyRecipeRegistryToGenerationUi() {
-  const ready = isRecipeRegistryReady();
-  const productionCount = ready
-    ? Object.values(assetRecipeRegistryState.production).reduce((total, values) => total + values.length, 0)
-    : 0;
-  const generationReady = ready && productionCount > 0;
-  setRecipeGenerationControlsEnabled(generationReady);
+  // 구 프로젝트 레시피 로딩과 새 생성 화면의 사용 가능 상태를 분리합니다.
+  setRecipeGenerationControlsEnabled(isRecipeRegistryReady());
+  for (const id of ['familyGenerateAi', 'assetSubtype', 'assetCorePrompt']) if ($(id)) $(id).disabled = !!assetGenerationInFlight;
   document.querySelectorAll('#assetFamilyTabs [data-asset-family]').forEach(tab => {
-    const available = generationReady && recipeGenerationSubtypesForFamily(tab.dataset.assetFamily).length > 0;
-    tab.disabled = !available;
-    tab.hidden = !available;
-    tab.setAttribute('aria-disabled', String(!available));
+    tab.disabled = false;
+    tab.hidden = false;
+    tab.setAttribute('aria-disabled', 'false');
   });
-  if (!ready) {
-    renderAssetSubtypeOptions(null);
-    return;
-  }
-  const family = recipeGenerationSubtypesForFamily(selectedAssetFamily).length
-    ? selectedAssetFamily
-    : Object.keys(assetRecipeRegistryState.production)[0];
-  if (family) setAssetFamily(family);
+  setAssetFamily(['image', 'sprite', 'ui', 'object'].includes(selectedAssetFamily) ? selectedAssetFamily : 'image');
+  window.SpriteVideo?.updateGenerateAvailability();
 }
 
 const loadAssetRecipeRegistry = async () => {
@@ -1227,23 +1265,26 @@ const loadAssetRecipeRegistry = async () => {
     return null;
   }
 };
-let selectedAssetFamily = 'sprite';
+let selectedAssetFamily = 'image';
 const ASSET_FAMILY_CREATION_COPY = {
-  sprite: { label: '생성할 캐릭터·몬스터·NPC·이펙트', placeholder: '예: 낡은 은빛 갑옷을 입은 해골 기사, 붉은 망토와 녹슨 장검', help: '외형, 역할, 분위기와 반드시 포함할 특징을 적으세요.' },
+  image: {label:'만들 이미지 설명', placeholder:'예: 검과 나무 방패를 든 오크의 전신, 오른쪽 아래 대각선. 원하는 그림체와 배경을 함께 적으세요.', help:'그림체·해상도·배경을 강제로 바꾸지 않고 설명을 그대로 전달합니다.'},
+  sprite: { label: '최종 프롬프트', placeholder: '프롬프트를 직접 입력하거나 위 마법사로 작성하세요.', help: '입력한 문장을 그대로 H3에 전달합니다. 원본의 방향과 원하는 동작을 설명하세요.' },
   tile: { label: '생성할 타일·맵의 재질·환경·용도', placeholder: '예: 이끼 낀 석조 던전 바닥, 습한 지하 묘지용 심리스 타일', help: '재질, 환경, 연결 방식과 실제 맵 용도를 적으세요.' },
   ui: { label: '생성할 UI의 기능·구조·시각 콘셉트', placeholder: '예: 인벤토리 아이템 상세 팝업, 제목·슬롯·확인 버튼 구조', help: '기능, 정보 구조, 상태와 시각적 위계를 적으세요.' },
   object: { label: '생성할 오브젝트의 형태·재질·용도', placeholder: '예: 황동 보물 상자, 모서리가 닳은 참나무 몸체, 던전 전리품 보관용', help: '형태, 재질, 크기감, 상태와 월드 내 용도를 적으세요.' },
 };
 const ASSET_FAMILY_OUTPUT_DEFAULTS = {
+  image: {width:512,height:512,background:'opaque'},
   sprite: { width: 512, height: 512, background: 'chroma_green' },
   tile: { width: 512, height: 512, background: 'chroma_green' },
   ui: { width: 1024, height: 512, background: 'chroma_green' },
   object: { width: 512, height: 512, background: 'chroma_green' },
 };
 const assetFamilyDrafts = new Map();
-const PROJECT_FAMILIES = ['sprite','tile','ui','object'];
+const PROJECT_FAMILIES = ['image','sprite','tile','ui','object'];
 const PROJECT_DRAFT_SHARED_CONTROLS = ['assetCorePrompt','assetOutputWidth','assetOutputHeight','assetBackground'];
 const PROJECT_DRAFT_FAMILY_CONTROLS = {
+  image: [],
   sprite:['pixelAnimationPreset','pixelDirectionMode','pixelTargetDirection','pixelReferenceDirection','pixelChromaMode','pixelPalette','effectSequenceMode','effectCategory','effectLoop','effectFrameCount','effectFps','effectRows','effectColumns','effectGap','effectEnvelopeWidth','effectEnvelopeHeight','effectSizeBasis','effectPivot','effectPivotX','effectPivotY','effectTrimPolicy'],
   tile:['tileEnvironment','tileMaterial','tileUse','tileWidth','tileHeight','tileShape','tileMargin','tileSpacing','tileMode','tileRows','tileColumns','tileSeamless','tileTopology','tileInnerCorners','tileOuterCorners','tileTransitions','tileTerrainTypes','tileVariants','tileCollision','tileOcclusion','tileNavigation','tileCustomMetadata'],
   ui:['uiPurpose','uiInformationStructure','uiSourceWidth','uiSourceHeight','uiSizingMode','uiSliceMargins','uiSliceTop','uiSliceRight','uiSliceBottom','uiSliceLeft','uiContentSafeArea','uiContentSafeTop','uiContentSafeRight','uiContentSafeBottom','uiContentSafeLeft','uiPadding','uiPaddingTop','uiPaddingRight','uiPaddingBottom','uiPaddingLeft','uiBorder','uiBorderStyle','uiBorderWidth','uiCorner','uiCornerStyle','uiCornerRadius','uiDecorDensity','uiEdgeMode','uiCenterMode','uiOpacity','uiStates','uiTargetWidth','uiTargetHeight','uiDeviceSafeArea','uiDeviceSafeTop','uiDeviceSafeRight','uiDeviceSafeBottom','uiDeviceSafeLeft'],
@@ -1259,7 +1300,8 @@ function defaultProjectFamilyDraft(family) {
 function validateProjectFamilyDrafts(input) {
   const plain=value=>value&&typeof value==='object'&&!Array.isArray(value)&&(Object.getPrototypeOf(value)===Object.prototype||Object.getPrototypeOf(value)===null);
   if(input===undefined)return Object.fromEntries(PROJECT_FAMILIES.map(f=>[f,defaultProjectFamilyDraft(f)]));
-  if(!plain(input)||Object.keys(input).length!==4||PROJECT_FAMILIES.some(f=>!Object.prototype.hasOwnProperty.call(input,f)))throw new Error('Invalid familyDrafts: four families required');
+  if(plain(input)&&Object.keys(input).length===4&&['sprite','tile','ui','object'].every(f=>Object.prototype.hasOwnProperty.call(input,f)))input={image:defaultProjectFamilyDraft('image'),...input};
+  if(!plain(input)||Object.keys(input).length!==PROJECT_FAMILIES.length||PROJECT_FAMILIES.some(f=>!Object.prototype.hasOwnProperty.call(input,f)))throw new Error('Invalid familyDrafts: known families required');
   const out={};let bytes=0;
   for(const family of PROJECT_FAMILIES){
     const draft=input[family], allowed=new Set([...PROJECT_DRAFT_SHARED_CONTROLS,...PROJECT_DRAFT_FAMILY_CONTROLS[family]]);
@@ -1375,6 +1417,8 @@ function restoreAssetCreationDraft(family = currentAssetFamily()) {
 
 function updateAssetFamilyUi() {
   const family = currentAssetFamily();
+  $('assetSubtype').hidden = family === 'image';
+  document.querySelector('label[for="assetSubtype"]')?.toggleAttribute('hidden', family === 'image');
   const subtype = currentAssetSubtype();
   ['spriteSettings', 'tileSettings', 'uiSettings', 'objectSettings'].forEach(id => {
     $(id)?.classList.toggle('hidden', id !== `${family}Settings`);
@@ -1398,7 +1442,8 @@ function updateAssetFamilyUi() {
   if (legacy) legacy.value = legacyAssetTypeForFamily(family, subtype);
   syncPixelAssetWorkflowUi({ silent: true });
   syncEffectExportControlsState();
-  if ($('familyGenerateAi')) $('familyGenerateAi').textContent = `${ASSET_SUBTYPE_LABELS[subtype] || subtype} AI 생성`;
+  if ($('familyGenerateAi')) $('familyGenerateAi').textContent = family === 'sprite' ? '애니메이션 생성' : '이미지 생성';
+  window.SpriteVideo?.syncFamily();
 }
 
 function legacyAssetTypeForFamily(family, subtype) {
@@ -1825,7 +1870,8 @@ function syncPixelAssetWorkflowUi({ silent = false } = {}) {
   if ($('runPixelWorkflow')) $('runPixelWorkflow').textContent = effectSingle ? '이펙트 1장 생성 → 배경 제거' : (effect ? '이펙트 생성 → 배경 제거' : (actor ? '생성 → 배경 제거 → 그리드 값 맞춤' : '정적 에셋 생성 → 배경 제거'));
   if (!silent) setStatus(effect ? `${typeLabel} 모드 · 선택 레이어 맥락 또는 단독 이펙트 생성` : (actor ? `${typeLabel} 모드 · 동작/방향 선택 사용` : `${typeLabel} 모드 · 동작/방향 숨김 · 1프레임 생성`));
   syncSingleFrameSpriteUi();
-  applyPixelWorkflowGridDefaults();
+  // 숨긴 호환 설정은 현재 영상/그리드 편집값을 덮어쓰지 않습니다.
+  if (!$('legacyGenerationControls')?.hidden) applyPixelWorkflowGridDefaults();
 }
 
 function buildDirectionalSpriteSheetContract(anim = effectivePixelAnimationPreset()) {
@@ -2469,7 +2515,7 @@ async function loadProjectV2(project) {
   const motionBridge=globalThis.AssetStudioMotion;
   if(project.motionStudio!=null&&!motionBridge)throw new Error('Motion Studio module is unavailable');
   const projectMotionState=motionBridge?.validateProjectState(project.motionStudio) ?? null;
-  const projectSelectedFamily=project.selectedFamily===undefined?'sprite':project.selectedFamily;
+  const projectSelectedFamily=project.selectedFamily===undefined?'image':project.selectedFamily;
   if(!PROJECT_FAMILIES.includes(projectSelectedFamily))throw new Error('Invalid selectedFamily');
   validateCanvasResultReferences(editor.canvasJson||targetJson,resultState);
   const validatedEntries=entries.map(entry=>{
@@ -3700,7 +3746,7 @@ function currentGridSpriteSlices() {
   return buildGridSpriteSlices();
 }
 
-function currentAnimationSpriteSlices(frameCount = Math.max(1, +($('animFrameCount')?.value || 4))) {
+function currentAnimationSpriteSlices(frameCount = Math.max(1, +($('animFrameCount')?.value || 25))) {
   if (isPixelEffectAssetType()) return buildGridSpriteSlices().slice(0, requestedPixelFrameCount());
   // User flow: image → 자동 조각 찾기 → 애니메이션 재생.
   // In that flow the detected boxes ARE the frames. Do not rebuild from stale
@@ -3734,7 +3780,7 @@ function detectFrameHeadAnchor(img) {
 
 async function buildAnimationFramesFromGrid() {
   if (!activeSpriteTarget()) throw new Error('이미지 레이어 선택 필요');
-  const frameCount = Math.max(1, +($('animFrameCount')?.value || 4));
+  const frameCount = Math.max(1, +($('animFrameCount')?.value || 25));
   const frames = currentAnimationSpriteSlices(frameCount);
   if (!frames.length) throw new Error('프레임 조각 없음 · 먼저 자동 조각 찾기 또는 그리드 미리보기를 실행하세요');
   const decodedFrames = [];
@@ -3804,7 +3850,7 @@ function playAnimationPreview(frames = animationPreviewFrames) {
   let idx = 0;
   let dir = 1;
   const mode = $('animMode')?.value || 'loop';
-  const fps = clamp(+($('animFps')?.value || 8), 1, 30);
+  const fps = clamp(+($('animFps')?.value || 8), 1, 60);
   const draw = () => {
     stages.forEach(stage => {
       stage.innerHTML = `<img alt="animation preview frame" src="${frames[idx]}"><span>${idx + 1}/${frames.length} · ${mode}</span>`;
@@ -5544,7 +5590,7 @@ function previewImageLayer(id, preview = {}) {
       props: {
         left: obj.left, top: obj.top, angle: obj.angle,
         scaleX: obj.scaleX, scaleY: obj.scaleY, opacity: obj.opacity,
-        flipX: obj.flipX, flipY: obj.flipY,
+        flipX: obj.flipX, flipY: obj.flipY, originX: obj.originX, originY: obj.originY,
       },
       token: 0,
     };
@@ -5552,10 +5598,22 @@ function previewImageLayer(id, preview = {}) {
   }
   const applyTransform = () => {
     const scale = Number.isFinite(preview.scale) ? preview.scale : 1;
+    const rotation = Number(preview.rotation) || 0;
+    const anchor = preview.anchor;
+    const target = preview.target;
+    let left = baseline.props.left + (Number(preview.x) || 0);
+    let top = baseline.props.top + (Number(preview.y) || 0);
+    if (anchor && target && Number.isFinite(anchor.x) && Number.isFinite(anchor.y) && Number.isFinite(target.x) && Number.isFinite(target.y)) {
+      const radians = rotation * Math.PI / 180;
+      const dx = baseline.props.left - anchor.x;
+      const dy = baseline.props.top - anchor.y;
+      left = target.x + dx * Math.cos(radians) - dy * Math.sin(radians);
+      top = target.y + dx * Math.sin(radians) + dy * Math.cos(radians);
+    }
     obj.set({
-      left: baseline.props.left + (Number(preview.x) || 0),
-      top: baseline.props.top + (Number(preview.y) || 0),
-      angle: baseline.props.angle + (Number(preview.rotation) || 0),
+      left,
+      top,
+      angle: baseline.props.angle + rotation,
       scaleX: baseline.props.scaleX * scale,
       scaleY: baseline.props.scaleY * scale,
       opacity: baseline.props.opacity * (Number.isFinite(preview.opacity) ? preview.opacity : 1),
@@ -5592,8 +5650,32 @@ function restoreImageLayerPreview(id = '') {
     obj.set(baseline.props);
     obj.setCoords();
     editorLayerMotionPreviews.delete(layerId);
+    editorRigPreviewLayerIds.delete(layerId);
   });
   canvas.requestRenderAll();
+}
+
+function previewRigLayers(previews = []) {
+  const next = new Set();
+  for (const preview of previews) {
+    const layerId = preview?.layer_id;
+    if (!layerId) continue;
+    next.add(layerId);
+    previewImageLayer(layerId, {
+      anchor: preview.anchor,
+      target: preview.world,
+      rotation: preview.world?.rotation || 0,
+      scale: 1,
+      opacity: 1,
+    });
+  }
+  for (const layerId of editorRigPreviewLayerIds) if (!next.has(layerId)) restoreImageLayerPreview(layerId);
+  editorRigPreviewLayerIds = next;
+  return next.size;
+}
+
+function captureCanvasDataUrl() {
+  return canvas.toDataURL({ format: 'png', multiplier: 1, enableRetinaScaling: false });
 }
 
 function applyMotionToLayer(id, manifest) {
@@ -5604,6 +5686,30 @@ function applyMotionToLayer(id, manifest) {
   saveHistory('Motion applied to layer');
   renderLayers();
   return true;
+}
+
+function applyRigMotionToLayers(ids, manifest) {
+  const unique = [...new Set(Array.isArray(ids) ? ids : [])];
+  const targets = unique.map(objectByLayerId).filter(obj => obj?.type === 'image' && !obj.excludeFromLayers && !obj.isMaskOverlay);
+  if (!targets.length || targets.length !== unique.length) return false;
+  restoreImageLayerPreview();
+  const canonical = JSON.parse(JSON.stringify(manifest));
+  targets.forEach(obj => { obj.motionManifest = canonical; });
+  saveHistory('2D rig motion applied to layers');
+  renderLayers();
+  return true;
+}
+
+function clearRigMotionFromLayers(ids) {
+  const unique = [...new Set(Array.isArray(ids) ? ids : [])];
+  let changed = false;
+  restoreImageLayerPreview();
+  unique.forEach(id => {
+    const obj = objectByLayerId(id);
+    if (obj?.type === 'image' && obj.motionManifest) { delete obj.motionManifest; changed = true; }
+  });
+  if (changed) { saveHistory('2D rig motion removed from layers'); renderLayers(); }
+  return changed;
 }
 
 function clearMotionFromLayer(id) {
@@ -5638,9 +5744,13 @@ window.AssetStudioEditor = {
   exportImageLayer,
   getCanvasSize,
   previewImageLayer,
+  previewRigLayers,
+  captureCanvasDataUrl,
   restoreImageLayerPreview,
   applyMotionToLayer,
+  applyRigMotionToLayers,
   clearMotionFromLayer,
+  clearRigMotionFromLayers,
   subscribeLayers,
 };
 
@@ -6085,6 +6195,8 @@ function prepareSelectedRegionAiEdit() {
   if ($('directInpaintDetails')) $('directInpaintDetails').open = true;
   if ($('aiMaskSummary')) $('aiMaskSummary').textContent = summary;
   if ($('inpaintResult')) $('inpaintResult').textContent = '프롬프트 입력 후 선택영역 직접 재생성을 누르세요.';
+  $('selectionAiTools').open = true;
+  setRightPanelTab('properties');
   $('aiEditPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   $('inpaintPrompt')?.focus();
   setStatus('선택영역 AI 수정 준비 완료: 프롬프트 입력 후 직접 재생성을 누르세요.');
@@ -6483,6 +6595,8 @@ async function executeChatAction(action = pendingChatAction) {
         $('replaceObjectPrompt').focus();
       }
       if ($('replaceObjectNegative')) $('replaceObjectNegative').value = params.negative || '';
+      $('selectionAiTools').open = true;
+      setRightPanelTab('properties');
       document.getElementById('aiEditPanel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       appendChatMessage('assistant', '실행 시작: 내부 오브젝트 치환 파이프라인을 호출합니다. 마스크가 있으면 참고 치환, 없으면 새 오브젝트 레이어로 생성합니다.');
       await generateReplacementObject();
@@ -7367,85 +7481,68 @@ function isActorWalkProductionRequest(family, subtype, action, sourceObject) {
 }
 
 function generateAiAsset() {
-  if (!isRecipeRegistryReady()) return Promise.reject(blockAssetGeneration());
   if (assetGenerationInFlight) return assetGenerationInFlight;
-  const family = currentAssetFamily();
-  const subtype = currentAssetSubtype();
-  if (isActorWalkProductionRequest(family,subtype,effectivePixelAnimationPreset(),activeSpriteTarget())) {
-    const request = generateActorWalk();
-    assetGenerationInFlight = request;
-    request.finally(() => {
-      if (assetGenerationInFlight === request) assetGenerationInFlight = null;
-    }).catch(() => {});
-    return request;
-  }
-  const corePrompt = ($('assetCorePrompt')?.value || '').trim();
-  if (!corePrompt) { alert('생성할 내용을 입력하세요.'); return Promise.resolve(null); }
-  const prompt = corePrompt;
-  const preset = assetFamilyPreset();
-  const aspect = $('aiAspect')?.value || 'square';
-  const requestedBackground = $('assetBackground')?.value || 'chroma_green';
-  const backgroundMode = requestedBackground === 'chroma_green' ? 'chroma_green' : 'none';
-  const wantedReference = family === 'sprite' && !!$('pixelUseReference')?.checked;
-  const selectedReferenceObj = wantedReference ? selectedLayerObject() : null;
-  const useReference = !!(wantedReference && selectedReferenceObj && selectedReferenceObj.type === 'image');
-  const referenceObj = useReference ? selectedReferenceObj : null;
-  const generateBtn = $('familyGenerateAi') || $('generateBtn') || $('generatePixelAsset');
-  if (generateBtn) generateBtn.disabled = true;
-  beginGenerationProgress('1/3 · 요청 데이터 준비 중');
-  setStatus(useReference ? '기준 이미지 기반 AI 에셋 생성 중...' : 'AI 에셋 생성 중...');
-
+  const family = currentAssetFamily(), subtype = currentAssetSubtype();
+  const prompt = $('assetCorePrompt').value;
+  if (!prompt.trim()) return Promise.reject(new Error('최종 프롬프트를 입력하세요.'));
+  let payload, referenceObj = null, pinnedReference = null;
+  try {
+    if (family === 'sprite') {
+      // 요청 시작 시 원본을 복사하므로 생성 중 선택이 바뀌어도 입력은 바뀌지 않습니다.
+      referenceObj = canvas.getActiveObject();
+      if (!referenceObj || referenceObj.type !== 'image' || referenceObj.excludeFromLayers) throw new Error('원본 이미지 레이어를 먼저 선택하세요.');
+      payload = window.SpriteVideo.buildRequest(prompt, imageObjectToDataUrl(referenceObj));
+    } else {
+      if (!['image', 'ui', 'object'].includes(family)) throw new Error('지원하지 않는 생성 유형입니다.');
+      payload = {prompt, prompt_mode:'direct', asset_family:family, asset_type:subtype};
+      if (family === 'image') {
+        pinnedReference = window.SpriteVideo.getImageReference();
+        if (pinnedReference) {
+          if ($('providerStatus')?.dataset.referenceImages !== 'true') throw new Error('기준 이미지 기능을 사용하려면 서버를 다시 시작하세요.');
+          payload.reference_image = pinnedReference.image;
+        }
+      }
+    }
+  } catch (error) { return Promise.reject(error); }
+  const generateBtn = $('familyGenerateAi');
+  generateBtn.disabled = true;
+  beginGenerationProgress('생성 작업 접수 중');
   const request = (async () => {
     try {
-      const endpoint = useReference ? '/api/generate-reference' : '/api/generate';
-      const payload = buildAssetGenerationPayload({ prompt, preset, aspect_ratio: aspect, background_mode: backgroundMode });
-      // Temporary flat compatibility remains actor-only. Effects declare only their own sequence mode.
-      if (family === 'sprite' && ['character', 'monster', 'npc'].includes(subtype)) {
-        const sprite = payload.sprite;
-        Object.assign(payload, {
-          direction_mode: sprite.direction_mode,
-          reference_direction: sprite.reference_direction,
-          target_direction: sprite.target_direction,
-          animation_mode: sprite.animation_mode,
-          frame_count: sprite.frame_count,
-          walk_frames: sprite.walk_frames,
-          chroma_mode: sprite.chroma_mode,
-          no_baked_vfx: sprite.no_baked_vfx,
-        });
-      }
-      if (useReference) payload.reference_image = imageObjectToDataUrl(referenceObj);
-      updateGenerationProgress('2/3 · AI 이미지 생성 작업 접수 중');
+      const endpoint = family === 'sprite' ? '/api/sprite-video' : '/api/generate';
       const submitted = await submitGenerationJob(endpoint, payload);
-      const data = await waitForGenerationJob(submitted.job_id);
-      if (!data.success) throw new Error(data.error || 'generation failed');
-      updateGenerationProgress('3/3 · 결과 검사 및 캔버스 적용 중');
-      const url = withCacheBust(data.url);
-      if ($('pixelQaSummary') && data.qa) {
-        const dqa = data.qa.direction_qa || {};
-        $('pixelQaSummary').textContent = `QA direction ${dqa.status || 'n/a'} ${dqa.target_direction || ''} slot ${dqa.selected_slot ?? '-'} · alpha ${data.qa.alpha_min}-${data.qa.alpha_max} · corners ${data.qa.corner_alpha?.join('/') || '-'} · green ${data.qa.green_pixels ?? '-'}`;
-      }
-      const artifacts = Array.isArray(data.artifacts) && data.artifacts.length ? data.artifacts : [{kind:'image',url}];
-      const storedPayload = compactAssetResultPayload(payload, referenceObj);
-      const result = createAssetResult({ family:payload.asset_family, type:payload.asset_type, status:'succeeded',
-        preview:{url}, sourceRequest:storedPayload, normalizedContract:storedPayload, qaSummary:data.qa || null,
-        artifacts, adopted:false, rejected:false, error:null });
+      const data = await waitForGenerationJob(submitted.job_id, {timeoutMs:(family === 'sprite' ? 31 : 15) * 60 * 1000});
+      if (!data.success || !data.url) throw new Error(data.error || '생성 결과가 없습니다.');
+      const record = family === 'sprite'
+        ? {...payload, asset_family:family, asset_type:subtype, engine:'sprite-video', sprite:{target_direction:'source',frame_count:data.frame_count, columns:data.columns, rows:data.rows, fps:payload.fps, animation_mode:payload.name}}
+        : pinnedReference ? {...payload, reference_source:{layer_id:pinnedReference.layer_id,name:pinnedReference.name,width:pinnedReference.width,height:pinnedReference.height,captured_at:pinnedReference.captured_at}, ...(data.reference_url || data.source_url ? {reference_asset_url:data.reference_url || data.source_url} : {})} : payload;
+      const artifacts = [{kind:'image',url:data.url}];
+      if (data.gif_url) artifacts.push({kind:'gif',url:data.gif_url});
+      if (data.metadata_url) artifacts.push({kind:'metadata',url:data.metadata_url});
+      const result = assetResultFromGeneration(record, {...data, artifacts}, referenceObj);
       assetResultStore.add(result);
       assetResultStore.select(result.id);
-      await adoptResult(result.id,'new-layer');
-      finishGenerationProgress(true, '완료 · 결과가 캔버스에 적용됐습니다');
-      return { url, result, data, referenceObj: referenceObj || null };
-    } catch (err) {
-      finishGenerationProgress(false, `실패 · ${err.message}`);
-      setStatus('AI generation failed: ' + err.message);
-      throw err;
-    } finally {
-      if (generateBtn) generateBtn.disabled = !isRecipeRegistryReady();
-    }
+      let adoptionWarning = null;
+      try {
+        await adoptResult(result.id, 'new-layer');
+      } catch(error) {
+        adoptionWarning = error.message;
+      }
+      if (family === 'sprite') window.SpriteVideo.showResult(data, payload);
+      else if(adoptionWarning) document.querySelector('[data-studio-workspace="results"]').click();
+      const completion = adoptionWarning
+        ? `생성 완료 · 결과는 저장됐지만 캔버스로 불러오지 못했습니다. 결과 탭에서 다시 불러오거나 다운로드하세요. ${adoptionWarning}`
+        : '완료 · 결과에 저장하고 새 레이어로 추가했습니다.';
+      finishGenerationProgress(true, completion);
+      setStatus(completion);
+      return {result, data, payload, adoptionWarning};
+    } catch (error) {
+      finishGenerationProgress(false, `실패 · ${error.message}`);
+      throw error;
+    } finally { generateBtn.disabled = false; }
   })();
   assetGenerationInFlight = request;
-  request.finally(() => {
-    if (assetGenerationInFlight === request) assetGenerationInFlight = null;
-  }).catch(() => {});
+  request.finally(() => { if (assetGenerationInFlight === request) assetGenerationInFlight = null; window.SpriteVideo?.updateGenerateAvailability(); }).catch(() => {});
   return request;
 }
 

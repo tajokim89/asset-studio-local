@@ -34,34 +34,37 @@ python3 server.py
 http://127.0.0.1:4184
 ```
 
-## AI 생성 설정
+## 이미지 생성과 스프라이트
 
-`server.py`는 실행 중인 컴퓨터에 설치된 Hermes의 `openai-codex` 이미지 제공자를 사용합니다. Hermes 설치와 `hermes auth codex` 인증을 먼저 완료하세요. 설치 위치는 `HERMES_REPO`, `HERMES_HOME`, PATH의 `hermes`, 표준 설치 경로 순서로 자동 탐색합니다.
+이미지 생성·UI·오브젝트는 설치된 Codex의 ChatGPT 로그인과 기본 이미지 생성 기능을 사용합니다. Hermes나 별도 API 키는 필요하지 않습니다.
 
-Hermes 경로를 명시적으로 고정해야 할 때만 다음처럼 지정합니다.
-
-```bash
-export HERMES_REPO=/path/to/hermes-agent
-python3 server.py
+```powershell
+codex login
+codex login status
+.\.venv\Scripts\python.exe server.py
 ```
 
-이미지 제공자를 사용할 수 없어도 정적 편집기는 실행되지만 AI 생성 API는 실패합니다.
-페이지 상단의 `Hermes 준비됨` 배지에서 설치·인증 상태를 확인할 수 있습니다.
-권장 실행 스크립트는 기본 이미지 모델을 `gpt-image-2-high`로 설정합니다. 비용·속도를 우선할 때만 `OPENAI_IMAGE_MODEL` 환경변수로 다른 tier를 지정하세요.
+Codex CLI는 현재 계정의 모델을 지원하는 최신 버전을 사용하세요. 다른 위치의 실행 파일을 사용할 때는 `ASSET_STUDIO_CODEX_COMMAND`를 네이티브 `codex.exe` 경로로 지정합니다. 인증은 Codex가 관리하며 Asset Studio는 토큰을 읽거나 복사하지 않습니다. 연결 상태 확인은 로컬 준비 상태이며 실제 사용 가능 여부는 이미지 생성 결과로 확인됩니다.
+
+스프라이트는 선택된 이미지를 로컬 ComfyUI의 H3/H3 Fast로 움직입니다. 기본 출력은 25프레임이며 생성 길이와 재생 FPS를 따로 조절할 수 있습니다. ComfyUI 주소와 폴더는 `ASSET_STUDIO_COMFY_URL`, `ASSET_STUDIO_COMFY_ROOT`로 지정합니다.
+
+기존 모션·3D 작업공간은 앱에서 제거했습니다. 이전 자동 시각 검수 경로는 새 제공자에서 지원하지 않으며, 결과를 직접 재생해 확인하세요.
+
+## 게임 에셋 작업 재사용
+
+다른 게임에서 요청하는 방법, 프레임 추출, 느린 검수 GIF, 일관성 검수와 실패 사례는 [스프라이트 작업 가이드](docs/SPRITE_WORKFLOW.ko.md)를 참고하세요. 생성 이미지·GIF와 모델·인증정보는 저장소에 보관하지 않습니다.
 
 ## 개발 환경과 테스트
 
 Python 3.11 이상으로 저장소 전용 가상환경을 만든 뒤 개발 의존성을 설치합니다.
 
 ```bash
-export HERMES_REPO="${HERMES_REPO:-$HOME/.hermes/hermes-agent}"
-"$HERMES_REPO/venv/bin/python" -m venv .venv
+python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
 
-Hermes와 무관한 환경에서는 첫 번째 명령 대신 설치된 Python 3.11 이상의
-`python3 -m venv .venv`를 사용하면 됩니다.
+Windows에서는 `.venv/Scripts/python.exe` 경로를 사용합니다.
 
 저장소 검증은 한 스크립트에서 실행합니다.
 

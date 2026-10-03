@@ -6,7 +6,7 @@
   const $ = id => document.getElementById(id);
   const STORAGE_KEY = "asset-studio.motion-draft/v1";
   const TIERS = Core.STRATEGIES;
-  const UI_TIERS = ["static", "transform_tween", "state_swap", "limited_frames"];
+  const UI_TIERS = ["static", "transform_tween", "state_swap", "limited_frames", "rig_paper_doll"];
   const MAX_FILE_BYTES = Core.MEDIA_BUDGET_BYTES;
   const IMAGE_TYPES = /^image\/(png|jpeg|webp)$/;
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -31,7 +31,7 @@
       rigid_parts: {duration:1000,loop:"pingpong",parts:[{id:"part_1",parent:null,image_ref:"source",image_name:"source",pivot:{x:0,y:0},socket:{x:0,y:0},offset:{x:0,y:0},rotation_min:-15,rotation_max:15}]},
       limited_frames: {loop:"loop",frames:[{id:"pose_1",image_ref:"source",image_name:"source",duration:160,phase:"start",event:""},{id:"pose_2",image_ref:"source",image_name:"source",duration:160,phase:"contact",event:""}]},
       full_frames: {loop:"loop",frames:[{id:"frame_1",image_ref:"source",image_name:"source",duration:100,phase:"",event:""}]},
-      rig_paper_doll: {approved:false,gate:{skins:0,equipment:false,clips:0,rest_pose:false,adapter:false},bones:[{id:"root",parent:null,x:0,y:0,rotation:0}],slots:[{id:"body",bone:"root",image_ref:"source",image_name:"source"}]}
+      rig_paper_doll: {format:"layered_2d_v2",duration:720,loop:"loop",bones:[],slots:[],keyframes:[]}
     }
   });
 
@@ -56,6 +56,19 @@
     enter: {label:"등장하기", duration:650, loop:"once", start:{x:-18,y:0,rotation:0,scale:.94,opacity:0}, end:{x:0,y:0,rotation:0,scale:1,opacity:1}},
     exit: {label:"퇴장하기", duration:650, loop:"once", start:{x:0,y:0,rotation:0,scale:1,opacity:1}, end:{x:18,y:0,rotation:0,scale:.94,opacity:0}},
   };
+  const RIG_PART_DEFS = [
+    {id:"far_upper_arm",label:"뒤쪽 위팔",bone:"shoulder_far",z:-30,aliases:["farupperarm","backupperarm","rearupperarm","뒤위팔","뒤쪽위팔"]},
+    {id:"far_lower_arm",label:"뒤쪽 아래팔·손",bone:"elbow_far",z:-29,aliases:["farlowerarm","backlowerarm","rearlowerarm","뒤아래팔","뒤팔","뒤손"]},
+    {id:"far_thigh",label:"뒤쪽 허벅지",bone:"hip_far",z:-20,aliases:["farthigh","backthigh","rearthigh","뒤허벅지","뒤쪽허벅지"]},
+    {id:"far_shin",label:"뒤쪽 종아리",bone:"knee_far",z:-19,aliases:["farshin","backshin","rearshin","뒤종아리","뒤쪽종아리"]},
+    {id:"far_foot",label:"뒤쪽 발·신발",bone:"ankle_far",z:-18,aliases:["farfoot","backfoot","rearfoot","뒤발","뒤신발"]},
+    {id:"body",label:"몸통·머리",bone:"root",z:0,aliases:["body","torso","trunk","몸통","몸통머리","본체"]},
+    {id:"near_thigh",label:"앞쪽 허벅지",bone:"hip_near",z:20,aliases:["nearthigh","frontthigh","앞허벅지","앞쪽허벅지"]},
+    {id:"near_shin",label:"앞쪽 종아리",bone:"knee_near",z:21,aliases:["nearshin","frontshin","앞종아리","앞쪽종아리"]},
+    {id:"near_foot",label:"앞쪽 발·신발",bone:"ankle_near",z:22,aliases:["nearfoot","frontfoot","앞발","앞신발"]},
+    {id:"near_upper_arm",label:"앞쪽 위팔",bone:"shoulder_near",z:30,aliases:["nearupperarm","frontupperarm","앞위팔","앞쪽위팔"]},
+    {id:"near_lower_arm",label:"앞쪽 아래팔·손",bone:"elbow_near",z:31,aliases:["nearlowerarm","frontlowerarm","앞아래팔","앞팔","앞손"]},
+  ];
 
   function deepMerge(base, incoming) {
     if (!plain(incoming)) return clone(base);
@@ -66,6 +79,127 @@
       else out[key] = value;
     }
     return out;
+  }
+
+  function walkRigKeyframes(duration) {
+    const total=Math.max(240,Math.min(4000,Number(duration)||720));
+    const phases=[9,5,0,-9,-5,0,9];
+    const nearKnees=[2,5,11,1,7,3,2];
+    const farKnees=[1,7,3,2,5,11,1];
+    const bob=[0,3,1,0,3,1,0];
+    return phases.map((phase,index)=>({
+      time:Math.round(total*index/(phases.length-1)),
+      bones:{
+        root:{x:0,y:bob[index],rotation:0},
+        hip_near:{x:0,y:0,rotation:phase},
+        knee_near:{x:0,y:0,rotation:nearKnees[index]},
+        ankle_near:{x:0,y:0,rotation:-phase*.35-nearKnees[index]*.2},
+        hip_far:{x:0,y:0,rotation:-phase},
+        knee_far:{x:0,y:0,rotation:farKnees[index]},
+        ankle_far:{x:0,y:0,rotation:phase*.35-farKnees[index]*.2},
+        shoulder_near:{x:0,y:0,rotation:-phase*.45},
+        elbow_near:{x:0,y:0,rotation:phase>0?5:-5},
+        shoulder_far:{x:0,y:0,rotation:phase*.45},
+        elbow_far:{x:0,y:0,rotation:phase>0?-5:5},
+      },
+    }));
+  }
+
+  function buildLayeredRigTemplate(width=number("motionCanvasW"),height=number("motionCanvasH"),previous=state.drafts.rig_paper_doll) {
+    const w=Math.max(1,Number(width)||512),h=Math.max(1,Number(height)||512),cx=w*.5;
+    const oldSlots=new Map((previous?.slots||[]).map(slot=>[slot.id,slot]));
+    const bones=[
+      {id:"root",parent:null,x:cx,y:h*.56,rotation:0},
+      {id:"shoulder_far",parent:"root",x:cx,y:h*.34,rotation:0},
+      {id:"elbow_far",parent:"shoulder_far",x:cx,y:h*.47,rotation:0},
+      {id:"hip_far",parent:"root",x:cx+w*.018,y:h*.57,rotation:0},
+      {id:"knee_far",parent:"hip_far",x:cx+w*.025,y:h*.75,rotation:0},
+      {id:"ankle_far",parent:"knee_far",x:cx+w*.035,y:h*.91,rotation:0},
+      {id:"hip_near",parent:"root",x:cx-w*.018,y:h*.57,rotation:0},
+      {id:"knee_near",parent:"hip_near",x:cx-w*.025,y:h*.75,rotation:0},
+      {id:"ankle_near",parent:"knee_near",x:cx-w*.035,y:h*.91,rotation:0},
+      {id:"shoulder_near",parent:"root",x:cx,y:h*.34,rotation:0},
+      {id:"elbow_near",parent:"shoulder_near",x:cx,y:h*.47,rotation:0},
+    ].map(bone=>({...bone,x:Math.round(bone.x),y:Math.round(bone.y)}));
+    const slots=RIG_PART_DEFS.map(def=>({
+      id:def.id,bone:def.bone,z:def.z,
+      layer_id:oldSlots.get(def.id)?.layer_id||((def.id==="body"&&state.sourceLayerId)?state.sourceLayerId:"")
+    }));
+    return {format:"layered_2d_v2",duration:Math.max(240,Math.min(4000,Number(previous?.duration)||720)),loop:previous?.loop||"loop",bones,slots,keyframes:walkRigKeyframes(previous?.duration||720)};
+  }
+
+  function ensureLayeredRigTemplate(force=false) {
+    const draft=state.drafts.rig_paper_doll;
+    const boneIds=new Set(Array.isArray(draft.bones)?draft.bones.map(bone=>bone.id):[]),slotIds=new Set(Array.isArray(draft.slots)?draft.slots.map(slot=>slot.id):[]);
+    const incomplete=!boneIds.has("root")||RIG_PART_DEFS.some(def=>!boneIds.has(def.bone)||!slotIds.has(def.id))||!Array.isArray(draft.keyframes)||draft.keyframes.length<2;
+    if(force||draft.format!=="layered_2d_v2"||incomplete) state.drafts.rig_paper_doll=buildLayeredRigTemplate(undefined,undefined,draft);
+    return state.drafts.rig_paper_doll;
+  }
+
+  function normalizedLayerName(value) {
+    return String(value||"").toLowerCase().replace(/[^a-z0-9가-힣]+/g,"");
+  }
+
+  function rigLayers() {
+    return editorBridge()?.listImageLayers?.()||[];
+  }
+
+  function rigSelectionState() {
+    const draft=state.drafts.rig_paper_doll,slots=Array.isArray(draft.slots)?draft.slots:[];
+    const available=new Set(rigLayers().map(layer=>layer.id)),ids=slots.map(slot=>slot.layer_id).filter(Boolean),duplicates=ids.filter((id,index)=>ids.indexOf(id)!==index);
+    const missing=RIG_PART_DEFS.filter(def=>{const slot=slots.find(item=>item.id===def.id);return !slot?.layer_id||!available.has(slot.layer_id);});
+    return {missing,duplicates:[...new Set(duplicates)],bound:RIG_PART_DEFS.length-missing.length,ready:!missing.length&&!duplicates.length};
+  }
+
+  function syncRigReadiness() {
+    const readiness=rigSelectionState(),output=$("motionRigReadiness");
+    output.dataset.status=readiness.ready?"ready":"missing";
+    output.textContent=readiness.duplicates.length?`같은 레이어가 여러 부위에 연결됐습니다: ${readiness.duplicates.join(", ")}`:readiness.ready?`준비 완료 · 서로 다른 ${readiness.bound}개 레이어가 관절에 연결되었습니다.`:`${readiness.bound}/${RIG_PART_DEFS.length} 연결 · 누락: ${readiness.missing.map(def=>def.label).join(", ")}`;
+    return readiness;
+  }
+
+  function renderRigPartRows() {
+    const host=$("motionRigPartRows");
+    if(!host)return;
+    const draft=state.drafts.rig_paper_doll;
+    if(draft.format!=="layered_2d_v2"||!draft.bones?.length){host.innerHTML='<p class="hint">기본 뼈대를 먼저 만드세요.</p>';$("motionRigReadiness").textContent="기본 뼈대를 만든 뒤 부위별 레이어를 연결하세요.";return;}
+    const layers=rigLayers(),bones=new Map(draft.bones.map(bone=>[bone.id,bone]));
+    host.innerHTML=RIG_PART_DEFS.map((def,index)=>{
+      const slot=draft.slots.find(item=>item.id===def.id)||{},bone=bones.get(def.bone)||{x:0,y:0};
+      const options=['<option value="">레이어 선택…</option>'].concat(layers.map(layer=>`<option value="${esc(layer.id)}" ${slot.layer_id===layer.id?"selected":""}>${esc(layer.name||layer.id)}</option>`));
+      return `<div class="motion-rig-part"><strong>${esc(def.label)}</strong><select aria-label="${esc(def.label)} 레이어" data-rig-slot="${index}">${options.join("")}</select><details><summary>관절 위치 조정</summary><div><label>X<input type="number" data-rig-bone="${esc(def.bone)}" data-rig-axis="x" value="${esc(Math.round(bone.x||0))}"></label><label>Y<input type="number" data-rig-bone="${esc(def.bone)}" data-rig-axis="y" value="${esc(Math.round(bone.y||0))}"></label></div></details></div>`;
+    }).join("");
+    syncRigReadiness();
+  }
+
+  function autoBindRigLayers() {
+    const draft=ensureLayeredRigTemplate(),layers=rigLayers(),used=new Set();
+    for(const def of RIG_PART_DEFS){
+      const slot=draft.slots.find(item=>item.id===def.id);if(!slot)continue;
+      const aliases=def.aliases.map(normalizedLayerName);
+      const match=layers.find(layer=>!used.has(layer.id)&&aliases.some(alias=>{const name=normalizedLayerName(layer.name);return name===alias||name.includes(alias);}));
+      if(match){slot.layer_id=match.id;used.add(match.id);}else if(slot.layer_id&&layers.some(layer=>layer.id===slot.layer_id)&&!used.has(slot.layer_id))used.add(slot.layer_id);else slot.layer_id="";
+    }
+    renderRigPartRows();invalidateMotionQa();updateManifest();render();saveDraft();
+    const readiness=rigSelectionState();status(readiness.ready?"레이어 이름으로 모든 부위를 연결했습니다.":`자동 연결 후 ${readiness.missing.length}개 부위가 남았습니다. 직접 선택하세요.`);
+    return readiness.ready;
+  }
+
+  function previewRigScene(scene) {
+    return editorBridge()?.previewRigLayers?.((scene?.slots||[]).filter(slot=>slot.layer_id))||0;
+  }
+
+  function applyRigWalkPreset() {
+    const draft=ensureLayeredRigTemplate();
+    draft.duration=Math.max(240,Math.min(4000,number("motionRigDuration")||720));
+    draft.loop=$("motionRigLoop").value;
+    draft.keyframes=walkRigKeyframes(draft.duration);
+    renderRigPartRows();invalidateMotionQa();updateManifest();saveDraft();
+    const readiness=rigSelectionState();
+    if(!readiness.ready){status("걷기를 적용하려면 모든 부위를 서로 다른 레이어에 연결해야 합니다.");return false;}
+    state.time=0;playOrigin=0;playing=false;selectTier("rig_paper_doll");render();
+    $("motionAppliedStatus").textContent=`왼쪽 걷기 · ${readiness.bound}개 실제 레이어 · 앞/뒤 팔다리 교차`;
+    status("앞발과 뒷발이 반대 위상으로 움직이는 걷기 리깅을 미리봅니다.");startPlayback();return true;
   }
 
   function invalidateMotionQa() {
@@ -88,6 +222,7 @@
       refreshEditorLayers({ useSelected: true });
       render();
     }
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{$("fitCanvas")?.click();if(motion)render();}));
   }
 
   function updateSource(dataUrl, name, layerId = "") {
@@ -148,6 +283,7 @@
     } else if (!layers.length) {
       $("motionLayerLinkStatus").textContent = "이미지 레이어가 없습니다. 에셋 편집에서 이미지를 추가하세요.";
     }
+    renderRigPartRows();
   }
 
   function imageForUri(uri) {
@@ -224,26 +360,33 @@
     $("motionPartRows").innerHTML = loopField("rigid",state.drafts.rigid_parts) + state.drafts.rigid_parts.parts.map((x,i)=>rowHtml("part",x,i)).join("");
     $("motionLimitedRows").innerHTML = loopField("limited",state.drafts.limited_frames) + state.drafts.limited_frames.frames.map((x,i)=>rowHtml("limited",x,i)).join("");
     $("motionFullRows").innerHTML = loopField("full",state.drafts.full_frames) + state.drafts.full_frames.frames.map((x,i)=>rowHtml("full",x,i)).join("");
-    $("motionBoneRows").innerHTML = state.drafts.rig_paper_doll.bones.map((x,i)=>rowHtml("bone",x,i)).join("");
-    $("motionSlotRows").innerHTML = state.drafts.rig_paper_doll.slots.map((x,i)=>rowHtml("slot",x,i)).join("");
+    $("motionBoneRows").innerHTML = (state.drafts.rig_paper_doll.bones||[]).map((x,i)=>rowHtml("bone",x,i)).join("");
+    $("motionSlotRows").innerHTML = (state.drafts.rig_paper_doll.slots||[]).map((x,i)=>rowHtml("slot",x,i)).join("");
+    renderRigPartRows();
   }
 
   function syncRig() {
     const d = state.drafts.rig_paper_doll;
-    $("motionRigSkins").value=d.gate.skins; $("motionRigClips").value=d.gate.clips;
-    $("motionRigEquipment").checked=d.gate.equipment; $("motionRigRest").checked=d.gate.rest_pose;
-    $("motionRigAdapter").checked=d.gate.adapter; $("motionRigApproval").checked=d.approved;
-    const gate=Core.rigEligibility(d.gate), button=document.querySelector('[data-motion-tier="rig_paper_doll"]');
-    button.disabled=!(gate.eligible&&d.approved);
-    button.title=button.disabled?gate.reasons.join(" "):"Rig 편집 가능";
+    const button=document.querySelector('[data-motion-tier="rig_paper_doll"]');
+    button.disabled=false;button.title="분리된 이미지 레이어를 관절에 연결합니다.";
+    if(d.format==="layered_2d_v2"){
+      const layered=ensureLayeredRigTemplate();
+      $("motionRigDuration").value=layered.duration||720;$("motionRigLoop").value=layered.loop||"loop";renderRigPartRows();return;
+    }
+    const gate=d.gate||{skins:0,clips:0,equipment:false,rest_pose:false,adapter:false};
+    $("motionRigSkins").value=gate.skins||0;$("motionRigClips").value=gate.clips||0;
+    $("motionRigEquipment").checked=!!gate.equipment;$("motionRigRest").checked=!!gate.rest_pose;
+    $("motionRigAdapter").checked=!!gate.adapter;$("motionRigApproval").checked=!!d.approved;
   }
 
   function selectTier(tier, focus=false) {
     if (!UI_TIERS.includes(tier)) tier = tier === "full_frames" ? "limited_frames" : "static";
     const tab=document.querySelector(`[data-motion-tier="${tier}"]`); if (!tab || tab.disabled) return;
+    if(state.tier==="rig_paper_doll"&&tier!=="rig_paper_doll")editorBridge()?.restoreImageLayerPreview?.();
     state.tier=tier; state.time=0;
     document.querySelectorAll("[data-motion-tier]").forEach(button=>{const on=button.dataset.motionTier===tier;button.setAttribute("aria-selected",String(on));button.tabIndex=on?0:-1;});
     document.querySelectorAll("[data-motion-editor]").forEach(panel=>panel.hidden=panel.dataset.motionEditor!==tier);
+    if(tier==="rig_paper_doll")renderRigPartRows();
     if(focus)tab.focus(); invalidateMotionQa(); updateManifest(); render(); saveDraft();
   }
 
@@ -341,6 +484,18 @@
 
   function applyMotionToLayer() {
     const bridge=editorBridge();
+    if(state.tier==="rig_paper_doll"){
+      const readiness=rigSelectionState();
+      if(!readiness.ready||!bridge?.applyRigMotionToLayers){status("모든 신체 부위를 서로 다른 이미지 레이어에 연결하세요.");return false;}
+      const manifest=buildManifest(),validation=Core.validateStrategy("rig_paper_doll",manifest.primary.data);
+      if(!validation.valid){status(`리깅 적용 실패: ${validation.errors[0]}`);return false;}
+      if(manifest.asset)delete manifest.asset.source;
+      const ids=manifest.primary.data.slots.map(slot=>slot.layer_id);
+      manifest.source_layer_ids=ids;
+      if(!bridge.applyRigMotionToLayers(ids,manifest)){status("리깅을 레이어 묶음에 적용하지 못했습니다.");return false;}
+      $("motionAppliedStatus").textContent=`적용됨 · ${ids.length}개 분리 레이어 리깅`;
+      status("2D 걷기 리깅을 연결된 모든 신체 레이어에 적용했습니다.");saveDraft();return true;
+    }
     if(!state.sourceLayerId||!bridge?.applyMotionToLayer){status("적용할 이미지 레이어를 선택하세요.");return false;}
     const manifest=buildManifest();
     if(manifest.asset)delete manifest.asset.source;
@@ -354,6 +509,12 @@
 
   function clearMotionFromLayer() {
     const bridge=editorBridge();
+    if(state.tier==="rig_paper_doll"){
+      const ids=(state.drafts.rig_paper_doll.slots||[]).map(slot=>slot.layer_id).filter(Boolean);
+      if(!ids.length||!bridge?.clearRigMotionFromLayers){status("취소할 리깅 레이어가 없습니다.");return false;}
+      if(!bridge.clearRigMotionFromLayers(ids)){status("연결된 레이어에 적용된 리깅이 없습니다.");return false;}
+      playing=false;state.time=0;render();$("motionAppliedStatus").textContent="리깅 적용 취소됨 · 레이어는 원래 상태입니다.";status("신체 레이어의 리깅 적용을 취소했습니다.");return true;
+    }
     if(!state.sourceLayerId||!bridge?.clearMotionFromLayer){status("취소할 이미지 레이어를 선택하세요.");return false;}
     if(!bridge.clearMotionFromLayer(state.sourceLayerId)){status("이 레이어에 적용된 모션이 없습니다.");return false;}
     playing=false;state.time=0;editorBridge()?.restoreImageLayerPreview?.(state.sourceLayerId);render();
@@ -406,7 +567,12 @@
   }
 
   function renderTimeline(manifest,duration) {
-    const data=manifest.primary.data||{},items=manifest.primary.strategy==="state_swap"?data.states:(["limited_frames","full_frames"].includes(manifest.primary.strategy)?data.frames:[]);
+    const data=manifest.primary.data||{};
+    if(manifest.primary.strategy==="rig_paper_doll"&&Array.isArray(data.keyframes)&&data.keyframes.length>1){
+      const frames=data.keyframes.slice(0,-1),span=Math.max(1,data.duration||duration);
+      $("motionTimeline").innerHTML=frames.map((frame,index)=>`<span class="motion-timeline-segment" style="width:${Math.max(4,((data.keyframes[index+1].time-frame.time)/span)*100)}%">접지 ${index+1}</span>`).join("");return;
+    }
+    const items=manifest.primary.strategy==="state_swap"?data.states:(["limited_frames","full_frames"].includes(manifest.primary.strategy)?data.frames:[]);
     if(!Array.isArray(items)||!items.length){$("motionTimeline").innerHTML=`<span class="motion-timeline-segment" style="width:100%">${duration}ms</span>`;return;}
     const total=items.reduce((n,item)=>n+(Number(item.duration)||0),0)||1;
     $("motionTimeline").innerHTML=items.map((item,index)=>`<span class="motion-timeline-segment" style="width:${Math.max(4,(item.duration/total)*100)}%">${manifest.primary.strategy==="state_swap"?"이미지":"프레임"} ${index+1}</span>`).join("");
@@ -430,7 +596,8 @@
     $("motionScrubber").max=String(duration);if(state.time>duration)state.time=duration;
     const selectedRef=scene.frame?.image_ref||scene.state?.image_ref||"source";
     const imageUri=selectedRef==="source"?"":(imageForRef(selectedRef)?.src||"");
-    if (state.sourceLayerId) {
+    if(state.tier==="rig_paper_doll")previewRigScene(scene);
+    else if (state.sourceLayerId) {
       editorBridge()?.previewImageLayer?.(state.sourceLayerId, {
         x: scene.transform?.x || 0,
         y: scene.transform?.y || 0,
@@ -445,6 +612,34 @@
     renderTimeline(manifest,duration);
   }
 
+  function nextPaint() {
+    return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  }
+
+  function dataUrlImage(uri) {
+    return new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>reject(new Error("캔버스 프레임을 읽지 못했습니다."));image.src=uri;});
+  }
+
+  async function bakeRigSpriteSheet() {
+    const bridge=editorBridge(),draft=ensureLayeredRigTemplate(),readiness=rigSelectionState();
+    if(!readiness.ready){status("스프라이트시트를 만들려면 11개 신체 부위 레이어를 모두 연결하세요.");return false;}
+    const validation=Core.validateStrategy("rig_paper_doll",draft);
+    if(!validation.valid){status(`스프라이트시트 실패: ${validation.errors[0]}`);return false;}
+    if(!bridge?.captureCanvasDataUrl){status("현재 캔버스를 캡처할 수 없습니다.");return false;}
+    playing=false;const savedTime=state.time,manifest=buildManifest(),times=draft.keyframes.slice(0,-1).map(frame=>frame.time),frames=[];
+    try{
+      status(`리깅 프레임 ${times.length}장 굽는 중…`);
+      for(const time of times){state.time=time;previewRigScene(Core.samplePreview(manifest,time,{vfx:false}));await nextPaint();frames.push(await dataUrlImage(bridge.captureCanvasDataUrl()));}
+      const size=bridge.getCanvasSize?.()||{width:number("motionCanvasW"),height:number("motionCanvasH")},sheet=document.createElement("canvas");
+      sheet.width=size.width*frames.length;sheet.height=size.height;
+      const context=sheet.getContext("2d");context.imageSmoothingEnabled=false;frames.forEach((image,index)=>context.drawImage(image,index*size.width,0,size.width,size.height));
+      const blob=await new Promise((resolve,reject)=>sheet.toBlob(value=>value?resolve(value):reject(new Error("PNG를 만들지 못했습니다.")),"image/png"));
+      const url=URL.createObjectURL(blob),anchor=document.createElement("a");anchor.href=url;anchor.download=`${$("motionAssetId").value}.left-walk-rig-sheet.png`;anchor.click();URL.revokeObjectURL(url);
+      status(`실제 레이어 리깅 ${frames.length}프레임 스프라이트시트를 내보냈습니다.`);return true;
+    }catch(error){status(error.message||"스프라이트시트를 만들지 못했습니다.");return false;}
+    finally{state.time=savedTime;render();}
+  }
+
   function tick(now){if(!playing)return;let manifest;try{manifest=buildManifest();}catch(_){playing=false;return;}const duration=currentDuration(manifest),loop=manifest.primary.data?.loop||"loop";state.time=playOrigin+(now-playStart);if(state.time>=duration){if(loop==="once"){state.time=duration;playing=false;render();return;}state.time%=duration;playOrigin=state.time;playStart=now;}render();requestAnimationFrame(tick);}
 
   async function bindRowImage(file,kind,index){try{const dataUrl=await readImageFile(file),map={state:["state_swap","states"],part:["rigid_parts","parts"],limited:["limited_frames","frames"],full:["full_frames","frames"],slot:["rig_paper_doll","slots"]},spec=map[kind],item=state.drafts[spec[0]][spec[1]][index];item.image_ref=dataUrl;item.image_name=file.name;imageForRef(dataUrl);renderRows();invalidateMotionQa();updateManifest();render();saveDraft();status(`${file.name} 바인딩 완료`);}catch(error){status(error.message);}}
@@ -455,7 +650,7 @@
 
   function serializeProjectState(){return{version:1,state:clone(state),canonical:{asset_id:$("motionAssetId").value,canvas_width:number("motionCanvasW"),canvas_height:number("motionCanvasH"),pivot_x:number("motionPivotX"),pivot_y:number("motionPivotY"),ground_x:number("motionGroundX"),ground_y:number("motionGroundY"),facing:$("motionFacing").value,sampling:$("motionSampling").value},vfx:{enabled:checked("motionVfxEnabled"),trigger:$("motionVfxTrigger").value,anchor:$("motionVfxAnchor").value,offset_x:number("motionVfxX"),offset_y:number("motionVfxY"),duration:number("motionVfxDuration"),blend:$("motionVfxBlend").value,seed:number("motionVfxSeed")}};}
 
-  function validateProjectState(raw){if(raw==null)return null;if(!plain(raw)||raw.version!==1)throw new TypeError("Invalid Motion Studio project state");const clean=clone(raw),base=defaults();if(!plain(clean.state)||!TIERS.includes(clean.state.tier)||!plain(clean.state.drafts))throw new TypeError("Invalid Motion Studio draft state");for(const tier of TIERS)if(clean.state.drafts[tier]!==undefined&&!plain(clean.state.drafts[tier]))throw new TypeError(`Invalid Motion Studio ${tier} draft`);const merged=deepMerge(base,clean.state);const collections=[[merged.drafts.state_swap.states,Core.LIMITS.states],[merged.drafts.rigid_parts.parts,Core.LIMITS.parts],[merged.drafts.limited_frames.frames,4],[merged.drafts.full_frames.frames,Core.LIMITS.frames],[merged.drafts.rig_paper_doll.bones,Core.LIMITS.bones],[merged.drafts.rig_paper_doll.slots,Core.LIMITS.slots]];for(const[item,max]of collections)if(!Array.isArray(item)||item.length>max||item.some(x=>!plain(x)))throw new TypeError("Invalid Motion Studio collection");const c=clean.canonical||{};Core.normalizeManifest({asset:{id:c.asset_id,canvas:{width:c.canvas_width,height:c.canvas_height},pivot:{x:c.pivot_x,y:c.pivot_y},ground:{x:c.ground_x,y:c.ground_y},facing:c.facing,sampling:c.sampling,source:merged.sourceDataUrl?{name:merged.imageName||"source",uri:merged.sourceDataUrl}:undefined},primary:{strategy:merged.tier,data:{}},overlays:[]});const v=clean.vfx||{};if(typeof v.enabled!=="boolean"||!Number.isFinite(v.offset_x)||!Number.isFinite(v.offset_y)||!Number.isFinite(v.duration)||!Number.isSafeInteger(v.seed)||typeof v.trigger!=="string"||typeof v.anchor!=="string"||!["normal","add","multiply","screen"].includes(v.blend))throw new TypeError("Invalid Motion Studio VFX draft");clean.state=merged;return clean;}
+  function validateProjectState(raw){if(raw==null)return null;if(!plain(raw)||raw.version!==1)throw new TypeError("Invalid Motion Studio project state");const clean=clone(raw),base=defaults();if(!plain(clean.state)||!TIERS.includes(clean.state.tier)||!plain(clean.state.drafts))throw new TypeError("Invalid Motion Studio draft state");for(const tier of TIERS)if(clean.state.drafts[tier]!==undefined&&!plain(clean.state.drafts[tier]))throw new TypeError(`Invalid Motion Studio ${tier} draft`);const merged=deepMerge(base,clean.state);const collections=[[merged.drafts.state_swap.states,Core.LIMITS.states],[merged.drafts.rigid_parts.parts,Core.LIMITS.parts],[merged.drafts.limited_frames.frames,4],[merged.drafts.full_frames.frames,Core.LIMITS.frames],[merged.drafts.rig_paper_doll.bones,Core.LIMITS.bones],[merged.drafts.rig_paper_doll.slots,Core.LIMITS.slots],[merged.drafts.rig_paper_doll.keyframes||[],64]];for(const[item,max]of collections)if(!Array.isArray(item)||item.length>max||item.some(x=>!plain(x)))throw new TypeError("Invalid Motion Studio collection");const c=clean.canonical||{};Core.normalizeManifest({asset:{id:c.asset_id,canvas:{width:c.canvas_width,height:c.canvas_height},pivot:{x:c.pivot_x,y:c.pivot_y},ground:{x:c.ground_x,y:c.ground_y},facing:c.facing,sampling:c.sampling,source:merged.sourceDataUrl?{name:merged.imageName||"source",uri:merged.sourceDataUrl}:undefined},primary:{strategy:merged.tier,data:{}},overlays:[]});const v=clean.vfx||{};if(typeof v.enabled!=="boolean"||!Number.isFinite(v.offset_x)||!Number.isFinite(v.offset_y)||!Number.isFinite(v.duration)||!Number.isSafeInteger(v.seed)||typeof v.trigger!=="string"||typeof v.anchor!=="string"||!["normal","add","multiply","screen"].includes(v.blend))throw new TypeError("Invalid Motion Studio VFX draft");clean.state=merged;return clean;}
 
   function applyProjectControls(clean){const c=clean.canonical,v=clean.vfx;$("motionAssetId").value=c.asset_id;$("motionCanvasW").value=c.canvas_width;$("motionCanvasH").value=c.canvas_height;$("motionPivotX").value=c.pivot_x;$("motionPivotY").value=c.pivot_y;$("motionGroundX").value=c.ground_x;$("motionGroundY").value=c.ground_y;$("motionFacing").value=c.facing;$("motionSampling").value=c.sampling;$("motionVfxEnabled").checked=v.enabled;$("motionVfxTrigger").value=v.trigger;$("motionVfxAnchor").value=v.anchor;$("motionVfxX").value=v.offset_x;$("motionVfxY").value=v.offset_y;$("motionVfxDuration").value=v.duration;$("motionVfxBlend").value=v.blend;$("motionVfxSeed").value=v.seed;$("motionManualApproval").checked=clean.state.manualVisualApproval===true;}
 
@@ -491,7 +686,7 @@
 
   function setupAccessibility(){document.querySelectorAll("[data-motion-tier]").forEach(button=>{const tier=button.dataset.motionTier,panel=document.querySelector(`[data-motion-editor="${tier}"]`),tabId=`motion-tab-${tier}`,panelId=`motion-panel-${tier}`;button.id=tabId;button.setAttribute("aria-controls",panelId);panel.id=panelId;panel.setAttribute("role","tabpanel");panel.setAttribute("aria-labelledby",tabId);});$("motionTime").setAttribute("aria-live","polite");}
 
-  window.AssetStudioMotion={serializeProjectState,validateProjectState,hydrateProjectState,snapshotRuntimeState,restoreRuntimeState,refreshEditorLayers,useEditorLayer};
+  window.AssetStudioMotion={serializeProjectState,validateProjectState,hydrateProjectState,snapshotRuntimeState,restoreRuntimeState,refreshEditorLayers,useEditorLayer,buildLayeredRigTemplate,autoBindRigLayers,applyRigWalkPreset,previewRigScene,bakeRigSpriteSheet};
   setupAccessibility();loadDraft();refresh();route();selectTier(state.tier);
 
   document.querySelectorAll("#studioWorkspaceSwitch button").forEach(button=>button.addEventListener("click",()=>setWorkspace(button.dataset.studioWorkspace)));
@@ -499,10 +694,16 @@
   const drop=$("motionSourceDropzone"),input=$("motionSourceInput");drop.addEventListener("click",()=>input.click());drop.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();input.click();}});input.addEventListener("change",()=>useImage(input.files[0]));drop.addEventListener("dragover",event=>{event.preventDefault();drop.classList.add("is-dragging")});drop.addEventListener("dragleave",()=>drop.classList.remove("is-dragging"));drop.addEventListener("drop",event=>{event.preventDefault();drop.classList.remove("is-dragging");useImage(event.dataTransfer.files[0]);});
   $("motionRouterForm").addEventListener("input",route);$("motionApplyRecommendation").addEventListener("click",()=>{if(lastRecommendation){if(lastRecommendation.overlays.includes("vfx"))$("motionVfxEnabled").checked=true;selectTier(lastRecommendation.primary,true);}});
   $("motionTierTabs").addEventListener("click",event=>{const button=event.target.closest("[data-motion-tier]");if(button)selectTier(button.dataset.motionTier);});$("motionTierTabs").addEventListener("keydown",event=>{if(!["ArrowRight","ArrowLeft","Home","End"].includes(event.key))return;event.preventDefault();const enabled=[...document.querySelectorAll("[data-motion-tier]:not(:disabled)")].filter(button=>!button.hidden),at=enabled.indexOf(document.activeElement);let next=event.key==="Home"?0:event.key==="End"?enabled.length-1:(at+(event.key==="ArrowRight"?1:-1)+enabled.length)%enabled.length;selectTier(enabled[next].dataset.motionTier,true);});
-  $("motionEditors").addEventListener("input",event=>{const t=event.target;if(t.dataset.transform){const path=t.dataset.transform.split("."),value=t.type==="checkbox"?t.checked:t.type==="number"?Number(t.value):t.value;if(path.length===2)state.drafts.transform_tween[path[0]][path[1]]=value;else state.drafts.transform_tween[path[0]]=value;}if(t.dataset.clipLoop){const tier={limited:"limited_frames",full:"full_frames",rigid:"rigid_parts"}[t.dataset.clipLoop];state.drafts[tier].loop=t.value;}if(t.dataset.row){const map={state:["state_swap","states"],part:["rigid_parts","parts"],limited:["limited_frames","frames"],full:["full_frames","frames"],bone:["rig_paper_doll","bones"],slot:["rig_paper_doll","slots"]},spec=map[t.dataset.row],item=state.drafts[spec[0]][spec[1]][Number(t.dataset.index)],key=t.dataset.key;if(["pivot","socket","offset"].includes(key)){const[x,y]=t.value.split(",").map(Number);item[key]={x,y};}else item[key]=t.type==="checkbox"?t.checked:t.type==="number"?Number(t.value):t.value||null;}invalidateMotionQa();updateManifest();render();saveDraft();});
+  $("motionEditors").addEventListener("input",event=>{const t=event.target;if(t.dataset.transform){const path=t.dataset.transform.split("."),value=t.type==="checkbox"?t.checked:t.type==="number"?Number(t.value):t.value;if(path.length===2)state.drafts.transform_tween[path[0]][path[1]]=value;else state.drafts.transform_tween[path[0]]=value;}if(t.dataset.clipLoop){const tier={limited:"limited_frames",full:"full_frames",rigid:"rigid_parts"}[t.dataset.clipLoop];state.drafts[tier].loop=t.value;}if(t.dataset.rigSlot!==undefined){const def=RIG_PART_DEFS[Number(t.dataset.rigSlot)],slot=state.drafts.rig_paper_doll.slots.find(item=>item.id===def?.id);if(slot)slot.layer_id=t.value;}if(t.dataset.rigBone){const bone=state.drafts.rig_paper_doll.bones.find(item=>item.id===t.dataset.rigBone);if(bone&&["x","y"].includes(t.dataset.rigAxis))bone[t.dataset.rigAxis]=Number(t.value);}if(t.dataset.row){const map={state:["state_swap","states"],part:["rigid_parts","parts"],limited:["limited_frames","frames"],full:["full_frames","frames"],bone:["rig_paper_doll","bones"],slot:["rig_paper_doll","slots"]},spec=map[t.dataset.row],item=state.drafts[spec[0]][spec[1]][Number(t.dataset.index)],key=t.dataset.key;if(["pivot","socket","offset"].includes(key)){const[x,y]=t.value.split(",").map(Number);item[key]={x,y};}else item[key]=t.type==="checkbox"?t.checked:t.type==="number"?Number(t.value):t.value||null;}if(t.dataset.rigSlot!==undefined)syncRigReadiness();invalidateMotionQa();updateManifest();render();saveDraft();});
   $("motionEditors").addEventListener("change",event=>{const t=event.target;if(t.dataset.mediaKind&&t.files?.[0])bindRowImage(t.files[0],t.dataset.mediaKind,Number(t.dataset.index));});
   $("motionEditors").addEventListener("click",event=>{const add=event.target.dataset.addRow,del=event.target.dataset.deleteRow,move=event.target.dataset.moveRow,map={state:["state_swap","states",{id:"state",image_ref:"source",image_name:"source",default:false,duration:100},Core.LIMITS.states],part:["rigid_parts","parts",{id:"part",parent:null,image_ref:"source",image_name:"source",pivot:{x:0,y:0},socket:{x:0,y:0},offset:{x:0,y:0},rotation_min:0,rotation_max:0},4],limited:["limited_frames","frames",{id:"pose",image_ref:"source",image_name:"source",duration:100,phase:"",event:""},4],full:["full_frames","frames",{id:"frame",image_ref:"source",image_name:"source",duration:100,phase:"",event:""},Core.LIMITS.frames],bone:["rig_paper_doll","bones",{id:"bone",parent:null,x:0,y:0,rotation:0},Core.LIMITS.bones],slot:["rig_paper_doll","slots",{id:"slot",bone:"root",image_ref:"source",image_name:"source"},Core.LIMITS.slots]};const kind=add||del||move;if(!kind)return;const spec=map[kind],arr=state.drafts[spec[0]][spec[1]];if(add&&arr.length<spec[3])arr.push(clone(spec[2]));if(del)arr.splice(Number(event.target.dataset.index),1);if(move){const from=Number(event.target.dataset.index),to=from+Number(event.target.dataset.direction);if(to>=0&&to<arr.length)[arr[from],arr[to]]=[arr[to],arr[from]];}invalidateMotionQa();renderRows();updateManifest();render();saveDraft();});
-  ["motionRigSkins","motionRigClips","motionRigEquipment","motionRigRest","motionRigAdapter","motionRigApproval"].forEach(id=>$(id).addEventListener("change",()=>{const d=state.drafts.rig_paper_doll;d.gate={skins:number("motionRigSkins"),clips:number("motionRigClips"),equipment:checked("motionRigEquipment"),rest_pose:checked("motionRigRest"),adapter:checked("motionRigAdapter")};d.approved=checked("motionRigApproval");invalidateMotionQa();syncRig();saveDraft();}));
+  ["motionRigSkins","motionRigClips","motionRigEquipment","motionRigRest","motionRigAdapter","motionRigApproval"].forEach(id=>$(id).addEventListener("change",()=>{const d=state.drafts.rig_paper_doll;if(d.format==="layered_2d_v2")return;d.gate={skins:number("motionRigSkins"),clips:number("motionRigClips"),equipment:checked("motionRigEquipment"),rest_pose:checked("motionRigRest"),adapter:checked("motionRigAdapter")};d.approved=checked("motionRigApproval");invalidateMotionQa();syncRig();saveDraft();}));
+  $("motionRigTemplate").addEventListener("click",()=>{state.drafts.rig_paper_doll=buildLayeredRigTemplate();renderRows();selectTier("rig_paper_doll");status("기본 관절 뼈대를 만들었습니다. 각 부위의 실제 레이어를 연결하세요.");});
+  $("motionRigAutoBind").addEventListener("click",autoBindRigLayers);
+  $("motionRigApplyWalk").addEventListener("click",applyRigWalkPreset);
+  $("motionRigBakeSheet").addEventListener("click",bakeRigSpriteSheet);
+  $("motionRigDuration").addEventListener("change",()=>{const draft=ensureLayeredRigTemplate();draft.duration=Math.max(240,Math.min(4000,number("motionRigDuration")||720));draft.keyframes=walkRigKeyframes(draft.duration);invalidateMotionQa();updateManifest();render();saveDraft();});
+  $("motionRigLoop").addEventListener("change",()=>{const draft=ensureLayeredRigTemplate();draft.loop=$("motionRigLoop").value;invalidateMotionQa();updateManifest();render();saveDraft();});
   $("motionQuickPresets").addEventListener("click",event=>{const button=event.target.closest("[data-motion-preset]");if(button)applyQuickPreset(button.dataset.motionPreset);});
   $("motionDirectionPresets").addEventListener("click",event=>{const button=event.target.closest("[data-motion-direction]");if(button)applyDirectionalPreset(button.dataset.motionDirection);});
   $("motionMovementOptions").addEventListener("click",event=>{

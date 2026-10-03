@@ -7,7 +7,7 @@ CORE = ROOT / "src" / "motion-studio-core.js"
 
 
 def node_json(source):
-    result = subprocess.run(["node", "-e", source], cwd=ROOT, text=True, capture_output=True)
+    result = subprocess.run(["node", "-e", source], cwd=ROOT, text=True, encoding="utf-8", capture_output=True)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -99,3 +99,47 @@ console.log(JSON.stringify({same:C.stableStringify(C.normalizeManifest(b))===tex
     assert data["qa"]["status"] == "PASS"
     assert data["invalidQa"]["status"] == "FAIL"
     assert data["scene"]["strategy"] == "static"
+
+
+def test_layered_2d_rig_samples_distinct_hierarchical_limbs_and_rejects_duplicate_layers():
+    data = node_json("""
+const C=require('./src/motion-studio-core.js');
+const rig={
+  format:'layered_2d_v2',duration:400,loop:'loop',
+  bones:[
+    {id:'root',parent:null,x:50,y:50,rotation:0},
+    {id:'hip_near',parent:'root',x:50,y:50,rotation:0},
+    {id:'knee_near',parent:'hip_near',x:48,y:75,rotation:0},
+    {id:'hip_far',parent:'root',x:50,y:50,rotation:0},
+    {id:'knee_far',parent:'hip_far',x:52,y:75,rotation:0}
+  ],
+  slots:[
+    {id:'body',bone:'root',layer_id:'layer-body',z:0},
+    {id:'near_thigh',bone:'hip_near',layer_id:'layer-near-thigh',z:20},
+    {id:'near_shin',bone:'knee_near',layer_id:'layer-near-shin',z:21},
+    {id:'far_thigh',bone:'hip_far',layer_id:'layer-far-thigh',z:-20},
+    {id:'far_shin',bone:'knee_far',layer_id:'layer-far-shin',z:-19}
+  ],
+  keyframes:[
+    {time:0,bones:{hip_near:{rotation:20},knee_near:{rotation:-5},hip_far:{rotation:-20},knee_far:{rotation:12}}},
+    {time:200,bones:{hip_near:{rotation:-20},knee_near:{rotation:12},hip_far:{rotation:20},knee_far:{rotation:-5}}},
+    {time:400,bones:{hip_near:{rotation:20},knee_near:{rotation:-5},hip_far:{rotation:-20},knee_far:{rotation:12}}}
+  ]
+};
+const manifest={asset:{id:'hero',canvas:{width:100,height:100},pivot:{x:50,y:50},ground:{x:50,y:99},facing:'left',sampling:'nearest'},primary:{strategy:'rig_paper_doll',data:rig},overlays:[]};
+const a=C.samplePreview(manifest,0,{}),b=C.samplePreview(manifest,200,{});
+const duplicate=JSON.parse(JSON.stringify(rig));duplicate.slots[4].layer_id='layer-near-shin';
+console.log(JSON.stringify({
+  valid:C.validateStrategy('rig_paper_doll',rig),
+  duplicate:C.validateStrategy('rig_paper_doll',duplicate),
+  a:Object.fromEntries(a.slots.map(x=>[x.id,[x.layer_id,x.world.rotation]])),
+  b:Object.fromEntries(b.slots.map(x=>[x.id,[x.layer_id,x.world.rotation]]))
+}));
+""")
+    assert data["valid"]["valid"] is True
+    assert data["duplicate"]["valid"] is False
+    assert data["a"]["near_thigh"] == ["layer-near-thigh", 20]
+    assert data["a"]["far_thigh"] == ["layer-far-thigh", -20]
+    assert data["b"]["near_thigh"] == ["layer-near-thigh", -20]
+    assert data["b"]["far_thigh"] == ["layer-far-thigh", 20]
+    assert data["a"]["near_shin"][1] != data["b"]["near_shin"][1]

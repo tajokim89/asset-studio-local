@@ -376,6 +376,50 @@
 .motion-timeline-segment { display: flex; min-width: 24px; flex-direction: column; justify-content: center; overflow: hidden; padding: 3px 5px; border-right: 1px solid #3d4960; background: #1d2c45; color: #d9e6ff; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .motion-timeline-segment small { color: #8ea4c8; font-size: 8px; }
 
+.motion-rig-header,
+.motion-rig-actions,
+.motion-rig-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+.motion-rig-header { align-items: flex-start; flex-wrap: wrap; }
+.motion-rig-header h3 { margin: 0 0 3px; }
+.motion-rig-header p { margin: 0 0 8px; color: #93a4bd; font-size: 10px; }
+.motion-rig-readiness {
+  margin: 8px 0;
+  padding: 8px;
+  border-left: 4px solid #e0b34c;
+  border-radius: 6px;
+  background: #202938;
+  color: #ffd166;
+  font-size: 10px;
+}
+.motion-rig-readiness[data-status="ready"] { border-left-color: #4cc985; color: #69df9a; }
+.motion-rig-parts { display: grid; gap: 5px; max-height: 180px; overflow-x: hidden; overflow-y: auto; padding-right: 2px; }
+.motion-rig-part {
+  display: grid;
+  grid-template-columns: minmax(100px, .8fr) minmax(150px, 1.4fr);
+  gap: 5px;
+  align-items: end;
+  padding: 6px;
+  border: 1px solid #30394a;
+  border-radius: 6px;
+  background: #171e2a;
+}
+.motion-rig-part strong { align-self: center; color: #dbe7f9; font-size: 10px; }
+.motion-rig-part details { grid-column: 1 / -1; color: #8fa1bb; font-size: 9px; }
+.motion-rig-part details > summary { cursor: pointer; }
+.motion-rig-part details > div { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.motion-rig-part label { margin: 0; font-size: 9px; }
+.motion-rig-part input,
+.motion-rig-part select { width: 100%; min-width: 0; }
+.motion-rig-controls { justify-content: flex-start; margin: 8px 0; }
+.motion-rig-controls label { margin: 0; }
+.motion-rig-actions { justify-content: flex-start; flex-wrap: wrap; }
+.motion-rig-advanced { margin-top: 8px; }
+
 .motion-basic-flow {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -427,6 +471,8 @@
   .motion-studio { display: block; overflow: auto; }
   .motion-studio > section { overflow: visible; border-right: 0; border-bottom: 1px solid #30394a; }
   .motion-row { grid-template-columns: 1fr 1fr; }
+  .motion-rig-part { grid-template-columns: 1fr; }
+  .motion-rig-part details { grid-column: 1; }
   .motion-preview-stage { min-height: 320px; }
   .motion-tier-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -34,20 +34,20 @@ def node(script):
 
 
 def test_four_family_drafts_keep_accepted_lexical_values_byte_identical_at_runtime():
-    source="\n".join(decl(n) for n in ("projectAssetSubtypesForFamily","defaultProjectFamilyDraft","validateProjectFamilyDrafts","hydrateProjectFamilyDrafts"))
+    source="\n".join(decl(n) for n in ("legacyAssetSubtypesForFamily","defaultProjectSubtype","projectAssetSubtypesForFamily","defaultProjectFamilyDraft","validateProjectFamilyDrafts","hydrateProjectFamilyDrafts"))
     script=r'''
-const PROJECT_FAMILIES=['sprite','tile','ui','object'];
-const ASSET_FAMILY_SUBTYPES={sprite:['character'],tile:['floor'],ui:['button'],object:['item']};
+const PROJECT_FAMILIES=['image','sprite','tile','ui','object'];
+const ASSET_FAMILY_SUBTYPES={image:['image'],sprite:['character'],tile:['floor'],ui:['button'],object:['item']};
 const assetRecipeRegistryState={status:'ready',registry:{},production:{},known:ASSET_FAMILY_SUBTYPES};
-const ASSET_FAMILY_OUTPUT_DEFAULTS={sprite:{width:512,height:512,background:'transparent'},tile:{width:512,height:512,background:'opaque'},ui:{width:1024,height:512,background:'transparent'},object:{width:512,height:512,background:'transparent'}};
+const ASSET_FAMILY_OUTPUT_DEFAULTS={image:{width:512,height:512,background:'opaque'},sprite:{width:512,height:512,background:'transparent'},tile:{width:512,height:512,background:'opaque'},ui:{width:1024,height:512,background:'transparent'},object:{width:512,height:512,background:'transparent'}};
 const PROJECT_DRAFT_SHARED_CONTROLS=['assetCorePrompt','assetOutputWidth','assetOutputHeight','assetBackground'];
-const PROJECT_DRAFT_FAMILY_CONTROLS={sprite:[],tile:[],ui:[],object:[]};
+const PROJECT_DRAFT_FAMILY_CONTROLS={image:[],sprite:[],tile:[],ui:[],object:[]};
 const assetFamilyDrafts=new Map(); let selectedAssetFamily='sprite';
 const elements={}; const $=id=>elements[id]||(elements[id]={type:'text',value:'',dataset:{},addEventListener(){}});
 const renderAssetSubtypeOptions=()=>{},restoreAssetCreationDraft=()=>{},updateAssetFamilyUi=()=>{};
 '''+source+r'''
 const widths=['0512','+512','0001','4096'];
-const input=Object.fromEntries(PROJECT_FAMILIES.map((f,i)=>[f,{subtype:ASSET_FAMILY_SUBTYPES[f][0],controls:{assetCorePrompt:'draft-'+f,assetOutputWidth:widths[i],assetOutputHeight:'0512',assetBackground:i===1?'opaque':'transparent'}}]));
+const input=Object.fromEntries(['sprite','tile','ui','object'].map((f,i)=>[f,{subtype:ASSET_FAMILY_SUBTYPES[f][0],controls:{assetCorePrompt:'draft-'+f,assetOutputWidth:widths[i],assetOutputHeight:'0512',assetBackground:i===1?'opaque':'transparent'}}]));
 const before=JSON.stringify(input); hydrateProjectFamilyDrafts(input,'ui');
 const stored=Object.fromEntries(PROJECT_FAMILIES.map(f=>[f,assetFamilyDrafts.get(f)]));
 const bad=['','0','4097','1e3',' 512','-1'];
@@ -58,6 +58,7 @@ process.stdout.write(JSON.stringify({same:before===JSON.stringify(input),stored,
     out=node(script)
     assert out["same"] and out["selectedAssetFamily"]=="ui"
     assert [out["stored"][f]["width"] for f in ("sprite","tile","ui","object")]==["0512","+512","0001","4096"]
+    assert out["stored"]["image"]["subtype"] == "image"
     assert all(out["rejected"]) and out["bgRejected"]
 
 

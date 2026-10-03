@@ -80,6 +80,7 @@ class HermesEnvironmentTests(unittest.TestCase):
             ):
                 self.assertEqual(server.resolve_hermes_repo(), repo.resolve())
 
+    @unittest.skipIf(os.name == "nt", "POSIX shell runner contract")
     def test_runner_exports_default_repo_before_selecting_python(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             home = Path(temp_dir) / "home"
@@ -124,7 +125,9 @@ class HermesEnvironmentTests(unittest.TestCase):
         self.assertTrue(provider.is_available() in {True, False})
         self.assertIsInstance(provider.default_model(), str)
         self.assertTrue(provider.default_model())
-        self.assertEqual(server.provider_capabilities(provider), {})
+        capabilities = server.provider_capabilities(provider)
+        self.assertIn("image", capabilities.get("modalities", []))
+        self.assertGreaterEqual(capabilities.get("max_reference_images", 0), 1)
 
     def test_provider_health_reports_capabilities_without_generating(self):
         provider = _FakeProvider()
